@@ -8,7 +8,7 @@ override O := $(abspath $(O))
 EXTERNALS := $(BASE) $(ROOT)
 ZIG ?= zig
 
-.PHONY: all configure check clean
+.PHONY: all configure check clean simulator simulator-pixels simulator-build screenshots
 all: configure
 	$(MAKE) -C $(BUILDROOT) O=$(O) BR2_EXTERNAL="$(EXTERNALS)" \
 		BR2_DL_DIR=$(BASE)/output/downloads
@@ -32,3 +32,27 @@ check:
 
 clean:
 	$(MAKE) -C $(BUILDROOT) O=$(O) BR2_EXTERNAL="$(EXTERNALS)" clean
+
+simulator: simulator-build
+	$(ROOT)/output/host/brick-ui-simulator --physical
+
+simulator-pixels: simulator-build
+	$(ROOT)/output/host/brick-ui-simulator --pixels
+
+simulator-build:
+	mkdir -p $(ROOT)/output/host
+	ZIG_LOCAL_CACHE_DIR=$(ROOT)/.zig-cache \
+	ZIG_GLOBAL_CACHE_DIR=$(ROOT)/.zig-global-cache \
+		$(ZIG) build-exe $(ROOT)/src/simulator.zig -OReleaseSafe -lc \
+		-femit-bin=$(ROOT)/output/host/brick-ui-simulator
+
+screenshots:
+	mkdir -p $(ROOT)/output/host $(ROOT)/output/screenshots
+	ZIG_LOCAL_CACHE_DIR=$(ROOT)/.zig-cache \
+	ZIG_GLOBAL_CACHE_DIR=$(ROOT)/.zig-global-cache \
+		$(ZIG) build-exe $(ROOT)/src/main.zig -OReleaseSafe \
+		-femit-bin=$(ROOT)/output/host/brick-shell-host
+	for screen in systems games detail game-menu checkpoints game-settings storage empty-library save-data save-conflict; do \
+		$(ROOT)/output/host/brick-shell-host --snapshot $(ROOT)/output/screenshots/$$screen.ppm $$screen; \
+		magick $(ROOT)/output/screenshots/$$screen.ppm $(ROOT)/output/screenshots/$$screen.png; \
+	done

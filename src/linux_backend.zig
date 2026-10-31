@@ -16,6 +16,8 @@ const KD_GRAPHICS: usize = 1;
 
 const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
+const KEY_F1: u16 = 59;
+const KEY_F2: u16 = 60;
 const SYN_REPORT: u16 = 0x00;
 const SYN_DROPPED: u16 = 0x03;
 const BTN_SOUTH: u16 = 0x130;
@@ -170,8 +172,10 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
         BTN_SOUTH => if (event.value == 1) .back else null,
         BTN_NORTH => if (event.value == 1) .options else null,
         BTN_WEST => if (event.value == 1) .favorite else null,
-        BTN_SELECT => if (event.value == 1) .switcher else null,
+        BTN_SELECT => null,
         BTN_MODE => if (event.value == 1) .home else null,
+        KEY_F1 => if (event.value == 1) .switcher else null,
+        KEY_F2 => null,
         else => null,
     };
 }

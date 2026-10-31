@@ -2,7 +2,7 @@
 const ui = @import("ui.zig");
 
 pub const Action = enum { up, down, left, right, confirm, back, home, switcher, options, favorite };
-pub const Page = enum { home, recent, favorites, systems, games, music, podcasts, audiobooks, now_playing, ports, settings, game_detail, switcher, quick_menu };
+pub const Page = enum { home, recent, favorites, systems, games, music, podcasts, audiobooks, now_playing, ports, settings, game_detail, switcher, quick_menu, checkpoints, game_settings, storage, empty_library, save_data, save_conflict };
 
 const home_items = [_]ui.MenuItem{
     .{ .label = "CONTINUE", .detail = "THE DISPOSSESSED - CHAPTER 7" },
@@ -59,7 +59,8 @@ const port_items = [_]ui.MenuItem{
 const setting_items = [_]ui.MenuItem{
     .{ .label = "DISPLAY", .detail = "BRIGHTNESS AND COLOR" }, .{ .label = "SOUND", .detail = "VOLUME AND OUTPUT" },
     .{ .label = "NETWORK", .detail = "WI-FI AND SERVICES" },   .{ .label = "POWER", .detail = "SLEEP AND PERFORMANCE" },
-    .{ .label = "STORAGE", .detail = "57 GB FREE" },           .{ .label = "ABOUT", .detail = "SYSTEM INFORMATION" },
+    .{ .label = "STORAGE", .detail = "57 GB FREE" },           .{ .label = "SAVE DATA", .detail = "SYNC BACKUP AND RESTORE" },
+    .{ .label = "ABOUT", .detail = "SYSTEM INFORMATION" },
 };
 const switcher_items = [_]ui.MenuItem{
     .{ .label = "THE DISPOSSESSED", .detail = "NOW - AUDIOBOOK - CHAPTER 7" },
@@ -68,9 +69,34 @@ const switcher_items = [_]ui.MenuItem{
     .{ .label = "CELESTE", .detail = "MONDAY - PORT" },
 };
 const quick_items = [_]ui.MenuItem{
-    .{ .label = "RESUME GAME", .detail = "RETURN TO PLAY" }, .{ .label = "SAVE STATE", .detail = "SLOT 1" },
-    .{ .label = "LOAD STATE", .detail = "SLOT 1" },          .{ .label = "CONTROLS", .detail = "DEFAULT PROFILE" },
-    .{ .label = "DISPLAY", .detail = "INTEGER SCALE" },      .{ .label = "QUIT TO HOME", .detail = "SAVE AND CLOSE" },
+    .{ .label = "RESUME", .detail = "RETURN TO PLAY" },
+    .{ .label = "QUICK SAVE", .detail = "MANUAL SLOT 1", .disclosure = false },
+    .{ .label = "CHECKPOINTS", .detail = "AUTO + 4 MANUAL" },
+    .{ .label = "GAME SETTINGS", .detail = "DISPLAY CONTROLS PERFORMANCE" },
+    .{ .label = "RESTART", .detail = "RESET THE EMULATED SYSTEM", .disclosure = false },
+    .{ .label = "CLOSE GAME", .detail = "SAVE AND RETURN HOME", .disclosure = false },
+};
+const checkpoint_items = [_]ui.MenuItem{
+    .{ .label = "AUTO RESUME", .detail = "TODAY 14:32 - 24 MIN AGO" },
+    .{ .label = "SLOT 1", .detail = "TODAY 14:18 - NORFAIR" },
+    .{ .label = "SLOT 2", .detail = "YESTERDAY - RIDLEY" },
+    .{ .label = "SLOT 3", .detail = "26 OCT - KRAID" },
+    .{ .label = "SLOT 4", .detail = "22 OCT - TOURIAN" },
+};
+const game_setting_items = [_]ui.MenuItem{
+    .{ .label = "EMULATOR", .detail = "AUTO - MGBA" },
+    .{ .label = "DISPLAY", .detail = "INTEGER SCALE - SHARP" },
+    .{ .label = "CONTROLS", .detail = "DEFAULT GAME BOY ADVANCE" },
+    .{ .label = "PERFORMANCE", .detail = "AUTO" },
+    .{ .label = "ACHIEVEMENTS", .detail = "CASUAL" },
+    .{ .label = "ADVANCED", .detail = "RETROARCH CORE OPTIONS" },
+};
+const save_data_items = [_]ui.MenuItem{
+    .{ .label = "SYNC NOW", .detail = "2 DEVICES - UP TO DATE", .disclosure = false },
+    .{ .label = "CROSS DEVICE", .detail = "WEBDAV - AUTOMATIC" },
+    .{ .label = "BACK UP NOW", .detail = "14 RECOVERY VERSIONS", .disclosure = false },
+    .{ .label = "RESTORE", .detail = "BROWSE SAVE HISTORY" },
+    .{ .label = "CHECKPOINTS", .detail = "SAME CORE ONLY" },
 };
 
 pub const Model = struct {
@@ -95,9 +121,13 @@ pub const Model = struct {
             .down => self.selected = (self.selected + 1) % self.itemCount(),
             .left => if (self.page == .now_playing) {
                 self.progress_percent -|= 3;
+            } else if (self.page == .save_conflict) {
+                self.selected = 0;
             },
             .right => if (self.page == .now_playing) {
                 self.progress_percent = @min(self.progress_percent + 3, 100);
+            } else if (self.page == .save_conflict) {
+                self.selected = 1;
             },
             .confirm => self.confirm(),
             .back => self.goBack(),
@@ -139,14 +169,41 @@ pub const Model = struct {
                 self.return_page = self.page;
                 self.open(.game_detail, 0);
             },
-            .game_detail => self.open(.quick_menu, 0),
+            .game_detail => switch (self.selected) {
+                0, 1 => self.open(.quick_menu, 0),
+                2 => {
+                    self.return_page = .game_detail;
+                    self.open(.checkpoints, 0);
+                },
+                else => {
+                    self.return_page = .game_detail;
+                    self.open(.game_settings, 0);
+                },
+            },
             .switcher => switch (self.selected) {
                 0, 2 => self.open(.now_playing, 0),
                 1 => self.open(.quick_menu, 0),
                 else => self.open(.game_detail, 0),
             },
-            .quick_menu => if (self.selected == quick_items.len - 1) self.open(.home, 0),
-            .settings => {},
+            .quick_menu => switch (self.selected) {
+                2 => {
+                    self.return_page = .quick_menu;
+                    self.open(.checkpoints, 0);
+                },
+                3 => {
+                    self.return_page = .quick_menu;
+                    self.open(.game_settings, 0);
+                },
+                5 => self.open(.home, 0),
+                else => {},
+            },
+            .settings => switch (self.selected) {
+                4 => self.open(.storage, 0),
+                5 => self.open(.save_data, 0),
+                else => {},
+            },
+            .checkpoints, .game_settings, .storage, .empty_library, .save_data => {},
+            .save_conflict => self.open(.game_detail, 0),
         }
     }
     fn goBack(self: *Model) void {
@@ -156,6 +213,10 @@ pub const Model = struct {
             .game_detail => self.open(self.return_page, 0),
             .now_playing => self.open(.home, 0),
             .quick_menu => self.open(.game_detail, 0),
+            .checkpoints, .game_settings => self.open(self.return_page, 0),
+            .storage => self.open(.settings, 4),
+            .save_data, .save_conflict => self.open(.settings, 5),
+            .empty_library => self.open(.home, 1),
             else => self.open(.home, homeSelection(self.page)),
         }
     }
@@ -183,9 +244,14 @@ pub const Model = struct {
             .now_playing => 1,
             .ports => port_items.len,
             .settings => setting_items.len,
-            .game_detail => 1,
+            .game_detail => 4,
             .switcher => switcher_items.len,
             .quick_menu => quick_items.len,
+            .checkpoints => checkpoint_items.len,
+            .game_settings => game_setting_items.len,
+            .storage, .empty_library => 1,
+            .save_data => save_data_items.len,
+            .save_conflict => 2,
         };
     }
     pub fn tree(self: *const Model) ui.Tree {
@@ -193,17 +259,23 @@ pub const Model = struct {
             .home => ui.dashboard(&home_items, self.selected),
             .recent => ui.menu("RECENT", &recent_items, self.selected, "A PLAY   X OPTIONS   Y FAVORITE"),
             .favorites => ui.menu("FAVORITES", &favorite_items, self.selected, "A PLAY   X OPTIONS   Y REMOVE"),
-            .systems => ui.menu("LIBRARY", &system_items, self.selected, "A OPEN   L R SYSTEM   SELECT SWITCHER"),
-            .games => ui.menu("GAME BOY ADVANCE", &game_items, self.selected, "A PLAY   X OPTIONS   Y FAVORITE"),
+            .systems => ui.menu("LIBRARY", &system_items, self.selected, "A OPEN   B HOME   F1 SESSIONS"),
+            .games => ui.gameLibrary(&game_items, self.selected),
             .music => ui.menu("MUSIC", &music_items, self.selected, "A OPEN   SELECT NOW PLAYING"),
             .podcasts => ui.menu("PODCASTS", &podcast_items, self.selected, "A OPEN   X DOWNLOAD OPTIONS"),
             .audiobooks => ui.menu("AUDIOBOOKS", &audiobook_items, self.selected, "A OPEN   X BOOK OPTIONS"),
             .now_playing => ui.nowPlaying(self.playing, self.progress_percent),
             .ports => ui.menu("PORTS", &port_items, self.selected, "A OPEN   X DETAILS"),
             .settings => ui.menu("SETTINGS", &setting_items, self.selected, "A OPEN   B BACK"),
-            .game_detail => ui.gameDetail(self.favorite),
-            .switcher => ui.menu("ACTIVITY SWITCHER", &switcher_items, self.selected, "A RESUME   B HOME   SELECT CLOSE"),
-            .quick_menu => ui.menu("QUICK MENU", &quick_items, self.selected, "A SELECT   B RESUME"),
+            .game_detail => ui.gameDetail(self.favorite, self.selected),
+            .switcher => ui.menu("ACTIVITY SWITCHER", &switcher_items, self.selected, "A RESUME   B HOME   F1 CLOSE"),
+            .quick_menu => ui.gameMenu(&quick_items, self.selected),
+            .checkpoints => ui.checkpoints(&checkpoint_items, self.selected),
+            .game_settings => ui.menu("GAME SETTINGS", &game_setting_items, self.selected, "A CHANGE   X RESET   B BACK"),
+            .storage => ui.storageStatus(),
+            .empty_library => ui.emptyLibrary(),
+            .save_data => ui.saveData(&save_data_items, self.selected),
+            .save_conflict => ui.saveConflict(self.selected),
         };
     }
 };

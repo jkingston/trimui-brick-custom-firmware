@@ -33,8 +33,9 @@ fn screenTree(name: []const u8) !ui.Tree {
     if (std.mem.eql(u8, name, "splash")) return ui.splash();
     if (std.mem.eql(u8, name, "classic")) return ui.classic();
     if (std.mem.eql(u8, name, "rich")) return ui.richLibrary();
-    const page: model.Page = if (std.mem.eql(u8, name, "home")) .home else if (std.mem.eql(u8, name, "recent")) .recent else if (std.mem.eql(u8, name, "systems")) .systems else if (std.mem.eql(u8, name, "games")) .games else if (std.mem.eql(u8, name, "music")) .music else if (std.mem.eql(u8, name, "podcasts")) .podcasts else if (std.mem.eql(u8, name, "audiobooks")) .audiobooks else if (std.mem.eql(u8, name, "now-playing")) .now_playing else if (std.mem.eql(u8, name, "detail")) .game_detail else if (std.mem.eql(u8, name, "switcher")) .switcher else if (std.mem.eql(u8, name, "quick")) .quick_menu else if (std.mem.eql(u8, name, "ports")) .ports else return error.UnknownScreen;
-    var state = model.Model.preview(page, 0);
+    const page: model.Page = if (std.mem.eql(u8, name, "home")) .home else if (std.mem.eql(u8, name, "recent")) .recent else if (std.mem.eql(u8, name, "systems")) .systems else if (std.mem.eql(u8, name, "games")) .games else if (std.mem.eql(u8, name, "music")) .music else if (std.mem.eql(u8, name, "podcasts")) .podcasts else if (std.mem.eql(u8, name, "audiobooks")) .audiobooks else if (std.mem.eql(u8, name, "now-playing")) .now_playing else if (std.mem.eql(u8, name, "detail")) .game_detail else if (std.mem.eql(u8, name, "switcher")) .switcher else if (std.mem.eql(u8, name, "game-menu")) .quick_menu else if (std.mem.eql(u8, name, "checkpoints")) .checkpoints else if (std.mem.eql(u8, name, "game-settings")) .game_settings else if (std.mem.eql(u8, name, "storage")) .storage else if (std.mem.eql(u8, name, "empty-library")) .empty_library else if (std.mem.eql(u8, name, "save-data")) .save_data else if (std.mem.eql(u8, name, "save-conflict")) .save_conflict else if (std.mem.eql(u8, name, "ports")) .ports else return error.UnknownScreen;
+    const selected: usize = if (page == .games) 3 else 0;
+    var state = model.Model.preview(page, selected);
     return state.tree();
 }
 

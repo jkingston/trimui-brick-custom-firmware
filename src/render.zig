@@ -40,12 +40,12 @@ pub const Surface = struct {
         }
         const color = if (row.selected) ui.palette.white else ui.palette.ink;
         const compact = row.bounds.height < 64;
-        const label_offset: u16 = if (compact) 8 else 14;
-        const detail_offset: u16 = if (compact) 36 else 48;
-        self.drawText(row.bounds.x + 26, row.bounds.y + label_offset, row.label, color, 3);
+        const label_offset: u16 = if (compact) 8 else 10;
+        const detail_offset: u16 = if (compact) 36 else if (row.detail_scale >= 3) 48 else 44;
+        self.drawText(row.bounds.x + 26, row.bounds.y + label_offset, row.label, color, row.label_scale);
         if (row.detail.len != 0) {
             const detail_color = if (row.selected) ui.palette.chrome else ui.palette.quiet;
-            self.drawText(row.bounds.x + 28, row.bounds.y + detail_offset, row.detail, detail_color, 2);
+            self.drawText(row.bounds.x + 28, row.bounds.y + detail_offset, row.detail, detail_color, row.detail_scale);
         }
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 25, color);
     }
@@ -134,6 +134,7 @@ fn glyph(character: u8) [7]u5 {
         '+' => .{ 0, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0 },
         ':' => .{ 0, 0b00100, 0, 0, 0b00100, 0, 0 },
         '.' => .{ 0, 0, 0, 0, 0, 0b00100, 0b00100 },
+        '/' => .{ 0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000 },
         ' ' => .{ 0, 0, 0, 0, 0, 0, 0 },
         else => .{ 0b11111, 0b00001, 0b00010, 0b00100, 0b00100, 0, 0b00100 },
     };
