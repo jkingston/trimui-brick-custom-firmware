@@ -1,0 +1,6 @@
+/output/
+/.zig-cache/
+/.zig-global-cache/
+/brick-shell
+/*.ppm
+/*.png

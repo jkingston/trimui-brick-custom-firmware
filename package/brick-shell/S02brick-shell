@@ -1,0 +1,24 @@
+#!/bin/sh
+
+case "$1" in
+	start)
+		printf 'Starting Brick shell: '
+		start-stop-daemon -S -q -b -m -p /run/brick-shell.pid \
+			-x /usr/bin/brick-shell -- --run
+		echo OK
+		;;
+	stop)
+		printf 'Stopping Brick shell: '
+		start-stop-daemon -K -q -p /run/brick-shell.pid -x /usr/bin/brick-shell
+		rm -f /run/brick-shell.pid
+		echo OK
+		;;
+	restart)
+		"$0" stop
+		"$0" start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac

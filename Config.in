@@ -1,0 +1,2 @@
+source "$BR2_EXTERNAL_BRICK_UI_PATH/package/zig-bin/Config.in"
+source "$BR2_EXTERNAL_BRICK_UI_PATH/package/brick-shell/Config.in"
