@@ -1,0 +1,120 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brick Linux <brick-linux@localhost>
+Date: Sun, 1 Nov 2026 00:00:00 +0000
+Subject: [PATCH] plain_drm: keep the menu surface on scanout
+
+The plain DRM backend uses one hardware plane for both the game and menu
+surfaces. It presents the menu from set_texture_frame(), then presents the
+game surface again at the end of the same frame. The plane consequently
+alternates between them and the Quick Menu strobes.
+
+Separate copying from presentation. Continue updating the game back buffer
+under the menu, but keep the menu surface on the plane until it closes. Render
+the menu directly into its existing DRM back buffer instead of allocating and
+leaking an intermediate frame every refresh. This matches the ownership and
+rendering rules in the current upstream plain DRM backend.
+---
+ gfx/drivers/drm_gfx.c | 78 +++++++++++++++++++++++++------------------
+ 1 file changed, 45 insertions(+), 33 deletions(-)
+
+--- a/gfx/drivers/drm_gfx.c
++++ b/gfx/drivers/drm_gfx.c
+@@ -364,8 +364,6 @@
+       dst_offset += surface->pitch;
+    }
+
+-   /* Page flipping */
+-   drm_page_flip(surface);
+ }
+
+ static uint32_t get_plane_prop_id(uint32_t obj_id, const char *name)
+@@ -825,6 +823,9 @@
+
+    /* Update main surface: locate free page, blit and flip. */
+    drm_surface_update(_drmvars, frame, _drmvars->main_surface);
++   /* The menu owns the single plane until it closes. */
++   if (!_drmvars->menu_active)
++      drm_page_flip(_drmvars->main_surface);
+    return true;
+ }
+
+@@ -849,6 +850,8 @@
+ {
+    unsigned int i, j;
+    struct drm_video *_drmvars = data;
++   uint8_t *dst_base_addr;
++   unsigned int dst_pitch;
+
+    if (!_drmvars->menu_active)
+       return;
+@@ -874,36 +877,43 @@
+       drm_plane_setup(_drmvars->menu_surface);
+    }
+
+-   /* We have to go on a pixel format conversion adventure
+-    * for now, until we can convince RGUI to output
+-    * in an 8888 format. */
+-   unsigned int src_pitch        = width * 2;
+-   unsigned int dst_pitch        = width * 4;
+-   unsigned int dst_width        = width;
+-   uint32_t line[dst_width];
+-
+-   /* The output pixel array with the converted pixels. */
+-   char *frame_output = (char *) malloc (dst_pitch * height);
+-
+-   /* Remember, memcpy() works with 8bits pointers for increments. */
+-   char *dst_base_addr           = frame_output;
+-
+-   for (i = 0; i < height; i++)
++   dst_base_addr = _drmvars->menu_surface->pages[
++      _drmvars->menu_surface->flip_page].buf.map;
++   dst_pitch = _drmvars->menu_surface->pages[
++      _drmvars->menu_surface->flip_page].buf.stride;
++
++   if (rgb32)
++   {
++      const uint8_t *src = (const uint8_t*)frame;
++      unsigned int row_bytes = width * 4;
++
++      for (i = 0; i < height; i++)
++         memcpy(dst_base_addr + dst_pitch * i, src + row_bytes * i,
++               row_bytes);
++   }
++   else
+    {
+-      for (j = 0; j < src_pitch / 2; j++)
++      /* RGUI supplies RGBA4444. Convert directly into the XRGB8888 DRM
++       * back buffer, replicating each colour nibble to eight bits. */
++      for (i = 0; i < height; i++)
+       {
+-         uint16_t src_pix = *((uint16_t*)frame + (src_pitch / 2 * i) + j);
+-         /* The hex AND is for keeping only the part we need for each component. */
+-         uint32_t R = (src_pix << 8) & 0x00FF0000;
+-         uint32_t G = (src_pix << 4) & 0x0000FF00;
+-         uint32_t B = (src_pix << 0) & 0x000000FF;
+-         line[j] = (0 | R | G | B);
++         const uint16_t *src_row = (const uint16_t*)frame + width * i;
++         uint32_t *dst_row = (uint32_t*)(dst_base_addr + dst_pitch * i);
++
++         for (j = 0; j < width; j++)
++         {
++            uint16_t src_pix = src_row[j];
++            uint32_t r = (src_pix >> 12) & 0xf;
++            uint32_t g = (src_pix >> 8) & 0xf;
++            uint32_t b = (src_pix >> 4) & 0xf;
++            dst_row[j] = (((r << 4) | r) << 16)
++               | (((g << 4) | g) << 8) | ((b << 4) | b);
++         }
+       }
+-      memcpy(dst_base_addr + (dst_pitch * i), (char*)line, dst_pitch);
+    }
+
+-   /* We update the menu surface if menu is active. */
+-   drm_surface_update(_drmvars, frame_output, _drmvars->menu_surface);
++   /* Present the completed menu back buffer. */
++   drm_page_flip(_drmvars->menu_surface);
+ }
+
+ static void drm_set_nonblock_state(void *a, bool b, bool c, unsigned d) { }
+--
+2.51.0
