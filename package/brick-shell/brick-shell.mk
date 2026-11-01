@@ -24,6 +24,8 @@ define BRICK_SHELL_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/brick-shell $(TARGET_DIR)/usr/bin/brick-shell
 	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/S20brick-shell \
 		$(TARGET_DIR)/etc/init.d/S20brick-shell
+	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/S41brick-efficiency \
+		$(TARGET_DIR)/etc/init.d/S41brick-efficiency
 	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/retroarch.cfg \
 		$(TARGET_DIR)/etc/retroarch/retroarch.cfg
 endef

@@ -15,6 +15,9 @@ const tty_path = "/dev/tty0";
 const KDSETMODE: u32 = 0x4b3a;
 const KD_TEXT: usize = 0;
 const KD_GRAPHICS: usize = 1;
+const FBIOGET_VSCREENINFO: u32 = 0x4600;
+const FBIOPAN_DISPLAY: u32 = 0x4606;
+const FB_ACTIVATE_VBL: u32 = 16;
 
 const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
@@ -33,6 +36,48 @@ const InputEvent = extern struct {
     code: u16,
     value: i32,
 };
+
+const FbBitfield = extern struct {
+    offset: u32,
+    length: u32,
+    msb_right: u32,
+};
+
+const FbVarScreeninfo = extern struct {
+    xres: u32,
+    yres: u32,
+    xres_virtual: u32,
+    yres_virtual: u32,
+    xoffset: u32,
+    yoffset: u32,
+    bits_per_pixel: u32,
+    grayscale: u32,
+    red: FbBitfield,
+    green: FbBitfield,
+    blue: FbBitfield,
+    transp: FbBitfield,
+    nonstd: u32,
+    activate: u32,
+    height: u32,
+    width: u32,
+    accel_flags: u32,
+    pixclock: u32,
+    left_margin: u32,
+    right_margin: u32,
+    upper_margin: u32,
+    lower_margin: u32,
+    hsync_len: u32,
+    vsync_len: u32,
+    sync: u32,
+    vmode: u32,
+    rotate: u32,
+    colorspace: u32,
+    reserved: [4]u32,
+};
+
+comptime {
+    if (@sizeOf(FbVarScreeninfo) != 160) @compileError("fb_var_screeninfo ABI mismatch");
+}
 
 const Geometry = struct {
     width: usize,
@@ -85,19 +130,37 @@ const Framebuffer = struct {
     fd: std.posix.fd_t,
     memory: []align(std.heap.page_size_min) u8,
     surface: render.Surface,
+    variable: FbVarScreeninfo,
+    page_count: usize,
+    draw_page: usize,
+    unblanked: bool = false,
 
     fn open(io: std.Io) !Framebuffer {
         const geometry = try parseGeometry(io);
         try geometry.validate();
         const fd = try std.posix.openat(std.posix.AT.FDCWD, framebuffer_path, .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);
         errdefer closeFd(io, fd, false);
-        const memory = try std.posix.mmap(null, geometry.stride * render.height, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0);
+        var variable: FbVarScreeninfo = undefined;
+        if (std.posix.errno(std.os.linux.ioctl(fd, FBIOGET_VSCREENINFO, @intFromPtr(&variable))) != .SUCCESS)
+            return error.FramebufferInfoFailed;
+        if (variable.xres != render.width or variable.yres != render.height or
+            variable.yres_virtual != geometry.virtual_height or geometry.virtual_height % render.height != 0)
+            return error.UnsupportedFramebufferGeometry;
+        const page_count = geometry.virtual_height / render.height;
+        if (page_count < 2 or variable.yoffset % render.height != 0 or variable.yoffset / render.height >= page_count)
+            return error.FramebufferPageFlippingUnavailable;
+        const display_page = variable.yoffset / render.height;
+        const draw_page = (display_page + 1) % page_count;
+        const memory = try std.posix.mmap(null, geometry.stride * geometry.virtual_height, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0);
         const pixel_pointer: [*]u32 = @ptrCast(@alignCast(memory.ptr));
         return .{
             .io = io,
             .fd = fd,
             .memory = memory,
-            .surface = .{ .pixels = pixel_pointer[0 .. render.width * render.height] },
+            .surface = .{ .pixels = pixel_pointer[draw_page * render.width * render.height ..][0 .. render.width * render.height] },
+            .variable = variable,
+            .page_count = page_count,
+            .draw_page = draw_page,
         };
     }
 
@@ -108,7 +171,18 @@ const Framebuffer = struct {
 
     fn show(self: *Framebuffer, tree: *const ui.Tree) !void {
         self.surface.render(tree);
-        try writeAttribute(self.io, blank_path, "0\n");
+        self.variable.xoffset = 0;
+        self.variable.yoffset = @intCast(self.draw_page * render.height);
+        self.variable.activate = FB_ACTIVATE_VBL;
+        if (std.posix.errno(std.os.linux.ioctl(self.fd, FBIOPAN_DISPLAY, @intFromPtr(&self.variable))) != .SUCCESS)
+            return error.FramebufferPresentFailed;
+        self.draw_page = (self.draw_page + 1) % self.page_count;
+        const pixel_pointer: [*]u32 = @ptrCast(@alignCast(self.memory.ptr));
+        self.surface.pixels = pixel_pointer[self.draw_page * render.width * render.height ..][0 .. render.width * render.height];
+        if (!self.unblanked) {
+            try writeAttribute(self.io, blank_path, "0\n");
+            self.unblanked = true;
+        }
     }
 };
 
@@ -194,6 +268,7 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
         if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
             return error.GamepadDisconnected;
         if ((poll_fds[0].revents & std.posix.POLL.IN) == 0) continue;
+        var changed = false;
         while (true) {
             const bytes_read = std.posix.read(input_fd, &buffer) catch |err| switch (err) {
                 error.WouldBlock => break,
@@ -206,12 +281,15 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
                 if (actionForEvent(event, &dropped)) |action| {
                     if (state.apply(action)) {
                         if (state.takeLaunch()) |index| return index;
-                        tree = state.tree();
-                        try framebuffer.show(&tree);
+                        changed = true;
                     }
                 }
             }
             if (bytes_read < buffer.len) break;
+        }
+        if (changed) {
+            tree = state.tree();
+            try framebuffer.show(&tree);
         }
     }
 }

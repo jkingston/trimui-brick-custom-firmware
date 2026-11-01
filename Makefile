@@ -19,6 +19,8 @@ configure:
 	test -f $(BASE)/Makefile
 	$(MAKE) -C $(BASE) O=$(O) EXTERNALS="$(EXTERNALS)" configure
 	$(BUILDROOT)/utils/config --file $(O)/.config --enable BR2_PACKAGE_BRICK_SHELL
+	$(BUILDROOT)/utils/config --file $(O)/.config --set-str BR2_ROOTFS_POST_BUILD_SCRIPT \
+		'$$(BR2_EXTERNAL_BRICK_PATH)/board/trimui/brick/post-build.sh $$(BR2_EXTERNAL_BRICK_UI_PATH)/board/trimui/brick/post-build.sh'
 	$(MAKE) -C $(BUILDROOT) O=$(O) BR2_EXTERNAL="$(EXTERNALS)" \
 		BR2_DL_DIR=$(BASE)/output/downloads olddefconfig
 	grep -qx 'BR2_PACKAGE_BRICK_SHELL=y' $(O)/.config
