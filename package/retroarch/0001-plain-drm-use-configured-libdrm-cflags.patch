@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brick Linux <brick-linux@localhost>
+Date: Sun, 1 Nov 2026 00:00:00 +0000
+Subject: [PATCH] plain_drm: use configured libdrm CFLAGS
+
+The hard-coded host include path breaks cross compilation. Use the libdrm
+flags supplied by the build system, as the KMS path already does.
+---
+ Makefile.common | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile.common b/Makefile.common
+index 1111111111..2222222222 100644
+--- a/Makefile.common
++++ b/Makefile.common
+@@ -1500,7 +1500,7 @@ endif
+ ifeq ($(HAVE_PLAIN_DRM), 1)
+    OBJ += gfx/drivers/drm_gfx.o
+    ifneq ($(HAVE_LAKKA), 1)
+-      INCLUDE_DIRS += -I/usr/include/libdrm
++      INCLUDE_DIRS += $(DRM_CFLAGS)
+    endif
+    LIBS += -ldrm
+    HAVE_AND_WILL_USE_DRM = 1
+-- 
+2.51.0

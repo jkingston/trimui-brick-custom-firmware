@@ -1,0 +1,10 @@
+config BR2_PACKAGE_LIBRETRO_FCEUMM
+	bool "FCEUmm libretro core"
+	depends on BR2_USE_MMU
+	depends on !BR2_STATIC_LIBS
+	select BR2_PACKAGE_RETROARCH
+	help
+	  FCEUmm NES/Famicom emulator core for RetroArch.
+
+comment "FCEUmm needs an MMU and a dynamic library toolchain"
+	depends on !BR2_USE_MMU || BR2_STATIC_LIBS
