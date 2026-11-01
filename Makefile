@@ -67,7 +67,7 @@ screenshots:
 	ZIG_GLOBAL_CACHE_DIR=$(ROOT)/.zig-global-cache \
 		$(ZIG) build-exe $(ROOT)/src/main.zig -OReleaseSafe \
 		-femit-bin=$(ROOT)/output/host/brick-shell-host
-	for screen in splash home games game; do \
+	for screen in splash home games game overlay overlay-states overlay-options; do \
 		$(ROOT)/output/host/brick-shell-host --snapshot $(ROOT)/output/screenshots/$$screen.ppm $$screen; \
 		magick $(ROOT)/output/screenshots/$$screen.ppm $(ROOT)/output/screenshots/$$screen.png; \
 	done

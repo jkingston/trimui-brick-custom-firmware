@@ -20,13 +20,23 @@ pub const MenuRow = struct {
 };
 pub const Battery = struct { bounds: Rect, percent: u8 };
 pub const Cover = struct { bounds: Rect, kind: catalog.Cover };
-
+pub const GameScene = struct { bounds: Rect };
+pub const OverlayRow = struct {
+    bounds: Rect,
+    label: []const u8,
+    detail: []const u8,
+    value: []const u8 = "",
+    selected: bool,
+    disclosure: bool = true,
+};
 pub const Element = union(enum) {
     bar: Bar,
     text: Text,
     menu_row: MenuRow,
     battery: Battery,
     cover: Cover,
+    game_scene: GameScene,
+    overlay_row: OverlayRow,
 };
 
 pub const Tree = struct {
@@ -59,6 +69,98 @@ pub const palette = struct {
     pub const gold = Color{ .r = 0xf2, .g = 0xb9, .b = 0x3b };
     pub const green = Color{ .r = 0x4e, .g = 0xa6, .b = 0x68 };
 };
+
+fn gameUnderlay(result: *Tree) void {
+    result.add(.{ .game_scene = .{ .bounds = .{ .x = 0, .y = 0, .width = 1024, .height = 768 } } });
+}
+
+fn gameCaption(result: *Tree) void {
+    result.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 600, .width = 430, .height = 114 }, .color = palette.paper } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 600, .width = 430, .height = 2 }, .color = palette.chrome_dark } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 30, .y = 626, .width = 370, .height = 24 }, .value = "MINEKART MADNESS", .color = palette.ink, .scale = 3 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 30, .y = 674, .width = 350, .height = 18 }, .value = "NINTENDO NES  -  38 MIN", .color = palette.quiet, .scale = 2 } });
+}
+
+fn overlayFrame(result: *Tree, title: []const u8, section: []const u8) void {
+    gameUnderlay(result);
+    gameCaption(result);
+    result.add(.{ .bar = .{ .bounds = .{ .x = 430, .y = 58, .width = 594, .height = 656 }, .color = palette.paper } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 428, .y = 58, .width = 2, .height = 656 }, .color = palette.chrome_dark } });
+    header(result, title);
+    result.add(.{ .text = .{ .bounds = .{ .x = 456, .y = 84, .width = 420, .height = 24 }, .value = section, .color = palette.quiet, .scale = 3 } });
+}
+
+pub fn overlayPause(selected: usize, state_slot: usize, saved: bool) Tree {
+    const labels = [_][]const u8{ "CONTINUE", "SAVE STATE", "LOAD STATE", "GAME OPTIONS", "SAVE AND EXIT" };
+    const slots = [_][]const u8{ "SLOT 3", "SLOT 2", "SLOT 1", "AUTO" };
+    var result = Tree{ .background = palette.paper };
+    overlayFrame(&result, "PAUSED", "GAME MENU");
+    for (labels, 0..) |label, index| {
+        const resolved_detail = if (index == 1)
+            (if (saved) "SAVED JUST NOW" else "LEFT RIGHT CHANGES SLOT")
+        else if (index == 2)
+            "AUTO-BACKUP BEFORE LOAD"
+        else if (index == 3)
+            "CONTROLS  DISPLAY  PERFORMANCE"
+        else if (index == 4)
+            "AUTO-SAVES FIRST"
+        else
+            "BACK TO PLAY";
+        result.add(.{ .overlay_row = .{
+            .bounds = .{ .x = 446, .y = 126 + @as(u16, @intCast(index)) * 96, .width = 562, .height = 86 },
+            .label = label,
+            .detail = resolved_detail,
+            .value = if (index == 1) slots[state_slot] else "",
+            .selected = index == selected,
+            .disclosure = index == 0 or index >= 2,
+        } });
+    }
+    footer(&result, "UP DOWN MOVE     A SELECT     B OR MENU RESUME");
+    return result;
+}
+
+pub fn overlayStates(selected: usize) Tree {
+    const labels = [_][]const u8{ "SLOT 3", "SLOT 2", "SLOT 1", "AUTO BACKUP" };
+    const details = [_][]const u8{ "NOW", "18 MIN AGO", "YESTERDAY", "BEFORE LAST LOAD" };
+    var result = Tree{ .background = palette.paper };
+    header(&result, "LOAD STATE");
+    result.add(.{ .text = .{ .bounds = .{ .x = 30, .y = 86, .width = 520, .height = 32 }, .value = "CHOOSE A MOMENT", .color = palette.quiet, .scale = 3 } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 46, .y = 196, .width = 576, .height = 426 }, .color = palette.chrome_dark } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 34, .y = 184, .width = 576, .height = 426 }, .color = palette.white } });
+    result.add(.{ .game_scene = .{ .bounds = .{ .x = 46, .y = 196, .width = 552, .height = 414 } } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 46, .y = 540, .width = 552, .height = 70 }, .color = palette.white } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 70, .y = 565, .width = 420, .height = 22 }, .value = labels[selected], .color = palette.ink, .scale = 3 } });
+    for (labels, details, 0..) |label, detail, index| {
+        result.add(.{ .overlay_row = .{
+            .bounds = .{ .x = 640, .y = 184 + @as(u16, @intCast(index)) * 104, .width = 354, .height = 94 },
+            .label = label,
+            .detail = detail,
+            .selected = index == selected,
+        } });
+    }
+    result.add(.{ .text = .{ .bounds = .{ .x = 36, .y = 670, .width = 900, .height = 18 }, .value = "A SAFETY BACKUP IS MADE BEFORE LOADING", .color = palette.blue, .scale = 2 } });
+    footer(&result, "A LOAD          B BACK          MENU RESUME");
+    return result;
+}
+
+pub fn overlayOptions(selected: usize, values: [4][]const u8) Tree {
+    const labels = [_][]const u8{ "CONTROLS", "DISPLAY", "PERFORMANCE", "SHADER" };
+    const details = [_][]const u8{ "PROFILE FOR THIS GAME", "SCALING MODE", "POWER PROFILE", "VIDEO FILTER" };
+    var result = Tree{ .background = palette.paper };
+    overlayFrame(&result, "GAME OPTIONS", "MINEKART MADNESS");
+    for (labels, details, 0..) |label, detail, index| {
+        result.add(.{ .overlay_row = .{
+            .bounds = .{ .x = 446, .y = 126 + @as(u16, @intCast(index)) * 108, .width = 562, .height = 98 },
+            .label = label,
+            .detail = detail,
+            .value = values[index],
+            .selected = index == selected,
+            .disclosure = false,
+        } });
+    }
+    footer(&result, "LEFT RIGHT CHANGE     A NEXT     B BACK     MENU RESUME");
+    return result;
+}
 
 fn header(result: *Tree, title: []const u8) void {
     result.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 0, .width = 1024, .height = 58 }, .color = palette.chrome } });

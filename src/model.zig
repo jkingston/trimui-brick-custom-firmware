@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const catalog = @import("catalog.zig");
+const input = @import("input.zig");
 const ui = @import("ui.zig");
 
-pub const Action = enum { up, down, select, back, menu };
+pub const Action = input.Action;
 pub const Page = enum { home, games, game, settings };
 
 const home_count = 4;
@@ -32,6 +33,8 @@ pub const Model = struct {
                 if (self.page != .game)
                     self.selected = (self.selected + 1) % self.itemCount();
             },
+            .left => {},
+            .right => {},
             .select => switch (self.page) {
                 .home => if (self.selected == 3) {
                     self.page = .settings;

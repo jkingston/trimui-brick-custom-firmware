@@ -31,6 +31,6 @@ binaries are ignored by Git.
 For desktop work, `make simulator` opens the same 1024x768 model, layout and
 software renderer used by the device, sized to the Brick's 3.2-inch 4:3 panel.
 Press P to switch between physical-size and 1:1 pixel views. Arrow keys navigate,
-Z/Enter confirms, X/Escape returns and H returns home. `make screenshots`
-renders the splash, home, library and game-detail screens without opening a
-window.
+Z/Enter confirms, X/Escape returns, H returns home and M previews the in-game
+overlay. `make screenshots` renders the shell and overlay screens without
+opening a window.

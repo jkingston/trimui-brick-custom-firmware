@@ -2,9 +2,12 @@
 // Desktop host for the exact model, layout and software renderer used on-device.
 const std = @import("std");
 const catalog = @import("catalog.zig");
+const input = @import("input.zig");
 const model = @import("model.zig");
+const overlay = @import("overlay.zig");
 const render = @import("render.zig");
 const retroarch = @import("retroarch.zig");
+const ui = @import("ui.zig");
 
 const Window = opaque {};
 const Renderer = opaque {};
@@ -113,6 +116,8 @@ const SDLK_RETURN: i32 = 13;
 const SDLK_ESCAPE: i32 = 27;
 const SDLK_UP: i32 = 1073741906;
 const SDLK_DOWN: i32 = 1073741905;
+const SDLK_LEFT: i32 = 1073741904;
+const SDLK_RIGHT: i32 = 1073741903;
 
 const WindowSize = struct { width: i32, height: i32 };
 
@@ -134,9 +139,8 @@ fn failSdl(sdl: *const Sdl, operation: []const u8) !void {
     return error.SdlFailure;
 }
 
-fn draw(sdl: *const Sdl, renderer: *Renderer, texture: *Texture, pixels: []u32, state: *const model.Model) !void {
-    var tree = state.tree();
-    (render.Surface{ .pixels = pixels }).render(&tree);
+fn drawTree(sdl: *const Sdl, renderer: *Renderer, texture: *Texture, pixels: []u32, tree: *const ui.Tree) !void {
+    (render.Surface{ .pixels = pixels }).render(tree);
     if (sdl.update_texture(texture, null, pixels.ptr, render.width * @sizeOf(u32)) != 0)
         return failSdl(sdl, "SDL_UpdateTexture");
     if (sdl.render_clear(renderer) != 0) return failSdl(sdl, "SDL_RenderClear");
@@ -144,10 +148,12 @@ fn draw(sdl: *const Sdl, renderer: *Renderer, texture: *Texture, pixels: []u32, 
     sdl.render_present(renderer);
 }
 
-fn actionForKey(key: i32) ?model.Action {
+fn actionForKey(key: i32) ?input.Action {
     return switch (key) {
         SDLK_UP, 'w' => .up,
         SDLK_DOWN, 's' => .down,
+        SDLK_LEFT, 'a' => .left,
+        SDLK_RIGHT, 'd' => .right,
         SDLK_RETURN, 'z' => .select,
         SDLK_ESCAPE, 'x' => .back,
         'h' => .menu,
@@ -157,10 +163,21 @@ fn actionForKey(key: i32) ?model.Action {
 
 pub fn main(init: std.process.Init) !void {
     var physical_size = true;
+    var overlay_visible = false;
+    var walkthrough = false;
     var arguments = std.process.Args.Iterator.init(init.minimal.args);
     _ = arguments.next();
     while (arguments.next()) |argument| {
-        if (std.mem.eql(u8, argument, "--pixels")) physical_size = false else if (!std.mem.eql(u8, argument, "--physical")) return error.UnknownArgument;
+        if (std.mem.eql(u8, argument, "--pixels")) {
+            physical_size = false;
+        } else if (std.mem.eql(u8, argument, "--physical")) {
+            physical_size = true;
+        } else if (std.mem.eql(u8, argument, "--overlay")) {
+            overlay_visible = true;
+        } else if (std.mem.eql(u8, argument, "--walkthrough")) {
+            overlay_visible = true;
+            walkthrough = true;
+        } else return error.UnknownArgument;
     }
 
     var sdl = try Sdl.open();
@@ -171,7 +188,7 @@ pub fn main(init: std.process.Init) !void {
     const physical = physicalWindowSize(&sdl);
     const initial_size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
     const window = sdl.create_window(
-        "Brick UI Simulator - P physical/pixels, arrows, Z/A, X/B, H home",
+        "Brick UI Simulator - M game menu, arrows, Z/A, X/B, P scale",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         initial_size.width,
@@ -191,7 +208,43 @@ pub fn main(init: std.process.Init) !void {
     const pixels = try init.gpa.alloc(u32, render.width * render.height);
     defer init.gpa.free(pixels);
     var state = model.Model{};
-    try draw(&sdl, renderer, texture, pixels, &state);
+    var game_overlay = overlay.Model{};
+    var tree = if (overlay_visible) game_overlay.tree() else state.tree();
+    try drawTree(&sdl, renderer, texture, pixels, &tree);
+
+    if (walkthrough) {
+        const Step = struct { wait_ms: u32, action: input.Action };
+        const steps = [_]Step{
+            .{ .wait_ms = 1300, .action = .down },
+            .{ .wait_ms = 750, .action = .select },
+            .{ .wait_ms = 1250, .action = .down },
+            .{ .wait_ms = 700, .action = .select },
+            .{ .wait_ms = 1200, .action = .down },
+            .{ .wait_ms = 700, .action = .down },
+            .{ .wait_ms = 700, .action = .down },
+            .{ .wait_ms = 700, .action = .up },
+            .{ .wait_ms = 700, .action = .back },
+            .{ .wait_ms = 750, .action = .down },
+            .{ .wait_ms = 700, .action = .select },
+            .{ .wait_ms = 1200, .action = .down },
+            .{ .wait_ms = 750, .action = .right },
+            .{ .wait_ms = 750, .action = .down },
+            .{ .wait_ms = 750, .action = .right },
+            .{ .wait_ms = 750, .action = .down },
+            .{ .wait_ms = 750, .action = .right },
+            .{ .wait_ms = 900, .action = .back },
+        };
+        for (steps) |step| {
+            try std.Io.sleep(init.io, .fromMilliseconds(step.wait_ms), .awake);
+            _ = game_overlay.apply(step.action);
+            tree = game_overlay.tree();
+            try drawTree(&sdl, renderer, texture, pixels, &tree);
+            if (game_overlay.takeCommand()) |command|
+                std.debug.print("overlay: {s}\n", .{@tagName(command)});
+        }
+        try std.Io.sleep(init.io, .fromMilliseconds(1400), .awake);
+        return;
+    }
 
     while (true) {
         var event: Event = undefined;
@@ -205,13 +258,33 @@ pub fn main(init: std.process.Init) !void {
             const size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
             sdl.set_window_size(window, size.width, size.height);
             changed = true;
+        } else if (key == 'm') {
+            overlay_visible = !overlay_visible;
+            if (overlay_visible) game_overlay = .{};
+            changed = true;
         } else if (actionForKey(key)) |action| {
-            changed = state.apply(action);
-            if (state.takeLaunch()) |index| {
-                const argv = retroarch.arguments(&catalog.games[index]);
-                std.debug.print("launch: {s} {s} {s} {s} {s} {s}\n", .{ argv[0], argv[1], argv[2], argv[3], argv[4], argv[5] });
+            if (overlay_visible) {
+                changed = game_overlay.apply(action);
+                if (game_overlay.takeCommand()) |command| {
+                    std.debug.print("overlay: {s}\n", .{@tagName(command)});
+                    switch (command) {
+                        .resume_game, .exit_game => overlay_visible = false,
+                        .load_state => overlay_visible = false,
+                        .save_state => {},
+                    }
+                    changed = true;
+                }
+            } else {
+                changed = state.apply(action);
+                if (state.takeLaunch()) |index| {
+                    const argv = retroarch.arguments(&catalog.games[index]);
+                    std.debug.print("launch: {s} {s} {s} {s} {s} {s}\n", .{ argv[0], argv[1], argv[2], argv[3], argv[4], argv[5] });
+                }
             }
         }
-        if (changed) try draw(&sdl, renderer, texture, pixels, &state);
+        if (changed) {
+            tree = if (overlay_visible) game_overlay.tree() else state.tree();
+            try drawTree(&sdl, renderer, texture, pixels, &tree);
+        }
     }
 }

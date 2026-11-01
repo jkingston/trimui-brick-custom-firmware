@@ -2,6 +2,7 @@
 const std = @import("std");
 const linux_backend = @import("linux_backend.zig");
 const model = @import("model.zig");
+const overlay = @import("overlay.zig");
 const render = @import("render.zig");
 const scheduler = @import("scheduler.zig");
 const ui = @import("ui.zig");
@@ -38,7 +39,20 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
         state.page = .game;
         state.game_index = 1;
     }
-    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash() else state.tree();
+    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash() else if (std.mem.eql(u8, screen, "overlay")) blk: {
+        const game_overlay = overlay.Model{};
+        break :blk game_overlay.tree();
+    } else if (std.mem.eql(u8, screen, "overlay-states")) blk: {
+        var game_overlay = overlay.Model{};
+        game_overlay.layer = .states;
+        game_overlay.state_slot = 1;
+        break :blk game_overlay.tree();
+    } else if (std.mem.eql(u8, screen, "overlay-options")) blk: {
+        var game_overlay = overlay.Model{};
+        game_overlay.layer = .options;
+        game_overlay.selected = 1;
+        break :blk game_overlay.tree();
+    } else state.tree();
     surface.render(&tree);
     try writePpm(io, path, pixels);
 }
@@ -76,6 +90,7 @@ pub fn main(init: std.process.Init) !void {
 test {
     _ = linux_backend;
     _ = model;
+    _ = overlay;
     _ = @import("retroarch.zig");
     _ = scheduler;
 }

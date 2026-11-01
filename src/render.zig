@@ -15,11 +15,17 @@ pub const Surface = struct {
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .cover => |cover| self.drawCover(cover),
+            .game_scene => |scene| self.drawGameScene(scene),
+            .overlay_row => |item| self.drawOverlayRow(item),
         };
     }
 
     fn pack(color: ui.Color) u32 {
         return @bitCast(color);
+    }
+
+    fn percent(value: u16, amount: u16) u16 {
+        return @intCast((@as(u32, value) * amount) / 100);
     }
 
     fn fill(self: Surface, rect: ui.Rect, color: ui.Color) void {
@@ -47,6 +53,86 @@ pub const Surface = struct {
             self.drawText(row.bounds.x + 28, row.bounds.y + 61, row.detail, detail_color, 2);
         }
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 25, color);
+    }
+
+    fn drawGameScene(self: Surface, scene: ui.GameScene) void {
+        const b = scene.bounds;
+        self.fill(b, ui.palette.navy);
+        const horizon = b.y + percent(b.height, 46);
+        self.fill(.{ .x = b.x, .y = horizon, .width = b.width, .height = b.height - (horizon - b.y) }, ui.Color{ .r = 0x9e, .g = 0x59, .b = 0x67 });
+        const water = b.y + percent(b.height, 72);
+        self.fill(.{ .x = b.x, .y = water, .width = b.width, .height = b.height - (water - b.y) }, ui.Color{ .r = 0x18, .g = 0x43, .b = 0x4d });
+
+        const sun = @max(@as(u16, 30), b.width / 10);
+        self.fill(.{
+            .x = b.x + percent(b.width, 72),
+            .y = b.y + percent(b.height, 18),
+            .width = sun,
+            .height = sun,
+        }, ui.palette.gold);
+
+        const mountain_y = b.y + percent(b.height, 54);
+        var step: u16 = 0;
+        while (step < 7) : (step += 1) {
+            const inset = step * b.width / 50;
+            self.fill(.{
+                .x = b.x + b.width / 12 + inset,
+                .y = mountain_y - step * 9,
+                .width = percent(b.width, 40) - inset * 2,
+                .height = 10,
+            }, ui.Color{ .r = 0x21, .g = 0x32, .b = 0x49 });
+        }
+        step = 0;
+        while (step < 7) : (step += 1) {
+            const inset = step * b.width / 50;
+            self.fill(.{
+                .x = b.x + percent(b.width, 48) + inset,
+                .y = mountain_y + 20 - step * 9,
+                .width = percent(b.width, 44) - inset * 2,
+                .height = 10,
+            }, ui.Color{ .r = 0x18, .g = 0x28, .b = 0x3d });
+        }
+
+        const track_y = b.y + percent(b.height, 80);
+        const rail = @max(@as(u16, 3), b.width / 100);
+        self.fill(.{ .x = b.x + percent(b.width, 27), .y = track_y, .width = rail, .height = b.height - (track_y - b.y) }, ui.palette.gold);
+        self.fill(.{ .x = b.x + percent(b.width, 67), .y = track_y, .width = rail, .height = b.height - (track_y - b.y) }, ui.palette.gold);
+        step = 0;
+        while (step < 5) : (step += 1) {
+            self.fill(.{
+                .x = b.x + percent(b.width, 20),
+                .y = track_y + step * @max(@as(u16, 9), b.height / 45),
+                .width = percent(b.width, 55),
+                .height = rail,
+            }, ui.palette.chrome_dark);
+        }
+        self.fill(.{
+            .x = b.x + percent(b.width, 41),
+            .y = track_y - b.height / 12,
+            .width = b.width / 6,
+            .height = b.height / 11,
+        }, ui.palette.coral);
+    }
+
+    fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
+        const background = if (item.selected) ui.palette.blue else ui.palette.white;
+        self.fill(item.bounds, background);
+        if (item.selected) {
+            self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 8, .height = item.bounds.height }, ui.palette.blue_dark);
+        } else {
+            self.fill(.{ .x = item.bounds.x, .y = item.bounds.y + item.bounds.height - 1, .width = item.bounds.width, .height = 1 }, ui.palette.chrome);
+        }
+        const label_color = if (item.selected) ui.palette.white else ui.palette.ink;
+        const detail_color = if (item.selected) ui.palette.white else ui.palette.quiet;
+        self.drawText(item.bounds.x + 28, item.bounds.y + 18, item.label, label_color, 3);
+        self.drawText(item.bounds.x + 30, item.bounds.y + 57, item.detail, detail_color, 2);
+        if (item.value.len != 0) {
+            const value_width: u16 = @intCast(item.value.len * 18);
+            const right_padding: u16 = if (item.disclosure) 70 else 28;
+            self.drawText(item.bounds.x + item.bounds.width - right_padding - value_width, item.bounds.y + 18, item.value, label_color, 3);
+        }
+        if (item.disclosure)
+            self.drawChevron(item.bounds.x + item.bounds.width - 40, item.bounds.y + 29, label_color);
     }
 
     fn drawCover(self: Surface, cover: ui.Cover) void {

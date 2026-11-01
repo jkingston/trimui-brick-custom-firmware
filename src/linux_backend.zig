@@ -28,6 +28,8 @@ const BTN_EAST: u16 = 0x131;
 const BTN_MODE: u16 = 0x13c;
 const BTN_DPAD_UP: u16 = 0x220;
 const BTN_DPAD_DOWN: u16 = 0x221;
+const BTN_DPAD_LEFT: u16 = 0x222;
+const BTN_DPAD_RIGHT: u16 = 0x223;
 
 const InputEvent = extern struct {
     seconds: isize,
@@ -235,6 +237,8 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
     return switch (event.code) {
         BTN_DPAD_UP => .up,
         BTN_DPAD_DOWN => .down,
+        BTN_DPAD_LEFT => .left,
+        BTN_DPAD_RIGHT => .right,
         BTN_EAST => if (event.value == 1) .select else null,
         BTN_SOUTH => if (event.value == 1) .back else null,
         BTN_MODE => if (event.value == 1) .menu else null,
@@ -325,6 +329,7 @@ test "navigation repeats and dropped streams resynchronise" {
     const testing = std.testing;
     var dropped = false;
     try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_DPAD_DOWN, .value = 1 }, &dropped).?);
+    try testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_DPAD_LEFT, .value = 1 }, &dropped).?);
     try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_DPAD_DOWN, .value = 2 }, &dropped).?);
     try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_EAST, .value = 2 }, &dropped) == null);
     try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_SYN, .code = SYN_DROPPED, .value = 0 }, &dropped) == null);
