@@ -16,20 +16,13 @@ const KD_GRAPHICS: usize = 1;
 
 const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
-const KEY_F1: u16 = 59;
-const KEY_F2: u16 = 60;
 const SYN_REPORT: u16 = 0x00;
 const SYN_DROPPED: u16 = 0x03;
 const BTN_SOUTH: u16 = 0x130;
 const BTN_EAST: u16 = 0x131;
-const BTN_NORTH: u16 = 0x133;
-const BTN_WEST: u16 = 0x134;
-const BTN_SELECT: u16 = 0x13a;
 const BTN_MODE: u16 = 0x13c;
 const BTN_DPAD_UP: u16 = 0x220;
 const BTN_DPAD_DOWN: u16 = 0x221;
-const BTN_DPAD_LEFT: u16 = 0x222;
-const BTN_DPAD_RIGHT: u16 = 0x223;
 
 const InputEvent = extern struct {
     seconds: isize,
@@ -166,16 +159,9 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
     return switch (event.code) {
         BTN_DPAD_UP => .up,
         BTN_DPAD_DOWN => .down,
-        BTN_DPAD_LEFT => .left,
-        BTN_DPAD_RIGHT => .right,
-        BTN_EAST => if (event.value == 1) .confirm else null,
+        BTN_EAST => if (event.value == 1) .select else null,
         BTN_SOUTH => if (event.value == 1) .back else null,
-        BTN_NORTH => if (event.value == 1) .options else null,
-        BTN_WEST => if (event.value == 1) .favorite else null,
-        BTN_SELECT => null,
-        BTN_MODE => if (event.value == 1) .home else null,
-        KEY_F1 => if (event.value == 1) .switcher else null,
-        KEY_F2 => null,
+        BTN_MODE => if (event.value == 1) .menu else null,
         else => null,
     };
 }
@@ -226,6 +212,18 @@ pub fn run(io: std.Io) !void {
             if (bytes_read < buffer.len) break;
         }
     }
+}
+
+pub fn probe(io: std.Io) !void {
+    var console = try Console.open(io);
+    defer console.close();
+    var framebuffer = try Framebuffer.open(io);
+    defer framebuffer.close();
+    const input_fd = try discoverGamepad(io);
+    defer closeFd(io, input_fd, true);
+    var state = model.Model{};
+    var tree = state.tree();
+    try framebuffer.show(&tree);
 }
 
 test "navigation repeats and dropped streams resynchronise" {

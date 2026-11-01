@@ -1,6 +1,11 @@
 BRICK_SHELL_VERSION = 1
 BRICK_SHELL_SITE = $(BR2_EXTERNAL_BRICK_UI_PATH)
 BRICK_SHELL_SITE_METHOD = local
+BRICK_SHELL_OVERRIDE_SRCDIR_RSYNC_EXCLUSIONS = \
+	--exclude output \
+	--exclude .zig-cache \
+	--exclude .zig-global-cache \
+	--exclude design
 BRICK_SHELL_LICENSE = GPL-2.0-only
 BRICK_SHELL_LICENSE_FILES = COPYING
 BRICK_SHELL_DEPENDENCIES = host-zig-bin
@@ -16,8 +21,8 @@ endef
 
 define BRICK_SHELL_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/brick-shell $(TARGET_DIR)/usr/bin/brick-shell
-	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/S02brick-shell \
-		$(TARGET_DIR)/etc/init.d/S02brick-shell
+	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/S11brick-shell \
+		$(TARGET_DIR)/etc/init.d/S11brick-shell
 endef
 
 $(eval $(generic-package))

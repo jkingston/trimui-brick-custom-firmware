@@ -111,10 +111,6 @@ const SDLK_RETURN: i32 = 13;
 const SDLK_ESCAPE: i32 = 27;
 const SDLK_UP: i32 = 1073741906;
 const SDLK_DOWN: i32 = 1073741905;
-const SDLK_LEFT: i32 = 1073741904;
-const SDLK_RIGHT: i32 = 1073741903;
-const SDLK_F1: i32 = 1073741882;
-const SDLK_F2: i32 = 1073741883;
 
 const WindowSize = struct { width: i32, height: i32 };
 
@@ -150,31 +146,9 @@ fn actionForKey(key: i32) ?model.Action {
     return switch (key) {
         SDLK_UP, 'w' => .up,
         SDLK_DOWN, 's' => .down,
-        SDLK_LEFT, 'a' => .left,
-        SDLK_RIGHT, 'd' => .right,
-        SDLK_RETURN, 'z' => .confirm,
+        SDLK_RETURN, 'z' => .select,
         SDLK_ESCAPE, 'x' => .back,
-        'h' => .home,
-        SDLK_F1 => .switcher,
-        'o' => .options,
-        'f' => .favorite,
-        else => null,
-    };
-}
-
-fn directPage(key: i32) ?model.Page {
-    return switch (key) {
-        '1' => .systems,
-        '2' => .games,
-        '3' => .game_detail,
-        '4' => .quick_menu,
-        '5' => .checkpoints,
-        '6' => .game_settings,
-        '7' => .storage,
-        '8' => .empty_library,
-        '9' => .save_data,
-        '0' => .save_conflict,
-        SDLK_F2 => .storage,
+        'h' => .menu,
         else => null,
     };
 }
@@ -195,7 +169,7 @@ pub fn main(init: std.process.Init) !void {
     const physical = physicalWindowSize(&sdl);
     const initial_size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
     const window = sdl.create_window(
-        "Brick UI Simulator - P physical/pixels, arrows, Z/A, X/B, 1-0 screens",
+        "Brick UI Simulator - P physical/pixels, arrows, Z/A, X/B, H home",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         initial_size.width,
@@ -214,7 +188,7 @@ pub fn main(init: std.process.Init) !void {
 
     const pixels = try init.gpa.alloc(u32, render.width * render.height);
     defer init.gpa.free(pixels);
-    var state = model.Model.preview(.games, 3);
+    var state = model.Model{};
     try draw(&sdl, renderer, texture, pixels, &state);
 
     while (true) {
@@ -228,9 +202,6 @@ pub fn main(init: std.process.Init) !void {
             physical_size = !physical_size;
             const size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
             sdl.set_window_size(window, size.width, size.height);
-            changed = true;
-        } else if (directPage(key)) |page| {
-            state = model.Model.preview(page, if (page == .games) 3 else 0);
             changed = true;
         } else if (actionForKey(key)) |action| {
             changed = state.apply(action);
