@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const catalog = @import("catalog.zig");
 const model = @import("model.zig");
 const render = @import("render.zig");
+const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
 
 const framebuffer_path = "/dev/fb0";
@@ -166,7 +168,7 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
     };
 }
 
-pub fn run(io: std.Io) !void {
+fn runSession(io: std.Io, state: *model.Model) !?usize {
     // Stop fbcon from drawing its text cursor over the product surface.
     var console = try Console.open(io);
     defer console.close();
@@ -177,7 +179,6 @@ pub fn run(io: std.Io) !void {
     try framebuffer.show(&splash_tree);
     try std.Io.sleep(io, .fromMilliseconds(250), .awake);
 
-    var state = model.Model{};
     var tree = state.tree();
     try framebuffer.show(&tree);
 
@@ -204,12 +205,28 @@ pub fn run(io: std.Io) !void {
             for (events) |event| {
                 if (actionForEvent(event, &dropped)) |action| {
                     if (state.apply(action)) {
+                        if (state.takeLaunch()) |index| return index;
                         tree = state.tree();
                         try framebuffer.show(&tree);
                     }
                 }
             }
             if (bytes_read < buffer.len) break;
+        }
+    }
+}
+
+pub fn run(io: std.Io) !void {
+    var state = model.Model{};
+    while (true) {
+        const game_index = (try runSession(io, &state)) orelse continue;
+        const term = retroarch.launch(io, &catalog.games[game_index]) catch {
+            state.launchFailed();
+            continue;
+        };
+        switch (term) {
+            .exited => |status| if (status != 0) state.launchFailed(),
+            else => state.launchFailed(),
         }
     }
 }

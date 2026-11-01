@@ -27,11 +27,18 @@ fn writePpm(io: std.Io, path: []const u8, pixels: []const u32) !void {
     try writer.interface.flush();
 }
 
-fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, splash_screen: bool) !void {
+fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: []const u8) !void {
     const pixels = try allocator.alloc(u32, render.width * render.height);
     defer allocator.free(pixels);
     const surface = render.Surface{ .pixels = pixels };
-    var tree = if (splash_screen) ui.splash() else (model.Model{}).tree();
+    var state = model.Model{};
+    if (std.mem.eql(u8, screen, "games")) {
+        state.page = .games;
+    } else if (std.mem.eql(u8, screen, "game")) {
+        state.page = .game;
+        state.game_index = 1;
+    }
+    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash() else state.tree();
     surface.render(&tree);
     try writePpm(io, path, pixels);
 }
@@ -40,13 +47,13 @@ pub fn main(init: std.process.Init) !void {
     var arguments = std.process.Args.Iterator.init(init.minimal.args);
     _ = arguments.next();
     const command = arguments.next() orelse {
-        try snapshot(init.io, init.gpa, "brick-home.ppm", false);
+        try snapshot(init.io, init.gpa, "brick-home.ppm", "home");
         return;
     };
     if (std.mem.eql(u8, command, "--snapshot")) {
         const path = arguments.next() orelse return error.MissingPath;
         const screen = arguments.next() orelse "home";
-        try snapshot(init.io, init.gpa, path, std.mem.eql(u8, screen, "splash"));
+        try snapshot(init.io, init.gpa, path, screen);
         return;
     }
     if (std.mem.eql(u8, command, "--idle-proof")) {
@@ -69,5 +76,6 @@ pub fn main(init: std.process.Init) !void {
 test {
     _ = linux_backend;
     _ = model;
+    _ = @import("retroarch.zig");
     _ = scheduler;
 }

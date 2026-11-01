@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Desktop host for the exact model, layout and software renderer used on-device.
 const std = @import("std");
+const catalog = @import("catalog.zig");
 const model = @import("model.zig");
 const render = @import("render.zig");
+const retroarch = @import("retroarch.zig");
 
 const Window = opaque {};
 const Renderer = opaque {};
@@ -205,6 +207,10 @@ pub fn main(init: std.process.Init) !void {
             changed = true;
         } else if (actionForKey(key)) |action| {
             changed = state.apply(action);
+            if (state.takeLaunch()) |index| {
+                const argv = retroarch.arguments(&catalog.games[index]);
+                std.debug.print("launch: {s} {s} {s} {s} {s} {s}\n", .{ argv[0], argv[1], argv[2], argv[3], argv[4], argv[5] });
+            }
         }
         if (changed) try draw(&sdl, renderer, texture, pixels, &state);
     }

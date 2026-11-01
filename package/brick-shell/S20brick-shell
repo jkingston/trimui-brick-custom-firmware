@@ -2,6 +2,9 @@
 
 case "$1" in
 	start)
+		mountpoint -q /data || { echo 'Persistent data is unavailable'; exit 1; }
+		mkdir -p /data/roms/nes /data/saves/sram /data/saves/states
+		chmod 755 /data/roms /data/roms/nes /data/saves /data/saves/sram /data/saves/states
 		printf 'Starting Brick shell: '
 		start-stop-daemon -S -q -b -m -p /run/brick-shell.pid \
 			-x /usr/bin/brick-shell -- --run
