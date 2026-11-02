@@ -24,9 +24,9 @@ tree second. Set `BASE=/path/to/base` when they are not siblings.
 `make release` produces and verifies a clean complete image under
 `output/release/images`.
 
-`make demo-roms` downloads two pinned, MIT-licensed NES homebrew games for
-local testing. Their sources and hashes are recorded in `roms/`; the ROM
-binaries are ignored by Git.
+`make demo-roms` downloads pinned, publicly distributed NES, Game Boy,
+Game Boy Advance and Mega Drive homebrew games for local testing. Their sources and
+hashes are recorded in `roms/`; the ROM binaries are ignored by Git.
 
 For desktop work, `make simulator` opens the same 1024x768 model, layout and
 software renderer used by the device, sized to the Brick's 3.2-inch 4:3 panel.
@@ -34,3 +34,55 @@ Press P to switch between physical-size and 1:1 pixel views. Arrow keys navigate
 Z/Enter confirms, X/Escape returns, H returns home and M previews the in-game
 overlay. `make screenshots` renders the shell and overlay screens without
 opening a window.
+
+## SD card content
+
+The content partition is mounted at `/data`. Use `Roms/` and `BIOS/` at its root,
+following the [TrimUI/CrossMix convention](https://github.com/cizia64/CrossMix-OS/wiki/Emulators).
+
+| System | Folder under `Roms/` |
+| --- | --- |
+| NES | `FC` |
+| Game Boy / Color / Advance | `GB` / `GBC` / `GBA` |
+| Master System / Game Gear / Mega Drive | `MS` / `GG` / `MD` |
+| SNES / PlayStation | `SFC` / `PS` |
+| Neo Geo / Neo Geo Pocket (Color) | `NEOGEO` / `NGP` |
+
+The device scans ROM folders at shell startup, including subfolders. It accepts
+`roms`/`ROMS`, case-insensitive system codes, aliases (`nes`, `snes`, `psx`,
+`genesis`, `megadrive`, `mastersystem`, `gamegear`, `ngpc`), and MinUI-style
+names such as `Super Nintendo (SFC)`. Existing ROM folders are not moved.
+Hidden folders, artwork and `neogeo.zip` are excluded. PS1 tracks launch through
+CUE files; M3U playlists hide their referenced discs from the list. Use relative
+paths inside playlists for portability.
+
+Put PS1 BIOS files such as `scph5501.bin` in `BIOS/`. FBNeo also searches
+`BIOS/fbneo/` and the game's directory for `neogeo.zip`; keep it zipped.
+BIOS filenames must match the core's requirements exactly.
+
+Save RAM and states are isolated under `Saves/games/<path-id>/`, then by core.
+The ID hashes the ROM path relative to the content partition: moving the card to
+another mount preserves it; renaming a ROM or folder changes it. `content-path.txt`
+in each save directory identifies the corresponding ROM. Keep paths stable when
+copying a library between devices.
+
+On first launch, unambiguous legacy saves and states are copied from `Saves/` or
+`saves/`; originals remain intact. Conflicting legacy saves block launch with an
+error. New progress is never overwritten by a later import. At startup the older
+`system/` BIOS directory is renamed to `BIOS/` if the destination does not exist.
+
+Launch checks distinguish unavailable content, missing cores and unwritable save
+storage. The latest emulator output is kept in `/run/brick-shell/last-game.log`
+until reboot. BIOS validation and automatic save relocation after renames remain
+unfinished.
+
+The image builds FCEUmm, mGBA, Genesis Plus GX, Snes9x, PCSX ReARMed,
+FBNeo (Neo Geo subset) and Beetle NeoPop. PS1 can use its HLE BIOS fallback,
+but a retail BIOS is recommended for compatibility. Neo Geo requires a matching
+BIOS set. Core availability does not guarantee compatibility with every game.
+
+The simulator uses fixtures by default. To browse actual content, run
+`output/host/brick-ui-simulator --data-root /path/to/content` after
+`make simulator-build`. `make simulator-check` downloads the homebrew samples,
+scans them and checks library navigation with SDL's headless renderer, saving
+screenshots under `output/library-check/`. It checks launch requests, not emulation.

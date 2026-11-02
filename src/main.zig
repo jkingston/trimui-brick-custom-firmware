@@ -7,7 +7,7 @@ const render = @import("render.zig");
 const scheduler = @import("scheduler.zig");
 const ui = @import("ui.zig");
 
-fn writePpm(io: std.Io, path: []const u8, pixels: []const u32) !void {
+pub fn writePpm(io: std.Io, path: []const u8, pixels: []const u32) !void {
     const file = try std.Io.Dir.cwd().createFile(io, path, .{});
     defer file.close(io);
     var output_buffer: [16 * 1024]u8 = undefined;
@@ -88,6 +88,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 test {
+    _ = render;
     _ = linux_backend;
     _ = model;
     _ = overlay;

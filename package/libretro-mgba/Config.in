@@ -1,0 +1,10 @@
+config BR2_PACKAGE_LIBRETRO_MGBA
+	bool "mGBA libretro core"
+	depends on BR2_USE_MMU
+	depends on !BR2_STATIC_LIBS
+	select BR2_PACKAGE_RETROARCH
+	help
+	  mGBA Game Boy, Game Boy Color and Game Boy Advance emulator core.
+
+comment "mGBA needs an MMU and a dynamic library toolchain"
+	depends on !BR2_USE_MMU || BR2_STATIC_LIBS

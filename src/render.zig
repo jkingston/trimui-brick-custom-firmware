@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+const std = @import("std");
 const ui = @import("ui.zig");
 
 pub const width = 1024;
@@ -11,7 +12,7 @@ pub const Surface = struct {
         @memset(self.pixels, pack(tree.background));
         for (tree.slice()) |element| switch (element) {
             .bar => |bar| self.fill(bar.bounds, bar.color),
-            .text => |text| self.drawText(text.bounds.x, text.bounds.y, text.value, text.color, text.scale),
+            .text => |text| self.drawTextBounded(text.bounds.x, text.bounds.y, text.bounds.width, text.value, text.color, text.scale),
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .cover => |cover| self.drawCover(cover),
@@ -29,6 +30,7 @@ pub const Surface = struct {
     }
 
     fn fill(self: Surface, rect: ui.Rect, color: ui.Color) void {
+        if (rect.x >= width or rect.y >= height) return;
         const right = @min(@as(usize, rect.x) + rect.width, width);
         const bottom = @min(@as(usize, rect.y) + rect.height, height);
         var y: usize = rect.y;
@@ -47,10 +49,10 @@ pub const Surface = struct {
         }
         const color = if (row.selected) ui.palette.white else ui.palette.ink;
         const label_y = if (row.detail.len == 0) row.bounds.y + 27 else row.bounds.y + 17;
-        self.drawText(row.bounds.x + 26, label_y, row.label, color, if (row.detail.len == 0) 4 else 3);
+        self.drawTextBounded(row.bounds.x + 26, label_y, row.bounds.width - 76, row.label, color, if (row.detail.len == 0) 4 else 3);
         if (row.detail.len != 0) {
             const detail_color = if (row.selected) ui.palette.white else ui.palette.quiet;
-            self.drawText(row.bounds.x + 28, row.bounds.y + 61, row.detail, detail_color, 2);
+            self.drawTextBounded(row.bounds.x + 28, row.bounds.y + 61, row.bounds.width - 76, row.detail, detail_color, 2);
         }
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 25, color);
     }
@@ -188,6 +190,37 @@ pub const Surface = struct {
                 const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 105));
                 self.drawText(inner.x + inner.width / 7, inner.y + inner.height / 8, "MINEKART", ui.palette.gold, word_scale);
             },
+            .adjustris => {
+                self.fill(inner, ui.palette.ink);
+                const block = inner.width / 7;
+                self.fill(.{ .x = inner.x + block, .y = inner.y + block, .width = block * 2, .height = block }, ui.palette.green);
+                self.fill(.{ .x = inner.x + block * 3, .y = inner.y + block * 2, .width = block, .height = block * 3 }, ui.palette.gold);
+                self.fill(.{ .x = inner.x + block * 4, .y = inner.y + block * 4, .width = block * 2, .height = block }, ui.palette.coral);
+                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 105));
+                self.drawText(inner.x + inner.width / 10, inner.y + inner.height * 3 / 4, "ADJUSTRIS", ui.palette.white, word_scale);
+            },
+            .rkanoid => {
+                self.fill(inner, ui.palette.navy);
+                const row_h = @max(@as(u16, 6), inner.height / 18);
+                const colors = [_]ui.Color{ ui.palette.coral, ui.palette.gold, ui.palette.green, ui.palette.sky };
+                for (colors, 0..) |color, row| {
+                    self.fill(.{ .x = inner.x + inner.width / 8, .y = inner.y + inner.height / 6 + @as(u16, @intCast(row)) * (row_h + 4), .width = inner.width * 3 / 4, .height = row_h }, color);
+                }
+                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height * 4 / 5, .width = inner.width / 3, .height = row_h }, ui.palette.white);
+                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 105));
+                self.drawText(inner.x + inner.width / 4, inner.y + inner.height / 16, "RKANOID", ui.palette.white, word_scale);
+            },
+            .willow => {
+                self.fill(inner, ui.palette.navy);
+                const moon = inner.width / 5;
+                self.fill(.{ .x = inner.x + inner.width * 3 / 5, .y = inner.y + inner.height / 8, .width = moon, .height = moon }, ui.palette.gold);
+                self.fill(.{ .x = inner.x, .y = inner.y + inner.height * 2 / 3, .width = inner.width, .height = inner.height / 3 }, ui.palette.green);
+                const trunk = @max(@as(u16, 6), inner.width / 24);
+                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height / 3, .width = trunk, .height = inner.height / 2 }, ui.palette.chrome_dark);
+                self.fill(.{ .x = inner.x + inner.width / 5, .y = inner.y + inner.height / 4, .width = inner.width / 3, .height = inner.height / 4 }, ui.palette.green);
+                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 115));
+                self.drawText(inner.x + inner.width / 10, inner.y + inner.height / 14, "WILLOWS DREAM", ui.palette.white, word_scale);
+            },
         }
     }
 
@@ -212,9 +245,18 @@ pub const Surface = struct {
     }
 
     fn drawText(self: Surface, x: u16, y: u16, value: []const u8, color: ui.Color, scale: u8) void {
+        self.drawTextBounded(x, y, width, value, color, scale);
+    }
+
+    fn drawTextBounded(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, scale: u8) void {
+        if (x >= width or y >= height or scale == 0) return;
+        const available = @min(max_width, width - x);
+        const columns = available / (6 * @as(u16, scale));
+        const count = @min(value.len, columns);
         var cursor: u16 = x;
-        for (value) |character| {
-            const rows = glyph(character);
+        for (value[0..count], 0..) |character, index| {
+            const truncated = value.len > columns and columns >= 3 and index >= columns - 3;
+            const rows = glyph(if (truncated) '.' else std.ascii.toUpper(character));
             for (rows, 0..) |bits, row| {
                 var column: u3 = 0;
                 while (column < 5) : (column += 1) {
@@ -271,9 +313,40 @@ fn glyph(character: u8) [7]u5 {
         '7' => .{ 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000 },
         '8' => .{ 0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110 },
         '9' => .{ 0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110 },
+        '.' => .{ 0, 0, 0, 0, 0, 0b00100, 0b00100 },
         ':' => .{ 0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0 },
         '-' => .{ 0, 0, 0, 0b11111, 0, 0, 0 },
         ' ' => .{ 0, 0, 0, 0, 0, 0, 0 },
         else => .{ 0b11111, 0b00001, 0b00010, 0b00100, 0b00100, 0, 0b00100 },
     };
+}
+
+test "long text stays within its bounds and offscreen rectangles are harmless" {
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    @memset(pixels, 0);
+    const surface = Surface{ .pixels = pixels };
+    surface.fill(.{ .x = 2000, .y = 10, .width = 5, .height = 5 }, ui.palette.white);
+    surface.drawTextBounded(10, 10, 90, "B" ** 255, ui.palette.white, 3);
+    var written: usize = 0;
+    for (pixels, 0..) |pixel, index| {
+        if (pixel != 0) {
+            written += 1;
+            try std.testing.expect(index % width >= 10 and index % width < 100);
+            try std.testing.expect(index / width >= 10 and index / width < 31);
+        }
+    }
+    try std.testing.expect(written > 0);
+}
+
+test "lowercase titles render like uppercase titles" {
+    const a = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(a);
+    const b = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(b);
+    @memset(a, 0);
+    @memset(b, 0);
+    (Surface{ .pixels = a }).drawText(10, 10, "hello pong", ui.palette.white, 3);
+    (Surface{ .pixels = b }).drawText(10, 10, "HELLO PONG", ui.palette.white, 3);
+    try std.testing.expectEqualSlices(u32, a, b);
 }

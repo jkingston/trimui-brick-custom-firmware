@@ -1,8 +1,17 @@
 config BR2_PACKAGE_BRICK_SHELL
 	bool "Brick product shell"
 	depends on BR2_aarch64
+	depends on BR2_USE_MMU
+	depends on !BR2_STATIC_LIBS
+	depends on BR2_INSTALL_LIBSTDCPP
 	select BR2_PACKAGE_HOST_ZIG_BIN
 	select BR2_PACKAGE_RETROARCH
 	select BR2_PACKAGE_LIBRETRO_FCEUMM
+	select BR2_PACKAGE_LIBRETRO_MGBA
+	select BR2_PACKAGE_LIBRETRO_GENESIS_PLUS_GX
+	select BR2_PACKAGE_LIBRETRO_SNES9X
+	select BR2_PACKAGE_LIBRETRO_PCSX_REARMED
+	select BR2_PACKAGE_LIBRETRO_FBNEO
+	select BR2_PACKAGE_LIBRETRO_BEETLE_NGP
 	help
 	  Install the event-driven Brick user interface and product boot splash.

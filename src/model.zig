@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const retroarch = @import("retroarch.zig");
 const catalog = @import("catalog.zig");
 const input = @import("input.zig");
 const ui = @import("ui.zig");
@@ -11,11 +12,12 @@ const home_count = 4;
 const settings_count = 5;
 
 pub const Model = struct {
+    games: []const catalog.Game = &catalog.games,
     page: Page = .home,
     selected: usize = 0,
     game_index: usize = 0,
     pending_launch: ?usize = null,
-    launch_failed: bool = false,
+    launch_failed: ?retroarch.Failure = null,
     revision: u64 = 1,
 
     pub fn apply(self: *Model, action: Action) bool {
@@ -26,11 +28,11 @@ pub const Model = struct {
 
         switch (action) {
             .up => {
-                if (self.page != .game)
+                if (self.page != .game and self.itemCount() > 0)
                     self.selected = if (self.selected == 0) self.itemCount() - 1 else self.selected - 1;
             },
             .down => {
-                if (self.page != .game)
+                if (self.page != .game and self.itemCount() > 0)
                     self.selected = (self.selected + 1) % self.itemCount();
             },
             .left => {},
@@ -41,16 +43,16 @@ pub const Model = struct {
                     self.selected = 0;
                 } else {
                     self.page = .games;
-                    self.selected = if (self.selected == 0) 0 else @min(self.game_index, catalog.games.len - 1);
+                    self.selected = if (self.selected == 0) 0 else if (self.games.len == 0) 0 else @min(self.game_index, self.games.len - 1);
                 },
-                .games => {
+                .games => if (self.games.len > 0) {
                     self.game_index = self.selected;
                     self.page = .game;
-                    self.launch_failed = false;
+                    self.launch_failed = null;
                 },
                 .game => {
                     self.pending_launch = self.game_index;
-                    self.launch_failed = false;
+                    self.launch_failed = null;
                 },
                 .settings => {},
             },
@@ -63,7 +65,7 @@ pub const Model = struct {
                 .game => {
                     self.page = .games;
                     self.selected = self.game_index;
-                    self.launch_failed = false;
+                    self.launch_failed = null;
                 },
                 .settings => {
                     self.page = .home;
@@ -73,7 +75,7 @@ pub const Model = struct {
             .menu => {
                 self.page = .home;
                 self.selected = 0;
-                self.launch_failed = false;
+                self.launch_failed = null;
             },
         }
 
@@ -89,15 +91,15 @@ pub const Model = struct {
         return pending;
     }
 
-    pub fn launchFailed(self: *Model) void {
-        self.launch_failed = true;
+    pub fn launchFailed(self: *Model, failure: retroarch.Failure) void {
+        self.launch_failed = failure;
         self.revision += 1;
     }
 
     fn itemCount(self: *const Model) usize {
         return switch (self.page) {
             .home => home_count,
-            .games => catalog.games.len,
+            .games => self.games.len,
             .game => 1,
             .settings => settings_count,
         };
@@ -106,8 +108,8 @@ pub const Model = struct {
     pub fn tree(self: *const Model) ui.Tree {
         return switch (self.page) {
             .home => ui.home(self.selected),
-            .games => ui.library(self.selected),
-            .game => ui.gameDetail(self.game_index, self.launch_failed),
+            .games => ui.library(self.games, self.selected),
+            .game => ui.gameDetail(self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
             .settings => ui.settings(self.selected),
         };
     }
@@ -135,4 +137,46 @@ test "navigation wraps and back preserves context" {
     try std.testing.expect(state.apply(.back));
     try std.testing.expectEqual(Page.home, state.page);
     try std.testing.expectEqual(@as(usize, 3), state.selected);
+}
+
+test "empty library navigation cannot launch or underflow" {
+    var state = Model{ .games = &.{} };
+    _ = state.apply(.select);
+    _ = state.apply(.up);
+    _ = state.apply(.down);
+    _ = state.apply(.select);
+    try std.testing.expectEqual(Page.games, state.page);
+    try std.testing.expect(state.takeLaunch() == null);
+    _ = state.tree();
+}
+
+test "large libraries render a bounded window around selection" {
+    const entries = [_]catalog.Game{catalog.games[0]} ** 100;
+    var state = Model{ .games = &entries, .page = .games, .selected = 99 };
+    const tree = state.tree();
+    try std.testing.expect(tree.len < tree.elements.len);
+    _ = state.apply(.down);
+    try std.testing.expectEqual(@as(usize, 0), state.selected);
+}
+
+test "launch errors remain visible until retry or leaving details" {
+    var state = Model{ .page = .game };
+    state.launchFailed(.missing_core);
+    try std.testing.expectEqual(@as(?retroarch.Failure, .missing_core), state.launch_failed);
+    const tree = state.tree();
+    var found = false;
+    for (tree.slice()) |element| switch (element) {
+        .text => |text| if (std.mem.eql(u8, text.value, "EMULATOR NOT INSTALLED")) {
+            found = true;
+        },
+        else => {},
+    };
+    try std.testing.expect(found);
+    _ = state.apply(.select);
+    try std.testing.expect(state.launch_failed == null);
+    try std.testing.expectEqual(@as(?usize, 0), state.takeLaunch());
+    state.launchFailed(.save_storage);
+    _ = state.apply(.back);
+    try std.testing.expect(state.launch_failed == null);
+    try std.testing.expectEqual(Page.games, state.page);
 }

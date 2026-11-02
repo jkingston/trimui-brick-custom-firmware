@@ -162,13 +162,19 @@ fn actionForKey(key: i32) ?input.Action {
 }
 
 pub fn main(init: std.process.Init) !void {
+    var data_root: ?[]const u8 = null;
+    var library_check: ?[]const u8 = null;
     var physical_size = true;
     var overlay_visible = false;
     var walkthrough = false;
     var arguments = std.process.Args.Iterator.init(init.minimal.args);
     _ = arguments.next();
     while (arguments.next()) |argument| {
-        if (std.mem.eql(u8, argument, "--pixels")) {
+        if (std.mem.eql(u8, argument, "--data-root")) {
+            data_root = arguments.next() orelse return error.MissingDataRoot;
+        } else if (std.mem.eql(u8, argument, "--library-check")) {
+            library_check = arguments.next() orelse return error.MissingSnapshotDirectory;
+        } else if (std.mem.eql(u8, argument, "--pixels")) {
             physical_size = false;
         } else if (std.mem.eql(u8, argument, "--physical")) {
             physical_size = true;
@@ -207,10 +213,46 @@ pub fn main(init: std.process.Init) !void {
 
     const pixels = try init.gpa.alloc(u32, render.width * render.height);
     defer init.gpa.free(pixels);
+    var arena = std.heap.ArenaAllocator.init(init.gpa);
+    defer arena.deinit();
     var state = model.Model{};
+    if (data_root) |root| {
+        const absolute = try std.Io.Dir.cwd().realPathFileAlloc(init.io, root, arena.allocator());
+        state.games = try catalog.discover(init.io, arena.allocator(), absolute);
+    }
     var game_overlay = overlay.Model{};
     var tree = if (overlay_visible) game_overlay.tree() else state.tree();
     try drawTree(&sdl, renderer, texture, pixels, &tree);
+
+    if (library_check) |directory| {
+        try std.Io.Dir.cwd().createDirPath(init.io, directory);
+        _ = state.apply(.select);
+        tree = state.tree();
+        try drawTree(&sdl, renderer, texture, pixels, &tree);
+        try @import("main.zig").writePpm(init.io, try std.fs.path.join(arena.allocator(), &.{ directory, "library.ppm" }), pixels);
+        for (state.games, 0..) |game, index| {
+            if (state.selected != index) return error.SelectionMismatch;
+            _ = state.apply(.select);
+            tree = state.tree();
+            try drawTree(&sdl, renderer, texture, pixels, &tree);
+            if (index == 0) try @import("main.zig").writePpm(init.io, try std.fs.path.join(arena.allocator(), &.{ directory, "detail.ppm" }), pixels);
+            _ = state.apply(.select);
+            if (state.takeLaunch() != index) return error.LaunchMismatch;
+            const argv = retroarch.arguments(&game);
+            std.debug.print("launch intent: {s} / {s}\n", .{ argv[4], game.rom_path });
+            _ = state.apply(.back);
+            tree = state.tree();
+            try drawTree(&sdl, renderer, texture, pixels, &tree);
+            _ = state.apply(.down);
+        }
+        if (state.selected != 0) return error.WrapMismatch;
+        _ = state.apply(.up);
+        tree = state.tree();
+        try drawTree(&sdl, renderer, texture, pixels, &tree);
+        try @import("main.zig").writePpm(init.io, try std.fs.path.join(arena.allocator(), &.{ directory, "library-last.ppm" }), pixels);
+        std.debug.print("Simulator library check passed: {d} games (launch intents only)\n", .{state.games.len});
+        return;
+    }
 
     if (walkthrough) {
         const Step = struct { wait_ms: u32, action: input.Action };
@@ -277,7 +319,7 @@ pub fn main(init: std.process.Init) !void {
             } else {
                 changed = state.apply(action);
                 if (state.takeLaunch()) |index| {
-                    const argv = retroarch.arguments(&catalog.games[index]);
+                    const argv = retroarch.arguments(&state.games[index]);
                     std.debug.print("launch: {s} {s} {s} {s} {s} {s}\n", .{ argv[0], argv[1], argv[2], argv[3], argv[4], argv[5] });
                 }
             }

@@ -299,16 +299,19 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
 }
 
 pub fn run(io: std.Io) !void {
-    var state = model.Model{};
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const library = try catalog.discover(io, arena.allocator(), "/data");
+    var state = model.Model{ .games = library };
     while (true) {
         const game_index = (try runSession(io, &state)) orelse continue;
-        const term = retroarch.launch(io, &catalog.games[game_index]) catch {
-            state.launchFailed();
+        const term = retroarch.launch(io, &state.games[game_index], state.games) catch |err| {
+            state.launchFailed(retroarch.Failure.fromError(err));
             continue;
         };
         switch (term) {
-            .exited => |status| if (status != 0) state.launchFailed(),
-            else => state.launchFailed(),
+            .exited => |status| if (status != 0) state.launchFailed(.emulator),
+            else => state.launchFailed(.emulator),
         }
     }
 }

@@ -3,8 +3,17 @@
 case "$1" in
 	start)
 		mountpoint -q /data || { echo 'Persistent data is unavailable'; exit 1; }
-		mkdir -p /data/roms/nes /data/saves/sram /data/saves/states
-		chmod 755 /data/roms /data/roms/nes /data/saves /data/saves/sram /data/saves/states
+		for system in FC GB GBC GBA MS GG MD SFC PS NEOGEO NGP; do
+			mkdir -p "/data/Roms/$system" || exit 1
+		done
+		# Preserve existing save data from the earlier layout.
+		if [ ! -e /data/Saves ] && [ -d /data/saves ]; then
+			mv /data/saves /data/Saves || exit 1
+		fi
+		if [ ! -e /data/BIOS ] && [ -d /data/system ]; then
+			mv /data/system /data/BIOS || exit 1
+		fi
+		mkdir -p /data/BIOS /data/Saves/sram /data/Saves/states || exit 1
 		printf 'Starting Brick shell: '
 		start-stop-daemon -S -q -b -m -p /run/brick-shell.pid \
 			-x /usr/bin/brick-shell -- --run

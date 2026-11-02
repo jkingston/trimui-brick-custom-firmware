@@ -8,7 +8,7 @@ override O := $(abspath $(O))
 EXTERNALS := $(BASE) $(ROOT)
 RELEASE_O ?= $(ROOT)/output/release
 ZIG ?= zig
-ROM_DIR := $(ROOT)/roms/nes
+ROM_ROOT := $(ROOT)/roms
 
 .PHONY: all configure check clean release simulator simulator-pixels simulator-build screenshots demo-roms
 all: configure
@@ -72,10 +72,15 @@ screenshots:
 		magick $(ROOT)/output/screenshots/$$screen.ppm $(ROOT)/output/screenshots/$$screen.png; \
 	done
 
-demo-roms: $(ROM_DIR)/falling.nes $(ROM_DIR)/minekart-madness.nes
+demo-roms: \
+	$(ROM_ROOT)/FC/falling.nes \
+	$(ROM_ROOT)/FC/minekart-madness.nes \
+	$(ROM_ROOT)/GB/adjustris.gb \
+	$(ROM_ROOT)/GBA/rkanoid.gba \
+	$(ROM_ROOT)/MD/willows-dream.md
 	cd $(ROOT)/roms && sha256sum -c SHA256SUMS
 
-$(ROM_DIR)/falling.nes:
+$(ROM_ROOT)/FC/falling.nes:
 	mkdir -p $(@D)
 	curl -fL --retry 3 \
 		https://raw.githubusercontent.com/xram64/falling-nes/52dcb8a951200562e696dfc2aba5d4d14edd0078/falling.nes \
@@ -83,10 +88,41 @@ $(ROM_DIR)/falling.nes:
 	echo 'e22b947542c2d7e595bf84725b333be7af8189c5965b9c53e356a249c7d79943  $@.tmp' | sha256sum -c -
 	mv $@.tmp $@
 
-$(ROM_DIR)/minekart-madness.nes:
+$(ROM_ROOT)/FC/minekart-madness.nes:
 	mkdir -p $(@D)
 	curl -fL --retry 3 \
 		https://github.com/mhughson/mbh-cart/releases/download/v1.0/minekart_madness_mmc1.nes \
 		-o $@.tmp
 	echo '45d18d8b3662e6c08043759e550e658bcd23e48394a00f24de5e5fbe57e4900a  $@.tmp' | sha256sum -c -
 	mv $@.tmp $@
+
+$(ROM_ROOT)/GB/adjustris.gb:
+	mkdir -p $(@D)
+	curl -fL --retry 3 \
+		https://github.com/tbsp/Adjustris/releases/download/v1.1/adjustris.gb \
+		-o $@.tmp
+	echo 'b6c8affe6d906419cfc99ff459718f33a1868af03254a2f65cea2a9430394712  $@.tmp' | sha256sum -c -
+	mv $@.tmp $@
+
+$(ROM_ROOT)/GBA/rkanoid.gba:
+	mkdir -p $(@D)
+	curl -fL --retry 3 \
+		https://raw.githubusercontent.com/benoror/gbadev/b61cb1e8d6646789c833522a7d3d64adda27581a/public/roms/%40rkanoid%20MODERN%20-%20RECOMPILED.gba \
+		-o $@.tmp
+	echo '99ae825ffb1b7e8b48b33cd2715ceb8ca524858f99fee4b22938489460083d94  $@.tmp' | sha256sum -c -
+	mv $@.tmp $@
+
+$(ROM_ROOT)/MD/willows-dream.md:
+	mkdir -p $(@D)
+	curl -fL --retry 3 \
+		https://raw.githubusercontent.com/marcellodash/willows-dream/9ff80c7ef5f7b31e178b57fd4542f8ceee27eca4/out/rom.bin \
+		-o $@.tmp
+	echo '4200bfebc7a15d5cac1bdc1f5aa5e61c3d7b02f2b68af913275720436c2645b0  $@.tmp' | sha256sum -c -
+	mv $@.tmp $@
+
+.PHONY: simulator-check
+simulator-check: simulator-build demo-roms
+	mkdir -p $(ROOT)/output/sim-data/Roms $(ROOT)/output/sim-empty
+	cp -R $(ROM_ROOT)/FC $(ROM_ROOT)/GB $(ROM_ROOT)/GBA $(ROM_ROOT)/MD $(ROOT)/output/sim-data/Roms/
+	SDL_VIDEODRIVER=dummy $(ROOT)/output/host/brick-ui-simulator --data-root $(ROOT)/output/sim-data --library-check $(ROOT)/output/library-check
+	SDL_VIDEODRIVER=dummy $(ROOT)/output/host/brick-ui-simulator --data-root $(ROOT)/output/sim-empty --library-check $(ROOT)/output/empty-check

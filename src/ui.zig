@@ -191,25 +191,31 @@ pub fn home(selected: usize) Tree {
     }
     result.add(.{ .cover = .{ .bounds = .{ .x = 604, .y = 130, .width = 320, .height = 320 }, .kind = .library } });
     result.add(.{ .text = .{ .bounds = .{ .x = 640, .y = 486, .width = 260, .height = 32 }, .value = "YOUR LIBRARY", .color = palette.ink, .scale = 3 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 703, .y = 536, .width = 180, .height = 24 }, .value = "2 GAMES", .color = palette.quiet, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 703, .y = 536, .width = 180, .height = 24 }, .value = "BROWSE GAMES", .color = palette.quiet, .scale = 2 } });
     footer(&result, "A SELECT        B BACK        MENU HOME");
     return result;
 }
 
-pub fn library(selected: usize) Tree {
+pub fn library(games: []const catalog.Game, selected: usize) Tree {
     var result = Tree{ .background = palette.paper };
     header(&result, "GAMES");
     result.add(.{ .text = .{ .bounds = .{ .x = 30, .y = 82, .width = 300, .height = 28 }, .value = "ALL GAMES", .color = palette.quiet, .scale = 3 } });
     result.add(.{ .bar = .{ .bounds = .{ .x = 520, .y = 58, .width = 2, .height = 656 }, .color = palette.chrome_dark } });
-    for (catalog.games, 0..) |game, index| {
+    if (games.len == 0) {
+        result.add(.{ .text = .{ .bounds = .{ .x = 36, .y = 150, .width = 460, .height = 32 }, .value = "NO GAMES FOUND", .color = palette.ink, .scale = 3 } });
+        footer(&result, "COPY GAMES TO ROMS       B BACK");
+        return result;
+    }
+    const first = if (selected >= 5) selected - 4 else 0;
+    for (games[first..@min(first + 5, games.len)], first..) |game, index| {
         result.add(.{ .menu_row = .{
-            .bounds = .{ .x = 18, .y = 126 + @as(u16, @intCast(index)) * 108, .width = 486, .height = 98 },
+            .bounds = .{ .x = 18, .y = 126 + @as(u16, @intCast(index - first)) * 108, .width = 486, .height = 98 },
             .label = game.title,
             .detail = game.system,
             .selected = index == selected,
         } });
     }
-    const game = catalog.games[selected];
+    const game = games[selected];
     result.add(.{ .cover = .{ .bounds = .{ .x = 612, .y = 112, .width = 322, .height = 322 }, .kind = game.cover } });
     result.add(.{ .text = .{ .bounds = .{ .x = 582, .y = 476, .width = 390, .height = 32 }, .value = game.title, .color = palette.ink, .scale = 3 } });
     result.add(.{ .text = .{ .bounds = .{ .x = 650, .y = 526, .width = 300, .height = 24 }, .value = game.summary, .color = palette.quiet, .scale = 2 } });
@@ -217,8 +223,7 @@ pub fn library(selected: usize) Tree {
     return result;
 }
 
-pub fn gameDetail(index: usize, launch_failed: bool) Tree {
-    const game = catalog.games[index];
+pub fn gameDetail(game: catalog.Game, launch_failed: ?[]const u8) Tree {
     var result = Tree{ .background = palette.paper };
     header(&result, game.system);
     result.add(.{ .cover = .{ .bounds = .{ .x = 76, .y = 128, .width = 420, .height = 420 }, .kind = game.cover } });
@@ -228,8 +233,8 @@ pub fn gameDetail(index: usize, launch_failed: bool) Tree {
     result.add(.{ .bar = .{ .bounds = .{ .x = 548, .y = 292, .width = 8, .height = 88 }, .color = palette.blue_dark } });
     result.add(.{ .text = .{ .bounds = .{ .x = 666, .y = 323, .width = 200, .height = 28 }, .value = "PLAY", .color = palette.white, .scale = 4 } });
     result.add(.{ .text = .{ .bounds = .{ .x = 550, .y = 424, .width = 370, .height = 22 }, .value = "SAVES STAY ON THIS SD CARD", .color = palette.quiet, .scale = 2 } });
-    if (launch_failed)
-        result.add(.{ .text = .{ .bounds = .{ .x = 550, .y = 482, .width = 420, .height = 22 }, .value = "RETROARCH NOT INSTALLED", .color = palette.coral, .scale = 2 } });
+    if (launch_failed) |message|
+        result.add(.{ .text = .{ .bounds = .{ .x = 550, .y = 482, .width = 420, .height = 22 }, .value = message, .color = palette.coral, .scale = 2 } });
     footer(&result, "A PLAY          B BACK");
     return result;
 }

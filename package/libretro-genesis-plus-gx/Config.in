@@ -1,0 +1,10 @@
+config BR2_PACKAGE_LIBRETRO_GENESIS_PLUS_GX
+	bool "Genesis Plus GX libretro core"
+	depends on BR2_USE_MMU
+	depends on !BR2_STATIC_LIBS
+	select BR2_PACKAGE_RETROARCH
+	help
+	  Sega SG-1000, Master System, Game Gear and Mega Drive emulator core.
+
+comment "Genesis Plus GX needs an MMU and a dynamic library toolchain"
+	depends on !BR2_USE_MMU || BR2_STATIC_LIBS
