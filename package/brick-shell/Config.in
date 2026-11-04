@@ -13,6 +13,5 @@ config BR2_PACKAGE_BRICK_SHELL
 	select BR2_PACKAGE_LIBRETRO_PCSX_REARMED
 	select BR2_PACKAGE_LIBRETRO_FBNEO
 	select BR2_PACKAGE_LIBRETRO_BEETLE_NGP
-	select BR2_PACKAGE_BRICK_CARTRIDGE_MODELS
 	help
 	  Install the event-driven Brick user interface and product boot splash.

@@ -83,15 +83,14 @@ BIOS set. Core availability does not guarantee compatibility with every game.
 
 ## Cartridge artwork
 
-The firmware includes a checksum-pinned set of neutral cartridge and disc models.
-Game-specific artwork is installed only for ROMs present on the data card. Clone
+Neutral cartridge models and game-specific artwork are installed only for ROMs
+present on the data card. Clone
 the [asset repository](https://github.com/jkingston/trimui-brick-cartridge-assets),
 then synchronize through the Brick's USB network interface:
 
 ```sh
-INDEX=https://github.com/jkingston/trimui-brick-cartridge-assets/releases/download/v0.1.1/artwork-index.json
-uv run python tools/sync_ssh_assets.py root@192.168.7.2 --index "$INDEX" --dry-run
-uv run python tools/sync_ssh_assets.py root@192.168.7.2 --index "$INDEX"
+python3 tools/sync_ssh_assets.py --dry-run
+python3 tools/sync_ssh_assets.py
 ```
 
 The first command reports unmatched games without writing. The second transfers

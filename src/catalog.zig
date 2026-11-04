@@ -250,7 +250,7 @@ test "discovery applies installed artwork metadata without changing launch paths
     });
     const library = try discover(io, allocator, root);
     try std.testing.expectEqual(@as(usize, 1), library.len);
-    try std.testing.expectEqualStrings("/usr/share/brick/cartridge-models/models/gb.glb", library[0].assets.model.?);
+    try std.testing.expect(std.mem.endsWith(u8, library[0].assets.model.?, "/Assets/Brick/models/gb.glb"));
     try std.testing.expect(std.mem.endsWith(u8, library[0].assets.front.?, "/Assets/Brick/objects/aa/label.png"));
     try std.testing.expect(std.mem.endsWith(u8, library[0].rom_path, "/Roms/GB/Tetris.gb"));
 }

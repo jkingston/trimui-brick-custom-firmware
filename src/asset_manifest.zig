@@ -2,7 +2,6 @@
 const std = @import("std");
 
 const maximum_manifest_bytes = 16 * 1024 * 1024;
-const model_root = "/usr/share/brick/cartridge-models/models";
 
 const Entry = struct {
     rom: []const u8,
@@ -50,14 +49,15 @@ fn surfacePath(allocator: std.mem.Allocator, asset_root: []const u8, surfaces: ?
     return try confinedPath(allocator, asset_root, member.string);
 }
 
-fn modelPath(allocator: std.mem.Allocator, id: ?[]const u8) !?[]const u8 {
+fn modelPath(allocator: std.mem.Allocator, asset_root: []const u8, id: ?[]const u8) !?[]const u8 {
     const value = id orelse return null;
     if (value.len == 0) return error.InvalidAssetModel;
     for (value) |character| {
         if (!std.ascii.isAlphanumeric(character) and character != '-')
             return error.InvalidAssetModel;
     }
-    return try std.fmt.allocPrint(allocator, "{s}/{s}.glb", .{ model_root, value });
+    const relative = try std.fmt.allocPrint(allocator, "models/{s}.glb", .{value});
+    return try confinedPath(allocator, asset_root, relative);
 }
 
 pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
@@ -76,7 +76,7 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !st
         if (entry.model == null or entry.surfaces == null) continue;
         const rom = try confinedPath(allocator, data_root, entry.rom);
         const assets = Assets{
-            .model = try modelPath(allocator, entry.model),
+            .model = try modelPath(allocator, asset_root, entry.model),
             .front = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.front"),
             .top = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.top"),
             .rear = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.rear"),
@@ -105,7 +105,7 @@ test "manifest maps confined ROM and artwork paths" {
     defer assets.deinit();
     const rom = try std.fs.path.join(allocator, &.{ root, "Roms/GB/Tetris.gb" });
     const mapped = assets.get(rom).?;
-    try std.testing.expectEqualStrings("/usr/share/brick/cartridge-models/models/gb.glb", mapped.model.?);
+    try std.testing.expect(std.mem.endsWith(u8, mapped.model.?, "/Assets/Brick/models/gb.glb"));
     try std.testing.expect(std.mem.endsWith(u8, mapped.front.?, "/Assets/Brick/objects/aa/label.png"));
 }
 
