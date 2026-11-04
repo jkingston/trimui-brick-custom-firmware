@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const linux_backend = @import("linux_backend.zig");
+const library_scan = @import("library_scan.zig");
 const model = @import("model.zig");
 const overlay = @import("overlay.zig");
 const render = @import("render.zig");
@@ -84,6 +85,13 @@ pub fn main(init: std.process.Init) !void {
         try linux_backend.probe(init.io);
         return;
     }
+    if (std.mem.eql(u8, command, "--scan-library")) {
+        const root = arguments.next() orelse "/data";
+        var arena = std.heap.ArenaAllocator.init(init.gpa);
+        defer arena.deinit();
+        try library_scan.write(init.io, arena.allocator(), root);
+        return;
+    }
     return error.UnknownCommand;
 }
 
@@ -94,4 +102,6 @@ test {
     _ = overlay;
     _ = @import("retroarch.zig");
     _ = scheduler;
+    _ = @import("asset_manifest.zig");
+    _ = library_scan;
 }
