@@ -81,6 +81,24 @@ FBNeo (Neo Geo subset) and Beetle NeoPop. PS1 can use its HLE BIOS fallback,
 but a retail BIOS is recommended for compatibility. Neo Geo requires a matching
 BIOS set. Core availability does not guarantee compatibility with every game.
 
+## Cartridge artwork
+
+The firmware includes a checksum-pinned set of neutral cartridge and disc models.
+Game-specific artwork is installed only for ROMs present on the data card. Clone
+the [asset repository](https://github.com/jkingston/trimui-brick-cartridge-assets),
+then synchronize through the Brick's USB network interface:
+
+```sh
+INDEX=https://github.com/jkingston/trimui-brick-cartridge-assets/releases/download/v0.1.1/artwork-index.json
+uv run python tools/sync_ssh_assets.py root@192.168.7.2 --index "$INDEX" --dry-run
+uv run python tools/sync_ssh_assets.py root@192.168.7.2 --index "$INDEX"
+```
+
+The first command reports unmatched games without writing. The second transfers
+only matched labels and atomically installs them under `/data/Assets/Brick`.
+ROM contents never leave the device; cartridge files are hashed on the Brick.
+The workflow does not require wireless networking.
+
 The simulator uses fixtures by default. To browse actual content, run
 `output/host/brick-ui-simulator --data-root /path/to/content` after
 `make simulator-build`. `make simulator-check` downloads the homebrew samples,
