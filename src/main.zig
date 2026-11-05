@@ -36,6 +36,7 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
     @memset(pixels, 0xff13253c);
     const surface = render.Surface{ .pixels = pixels };
     var state = model.Model{};
+    if (std.mem.eql(u8, screen, "home")) state.page = .home;
     if (games) |library| {
         state.games = library;
         if (library.len > 0) {
@@ -125,4 +126,6 @@ test {
     _ = @import("asset_manifest.zig");
     _ = @import("input_repeat.zig");
     _ = library_scan;
+    _ = @import("shelf_motion.zig");
+    _ = @import("library_preferences.zig");
 }

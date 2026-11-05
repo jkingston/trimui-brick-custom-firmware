@@ -4,7 +4,7 @@ Product layer for the TrimUI Brick base firmware. The current spike combines
 an iPod-inspired game library with a small event-driven Zig shell and an
 explicit RetroArch launch boundary.
 
-The shell is a dependency-free Zig program. It builds a fixed-capacity
+The Zig shell uses PangoFT2 for multilingual text. It builds a fixed-capacity
 declarative UI tree, renders directly to the Linux framebuffer, and waits in
 `poll()` when nothing changes. Selecting a game releases the framebuffer,
 runs `retroarch -L <core> <content>`, then restores the shell when RetroArch
@@ -30,9 +30,14 @@ hashes are recorded in `roms/`; the ROM binaries are ignored by Git.
 For desktop work, `mise run simulator` opens the same 1024x768 model, layout and
 software renderer used by the device, sized to the Brick's 3.2-inch 4:3 panel.
 Press P to switch between physical-size and 1:1 pixel views. Arrow keys navigate,
-Z/Enter confirms, X/Escape returns, H returns home and M previews the in-game
+Z/Enter confirms, X/Escape returns, H opens the menu and M previews the in-game
 overlay. `mise run screenshots` renders the shell and overlay screens without
 opening a window.
+
+Games opens directly: A plays, F1 changes view, and Menu opens navigation.
+B returns to the previous screen. Settings use left/right to adjust values.
+View and selection are remembered on the SD card; Recent and Favorites are not
+yet exposed.
 
 ## SD card content
 

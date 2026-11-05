@@ -301,21 +301,24 @@ fn repeatAllowed(state: *const model.Model, action: model.Action) bool {
 
 const SessionAction = struct { changed: bool = false, launch: ?usize = null };
 
-fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, tree: *ui.Tree, action: model.Action, animate: bool) !SessionAction {
-    const previous_selected = state.selected;
+fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
+    const dir = std.Io.Dir.cwd().openDir(io, "/data/settings", .{}) catch return;
+    defer dir.close(io);
+    @import("library_preferences.zig").save(io, dir, state) catch |err|
+        std.log.warn("Could not save library preferences: {s}", .{@errorName(err)});
+}
+
+fn applySessionAction(io: std.Io, state: *model.Model, action: model.Action) !SessionAction {
     if (!state.apply(action)) return .{};
+    state.notice = "";
     if (state.takeSetting()) |setting|
         settings.apply(io, state.settings, setting) catch {
             state.settings = settings.load(io);
+            state.notice = "Could not apply setting";
         };
-    if (state.takeLaunch()) |index| return .{ .launch = index };
-    if (animate and state.page == .games and state.library_view == .shelf and previous_selected != state.selected) {
-        const initial: i16 = if (state.selected > previous_selected) 1000 else -1000;
-        var frame: i16 = 4;
-        while (frame > 0) : (frame -= 1) {
-            tree.* = state.treeWithShelfOffset(@divTrunc(initial * frame, 5));
-            try framebuffer.show(tree);
-        }
+    if (state.takeLaunch()) |index| {
+        saveLibraryPreferences(io, state);
+        return .{ .launch = index };
     }
     return .{ .changed = true };
 }
@@ -341,18 +344,38 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
     var poll_fds = [_]std.posix.pollfd{.{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 }};
     var dropped = false;
     var repeat: input_repeat.Controller = .{};
+    var motion: @import("shelf_motion.zig").Motion = .{};
+    var was_animating = false;
+    var save_deadline: ?i64 = null;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
-        const ready = try std.posix.poll(&poll_fds, repeat.timeout(nowMilliseconds(io)));
+        const now = nowMilliseconds(io);
+        const repeat_timeout = repeat.timeout(now);
+        const animation = state.page == .games and state.library_view == .shelf and motion.active(now);
+        var timeout: i32 = if (animation) (if (repeat_timeout < 0) 16 else @min(16, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
+        if (save_deadline) |deadline| {
+            const remaining: i32 = @intCast(@max(0, deadline - now));
+            timeout = if (timeout < 0) remaining else @min(timeout, remaining);
+        }
+        _ = try std.posix.poll(&poll_fds, timeout);
+        if (save_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
+            saveLibraryPreferences(io, state);
+            save_deadline = null;
+        };
         if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
             return error.GamepadDisconnected;
-        var changed = false;
-        if (ready == 0) {
+        var changed = animation or was_animating;
+        was_animating = animation;
+        {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
-                const result = try applySessionAction(io, state, &framebuffer, &tree, action, false);
+                const previous = state.selected;
+                const result = try applySessionAction(io, state, action);
+                if (state.page == .games and state.library_view == .shelf and previous != state.selected)
+                    motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                 if (result.launch) |index| return index;
-                changed = result.changed;
+                changed = changed or result.changed;
+                if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
             };
         }
         while ((poll_fds[0].revents & std.posix.POLL.IN) != 0) {
@@ -366,15 +389,19 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
             for (events) |event| {
                 observeRepeat(&repeat, event, nowMilliseconds(io));
                 if (actionForEvent(event, &dropped)) |action| {
-                    const result = try applySessionAction(io, state, &framebuffer, &tree, action, true);
+                    const previous = state.selected;
+                    const result = try applySessionAction(io, state, action);
+                    if (state.page == .games and state.library_view == .shelf and previous != state.selected)
+                        motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                     if (result.launch) |index| return index;
                     changed = changed or result.changed;
+                    if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
                 }
             }
             if (bytes_read < buffer.len) break;
         }
         if (changed) {
-            tree = state.tree();
+            tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
             try framebuffer.show(&tree);
         }
     }
@@ -435,6 +462,10 @@ pub fn run(io: std.Io) !void {
     defer arena.deinit();
     const library = try catalog.discover(io, arena.allocator(), "/data");
     var state = model.Model{ .games = library, .settings = settings.load(io) };
+    if (std.Io.Dir.cwd().openDir(io, "/data/settings", .{})) |dir| {
+        defer dir.close(io);
+        @import("library_preferences.zig").load(io, dir, &state);
+    } else |_| {}
     while (true) {
         const game_index = (try runSession(io, &state)) orelse continue;
         const game = &state.games[game_index];
@@ -459,6 +490,7 @@ pub fn run(io: std.Io) !void {
                 },
             }
             while (true) {
+                game_overlay.available = retroarch.availableStates(io, game);
                 switch (try runOverlay(io, &game_overlay)) {
                     .resume_game => continue :game_session,
                     .exit_game => break :game_session,
@@ -467,7 +499,10 @@ pub fn run(io: std.Io) !void {
                             game_overlay.saved = false;
                             game_overlay.notice = "Save failed";
                             std.log.err("Failed to save state: {s}", .{@errorName(err)});
+                            continue;
                         };
+                        game_overlay.saved = true;
+                        game_overlay.notice = "State saved";
                     },
                     .load_state => {
                         retroarch.loadState(io, game, state.games, game_overlay.state_slot) catch |err| {
@@ -480,8 +515,12 @@ pub fn run(io: std.Io) !void {
                     },
                     .apply_performance => {
                         state.settings.performance = @fromBackingInt(@intCast(game_overlay.performance_profile));
-                        settings.apply(io, state.settings, .performance) catch |err|
+                        settings.apply(io, state.settings, .performance) catch |err| {
+                            state.settings = settings.load(io);
+                            game_overlay.performance_profile = @backingInt(state.settings.performance);
+                            game_overlay.notice = "Could not apply performance profile";
                             std.log.err("Failed to apply performance profile: {s}", .{@errorName(err)});
+                        };
                     },
                 }
             }

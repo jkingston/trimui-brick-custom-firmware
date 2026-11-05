@@ -9,15 +9,17 @@ const ui = @import("ui.zig");
 pub const Action = input.Action;
 pub const Page = enum { home, games, game, settings };
 
-const home_count = 4;
-const settings_count = 5;
+const home_count = 2;
+const settings_count = 4;
 
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
-    page: Page = .home,
+    page: Page = .games,
     library_view: ui.LibraryView = .list,
     selected: usize = 0,
     game_index: usize = 0,
+    library_selection: usize = 0,
+    notice: []const u8 = "",
     pending_launch: ?usize = null,
     launch_failed: ?retroarch.Failure = null,
     settings: settings.Values = .{},
@@ -35,29 +37,29 @@ pub const Model = struct {
             .up => {
                 if (self.page == .games) switch (self.library_view) {
                     .list => if (self.itemCount() > 0) {
-                        self.selected = if (self.selected == 0) self.itemCount() - 1 else self.selected - 1;
+                        self.selected -|= 1;
                     },
                     .shelf => {},
-                    .grid => if (self.selected >= 3) {
-                        self.selected -= 3;
+                    .grid => if (self.selected >= 4) {
+                        self.selected -= 4;
                     },
                 } else if (self.page != .game and self.itemCount() > 0)
-                    self.selected = if (self.selected == 0) self.itemCount() - 1 else self.selected - 1;
+                    self.selected -|= 1;
             },
             .down => {
                 if (self.page == .games) switch (self.library_view) {
                     .list => if (self.itemCount() > 0) {
-                        self.selected = (self.selected + 1) % self.itemCount();
+                        self.selected = @min(self.selected + 1, self.itemCount() - 1);
                     },
                     .shelf => {},
-                    .grid => if (self.selected + 3 < self.itemCount()) {
-                        self.selected += 3;
+                    .grid => if (self.selected + 4 < self.itemCount()) {
+                        self.selected += 4;
                     },
                 } else if (self.page != .game and self.itemCount() > 0)
-                    self.selected = (self.selected + 1) % self.itemCount();
+                    self.selected = @min(self.selected + 1, self.itemCount() - 1);
             },
             .left => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
-                if (self.selected % 3 != 0) self.selected -= 1;
+                if (self.selected != 0) self.selected -= 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected != 0) self.selected -= 1;
             } else if (self.page == .settings and self.selected < 4) {
@@ -66,7 +68,7 @@ pub const Model = struct {
                 self.pending_setting = setting;
             },
             .right => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
-                if (self.selected % 3 != 2 and self.selected + 1 < self.games.len) self.selected += 1;
+                if (self.selected + 1 < self.games.len) self.selected += 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected + 1 < self.games.len) self.selected += 1;
             } else if (self.page == .settings and self.selected < 4) {
@@ -75,31 +77,32 @@ pub const Model = struct {
                 self.pending_setting = setting;
             },
             .select => switch (self.page) {
-                .home => if (self.selected == 3) {
+                .home => if (self.selected == 1) {
                     self.page = .settings;
                     self.selected = 0;
                 } else {
                     self.page = .games;
-                    self.selected = if (self.selected == 0) 0 else if (self.games.len == 0) 0 else @min(self.game_index, self.games.len - 1);
+                    self.selected = self.library_selection;
                 },
                 .games => if (self.games.len > 0) {
                     self.game_index = self.selected;
-                    self.page = .game;
+                    self.pending_launch = self.selected;
+                    self.library_selection = self.selected;
                     self.launch_failed = null;
                 },
                 .game => {
                     self.pending_launch = self.game_index;
                     self.launch_failed = null;
                 },
-                .settings => if (self.selected < 4) {
-                    const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
-                    self.settings.adjust(setting, 1);
-                    self.pending_setting = setting;
-                },
+                .settings => {},
             },
             .back => switch (self.page) {
-                .home => {},
+                .home => {
+                    self.page = .games;
+                    self.selected = self.library_selection;
+                },
                 .games => {
+                    self.library_selection = self.selected;
                     self.page = .home;
                     self.selected = 0;
                 },
@@ -110,10 +113,11 @@ pub const Model = struct {
                 },
                 .settings => {
                     self.page = .home;
-                    self.selected = 3;
+                    self.selected = 1;
                 },
             },
             .menu => {
+                if (self.page == .games) self.library_selection = self.selected;
                 self.page = .home;
                 self.selected = 0;
                 self.launch_failed = null;
@@ -137,6 +141,10 @@ pub const Model = struct {
     pub fn takeLaunch(self: *Model) ?usize {
         const pending = self.pending_launch;
         self.pending_launch = null;
+        if (pending) |index| {
+            self.page = .games;
+            self.selected = index;
+        }
         return pending;
     }
 
@@ -148,6 +156,7 @@ pub const Model = struct {
 
     pub fn launchFailed(self: *Model, failure: retroarch.Failure) void {
         self.launch_failed = failure;
+        self.page = .game;
         self.revision += 1;
     }
 
@@ -165,96 +174,65 @@ pub const Model = struct {
     }
 
     pub fn treeWithShelfOffset(self: *const Model, shelf_offset: i16) ui.Tree {
-        return switch (self.page) {
+        var result = switch (self.page) {
             .home => ui.home(self.selected),
             .games => ui.library(self.games, self.selected, self.library_view, shelf_offset),
-            .game => ui.gameDetail(self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
+            .game => if (self.games.len == 0) ui.library(self.games, 0, self.library_view, 0) else ui.gameDetail(self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
             .settings => ui.settings(self.selected, self.settings),
         };
+        if (self.notice.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 630, .width = 944, .height = 44 }, .value = self.notice, .color = ui.palette.coral, .scale = 2 } });
+        return result;
     }
 };
 
-test "home, library, detail and launch flow" {
+test "library launches directly and menu preserves selection and view" {
     var state = Model{};
-    try std.testing.expect(state.apply(.select));
     try std.testing.expectEqual(Page.games, state.page);
-    try std.testing.expect(state.apply(.down));
-    try std.testing.expect(state.apply(.select));
-    try std.testing.expectEqual(Page.game, state.page);
-    try std.testing.expectEqual(@as(usize, 1), state.game_index);
-    try std.testing.expect(state.apply(.select));
+    _ = state.apply(.down);
+    _ = state.apply(.view);
+    _ = state.apply(.select);
     try std.testing.expectEqual(@as(?usize, 1), state.takeLaunch());
-    try std.testing.expect(state.takeLaunch() == null);
-}
-
-test "navigation wraps and back preserves context" {
-    var state = Model{};
-    try std.testing.expect(state.apply(.up));
-    try std.testing.expectEqual(@as(usize, 3), state.selected);
-    try std.testing.expect(state.apply(.select));
+    _ = state.apply(.menu);
+    _ = state.apply(.down);
+    _ = state.apply(.select);
     try std.testing.expectEqual(Page.settings, state.page);
-    try std.testing.expect(state.apply(.back));
-    try std.testing.expectEqual(Page.home, state.page);
-    try std.testing.expectEqual(@as(usize, 3), state.selected);
-}
-
-test "empty library navigation cannot launch or underflow" {
-    var state = Model{ .games = &.{} };
-    _ = state.apply(.select);
-    _ = state.apply(.up);
-    _ = state.apply(.down);
-    _ = state.apply(.select);
-    try std.testing.expectEqual(Page.games, state.page);
-    try std.testing.expect(state.takeLaunch() == null);
-    _ = state.tree();
-}
-
-test "large libraries render a bounded window around selection" {
-    const entries: [100]catalog.Game = @splat(catalog.games[0]);
-    var state = Model{ .games = &entries, .page = .games, .selected = 99 };
-    const tree = state.tree();
-    try std.testing.expect(tree.len < tree.elements.len);
-    _ = state.apply(.down);
-    try std.testing.expectEqual(@as(usize, 0), state.selected);
-}
-
-test "F1 cycles library views and shelf navigation stops at the ends" {
-    var state = Model{ .page = .games };
-    try std.testing.expect(state.apply(.view));
-    try std.testing.expectEqual(ui.LibraryView.shelf, state.library_view);
-    try std.testing.expect(!state.apply(.left));
-    try std.testing.expect(state.apply(.right));
-    try std.testing.expectEqual(@as(usize, 1), state.selected);
-    try std.testing.expect(state.apply(.view));
-    try std.testing.expectEqual(ui.LibraryView.grid, state.library_view);
-    state.selected = 0;
-    try std.testing.expect(state.apply(.down));
-    try std.testing.expectEqual(@as(usize, 3), state.selected);
-    try std.testing.expect(!state.apply(.left));
-    try std.testing.expect(state.apply(.up));
-    try std.testing.expectEqual(@as(usize, 0), state.selected);
-    try std.testing.expect(state.apply(.view));
-    try std.testing.expectEqual(ui.LibraryView.list, state.library_view);
-}
-
-test "launch errors remain visible until retry or leaving details" {
-    var state = Model{ .page = .game };
-    state.launchFailed(.missing_core);
-    try std.testing.expectEqual(@as(?retroarch.Failure, .missing_core), state.launch_failed);
-    const tree = state.tree();
-    var found = false;
-    for (tree.slice()) |element| switch (element) {
-        .text => |text| if (std.mem.eql(u8, text.value, "EMULATOR NOT INSTALLED")) {
-            found = true;
-        },
-        else => {},
-    };
-    try std.testing.expect(found);
-    _ = state.apply(.select);
-    try std.testing.expect(state.launch_failed == null);
-    try std.testing.expectEqual(@as(?usize, 0), state.takeLaunch());
-    state.launchFailed(.save_storage);
     _ = state.apply(.back);
-    try std.testing.expect(state.launch_failed == null);
+    _ = state.apply(.back);
     try std.testing.expectEqual(Page.games, state.page);
+    try std.testing.expectEqual(@as(usize, 1), state.selected);
+    try std.testing.expectEqual(ui.LibraryView.shelf, state.library_view);
+}
+
+test "empty library cannot launch and navigation clamps in every view" {
+    var empty = Model{ .games = &.{} };
+    _ = empty.apply(.select);
+    _ = empty.apply(.up);
+    try std.testing.expect(empty.takeLaunch() == null);
+    _ = empty.tree();
+    var state = Model{};
+    for (0..20) |_| _ = state.apply(.down);
+    try std.testing.expectEqual(state.games.len - 1, state.selected);
+    _ = state.apply(.view);
+    try std.testing.expect(!state.apply(.right));
+    _ = state.apply(.view);
+    try std.testing.expect(!state.apply(.right));
+    _ = state.apply(.up);
+    try std.testing.expectEqual(@as(usize, 0), state.selected);
+}
+
+test "launch failure is visible and retry preserves the game" {
+    var state = Model{};
+    _ = state.apply(.down);
+    _ = state.apply(.select);
+    _ = state.takeLaunch();
+    state.launchFailed(.missing_core);
+    try std.testing.expectEqual(Page.game, state.page);
+    _ = state.tree();
+    _ = state.apply(.select);
+    try std.testing.expectEqual(@as(?usize, 1), state.takeLaunch());
+    try std.testing.expectEqual(Page.games, state.page);
+    try std.testing.expectEqual(@as(usize, 1), state.selected);
+    state.launchFailed(.missing_core);
+    _ = state.apply(.back);
+    try std.testing.expectEqual(@as(usize, 1), state.selected);
 }

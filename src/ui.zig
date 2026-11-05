@@ -10,7 +10,7 @@ pub const Color = packed struct(u32) {
 };
 
 pub const Rect = struct { x: u16, y: u16, width: u16, height: u16 };
-pub const Text = struct { bounds: Rect, value: []const u8, color: Color, scale: u8 = 3, language: []const u8 = "" };
+pub const Text = struct { bounds: Rect, value: []const u8, color: Color, scale: u8 = 3, language: []const u8 = "", lines: u8 = 1 };
 pub const Bar = struct { bounds: Rect, color: Color };
 pub const Scrim = struct { bounds: Rect, color: Color, alpha: u8 };
 pub const MenuRow = struct {
@@ -30,6 +30,9 @@ pub const Cartridge = struct {
     sprite: ?@import("asset_manifest.zig").Texture,
     selected: bool = false,
     dim: u8 = 0,
+    tilt: i16 = 0,
+    clip_left: u16 = 0,
+    plain_fallback: bool = false,
 };
 pub const OverlayRow = struct {
     bounds: Rect,
@@ -109,14 +112,13 @@ fn overlayFrame(result: *Tree, title: []const u8, context: []const u8, game_titl
     result.add(.{ .bar = .{ .bounds = .{ .x = 446, .y = 38, .width = 536, .height = 680 }, .color = palette.paper } });
     result.add(.{ .text = .{ .bounds = .{ .x = 486, .y = 70, .width = 430, .height = 58 }, .value = title, .color = palette.ink, .scale = 4 } });
     result.add(.{ .text = .{ .bounds = .{ .x = 488, .y = 128, .width = 420, .height = 34 }, .value = context, .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .battery = .{ .bounds = .{ .x = 914, .y = 76, .width = 48, .height = 20 }, .percent = 82 } });
 }
 
-pub fn overlayPause(game_title: []const u8, system: []const u8, selected: usize, state_slot: usize, saved: bool, performance: []const u8) Tree {
+pub fn overlayPause(game_title: []const u8, system: []const u8, selected: usize, state_slot: usize, saved: bool, performance: []const u8, notice: []const u8) Tree {
     const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
     var result = Tree{ .background = palette.paper };
-    overlayFrame(&result, "Paused", game_title, game_title, system);
+    overlayFrame(&result, "Paused", if (notice.len != 0) notice else system, game_title, "");
     for (labels, 0..) |label, index| {
         const resolved_detail = if (index == 1)
             (if (saved) "Saved just now" else if (selected == index) "Left/right changes slot" else "")
@@ -137,19 +139,20 @@ pub fn overlayPause(game_title: []const u8, system: []const u8, selected: usize,
             .disclosure = index == 2,
         } });
     }
+    textLabel(&result, .{ .x = 486, .y = 674, .width = 458, .height = 40 }, if (selected == 1) "← / → Slot   A Save   B Back" else if (selected == 3) "← / → Change   B Back" else "A Select   B Continue", palette.quiet, 2);
     return result;
 }
 
-pub fn overlayStates(game_title: []const u8, selected: usize, notice: []const u8) Tree {
+pub fn overlayStates(game_title: []const u8, selected: usize, notice: []const u8, available: [4]bool) Tree {
     const labels = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3", "Automatic save" };
     const details = [_][]const u8{ "Manual save", "Manual save", "Manual save", "Latest session" };
     var result = Tree{ .background = palette.paper };
-    overlayFrame(&result, "Load a save", if (notice.len == 0) "Choose a moment to restore" else notice, game_title, "");
+    overlayFrame(&result, "Load a save", if (notice.len == 0) "Select a save slot" else notice, game_title, "");
     for (labels, details, 0..) |label, detail, index| {
         result.add(.{ .overlay_row = .{
             .bounds = menu.overlayRow(index),
             .label = label,
-            .detail = detail,
+            .detail = if (available[index]) detail else "Empty",
             .selected = index == selected,
             .disclosure = false,
         } });
@@ -158,196 +161,151 @@ pub fn overlayStates(game_title: []const u8, selected: usize, notice: []const u8
     return result;
 }
 
+const layout = struct {
+    const margin = 40;
+    const footer_y = 704;
+};
+
+fn textLabel(result: *Tree, bounds: Rect, value: []const u8, color: Color, scale: u8) void {
+    result.add(.{ .text = .{ .bounds = bounds, .value = value, .color = color, .scale = scale } });
+}
+
 fn header(result: *Tree, title: []const u8) void {
-    result.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 0, .width = 1024, .height = 72 }, .color = palette.paper } });
-    result.add(.{ .bar = .{ .bounds = .{ .x = 32, .y = 70, .width = 960, .height = 2 }, .color = palette.chrome } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 14, .width = 360, .height = 48 }, .value = title, .color = palette.ink, .scale = 3 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 824, .y = 22, .width = 84, .height = 34 }, .value = "12:42", .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .battery = .{ .bounds = .{ .x = 938, .y = 24, .width = 46, .height = 22 }, .percent = 82 } });
+    textLabel(result, .{ .x = layout.margin, .y = 28, .width = 800, .height = 58 }, title, palette.ink, 4);
+    result.add(.{ .bar = .{ .bounds = .{ .x = layout.margin, .y = 100, .width = 944, .height = 2 }, .color = palette.chrome } });
+}
+
+fn footer(result: *Tree, actions: []const u8) void {
+    result.add(.{ .bar = .{ .bounds = .{ .x = layout.margin, .y = layout.footer_y - 16, .width = 944, .height = 2 }, .color = palette.chrome } });
+    textLabel(result, .{ .x = layout.margin, .y = layout.footer_y, .width = 944, .height = 44 }, actions, palette.quiet, 2);
+}
+
+fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, dim: u8, tilt: i16) void {
+    result.add(.{ .cartridge = .{
+        .bounds = bounds,
+        .platform = game.platform_id,
+        .texture = game.assets.preview,
+        .sprite = if (cart) game.assets.card orelse game.assets.sprite else game.assets.cover,
+        .selected = true,
+        .dim = dim,
+        .tilt = tilt,
+        .plain_fallback = !cart,
+    } });
+}
+
+fn selectedTitle(result: *Tree, game: catalog.Game, bounds: Rect) void {
+    result.add(.{ .text = .{ .bounds = bounds, .value = game.title, .color = palette.ink, .scale = 3, .lines = 2 } });
 }
 
 pub fn home(selected: usize) Tree {
-    const items = [_][]const u8{ "Games", "Recent", "Favorites", "Settings" };
-    const preview_titles = [_][]const u8{ "Your library", "Minekart Madness", "Eight favorites", "Device settings" };
-    const preview_details = [_][]const u8{ "5 systems  /  142 games", "NES  /  Played yesterday", "Ready when you are", "Display, audio, power" };
-    const preview_actions = [_][]const u8{ "A  Browse games", "A  Resume game", "A  View favorites", "A  Open settings" };
-    const preview_covers = [_]catalog.Cover{ .library, .minekart, .adjustris, .library };
     var result = Tree{ .background = palette.paper };
-    header(&result, "Home");
-    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 96, .width = 320, .height = 34 }, .value = "Library", .color = palette.pine, .scale = 2 } });
-    for (items, 0..) |label, index| {
-        result.add(.{ .menu_row = .{
-            .bounds = menu.row(index),
-            .label = label,
-            .selected = index == selected,
-        } });
-    }
-    result.add(.{ .bar = .{ .bounds = .{ .x = 480, .y = 104, .width = 512, .height = 624 }, .color = palette.deep } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 520, .y = 132, .width = 300, .height = 34 }, .value = if (selected == 1) "Continue" else "Selected", .color = palette.chrome, .scale = 2 } });
-    result.add(.{ .cover = .{ .bounds = .{ .x = 604, .y = 184, .width = 264, .height = 264 }, .kind = preview_covers[selected] } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 520, .y = 492, .width = 430, .height = 52 }, .value = preview_titles[selected], .color = palette.white, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 522, .y = 554, .width = 410, .height = 34 }, .value = preview_details[selected], .color = palette.chrome, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 522, .y = 652, .width = 410, .height = 44 }, .value = preview_actions[selected], .color = palette.white, .scale = 3 } });
+    header(&result, "Menu");
+    const items = [_][]const u8{ "Games", "Settings" };
+    for (items, 0..) |item, index| result.add(.{ .menu_row = .{
+        .bounds = .{ .x = layout.margin, .y = 140 + @as(u16, @intCast(index)) * 104, .width = 944, .height = 92 },
+        .label = item,
+        .selected = index == selected,
+    } });
+    footer(&result, "A  Open     B  Games");
     return result;
 }
 
 pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
     var result = Tree{ .background = palette.paper };
     header(&result, "Games");
-    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 96, .width = 360, .height = 34 }, .value = "All systems", .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 844, .y = 96, .width = 142, .height = 34 }, .value = "F1  View", .color = palette.pine, .scale = 2 } });
     if (games.len == 0) {
-        result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 176, .width = 460, .height = 48 }, .value = "No games found", .color = palette.ink, .scale = 3 } });
-        result.add(.{ .text = .{ .bounds = .{ .x = 42, .y = 232, .width = 500, .height = 34 }, .value = "Copy games to the Roms folder", .color = palette.quiet, .scale = 2 } });
+        textLabel(&result, .{ .x = 40, .y = 180, .width = 900, .height = 58 }, "No games yet", palette.ink, 4);
+        textLabel(&result, .{ .x = 40, .y = 256, .width = 900, .height = 44 }, "Add games to the Roms folder on your SD card.", palette.quiet, 2);
+        footer(&result, "Menu  Settings");
         return result;
-    }
-    if (view == .shelf) {
-        result.add(.{ .bar = .{ .bounds = .{ .x = 24, .y = 132, .width = 976, .height = 430 }, .color = palette.deep } });
-        result.add(.{ .bar = .{ .bounds = .{ .x = 24, .y = 560, .width = 976, .height = 2 }, .color = palette.pine } });
-        const order = [_]i8{ -3, 3, -2, 2, -1, 1, 0 };
-        for (order) |relative| {
-            if (relative < 0 and selected < @as(usize, @intCast(-relative))) continue;
-            const game_index = if (relative < 0) selected - @as(usize, @intCast(-relative)) else selected + @as(usize, @intCast(relative));
-            if (game_index >= games.len) continue;
-            const game = games[game_index];
-            result.add(.{ .cartridge = .{
-                .bounds = shelfRect(relative, shelf_offset),
-                .platform = game.platform_id,
-                .texture = game.assets.preview,
-                .sprite = game.assets.card orelse game.assets.sprite,
-                .selected = game_index == selected,
-                .dim = if (relative == 0) 0 else if (relative == -1 or relative == 1) 54 else 112,
-            } });
-        }
-        const game = games[selected];
-        result.add(.{ .text = .{ .bounds = .{ .x = 64, .y = 586, .width = 896, .height = 54 }, .value = game.title, .color = palette.ink, .scale = 4 } });
-        result.add(.{ .text = .{ .bounds = .{ .x = 66, .y = 646, .width = 680, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
-        result.add(.{ .text = .{ .bounds = .{ .x = 66, .y = 704, .width = 300, .height = 34 }, .value = "LEFT / RIGHT", .color = palette.quiet, .scale = 2 } });
-        result.add(.{ .text = .{ .bounds = .{ .x = 842, .y = 704, .width = 140, .height = 34 }, .value = "A  Open", .color = palette.pine, .scale = 2 } });
-        return result;
-    }
-    if (view == .grid) {
-        const first = (selected / 6) * 6;
-        for (games[first..@min(first + 6, games.len)], 0..) |game, index| {
-            const column: u16 = @intCast(index % 3);
-            const row: u16 = @intCast(index / 3);
-            const card = Rect{ .x = 32 + column * 326, .y = 132 + row * 298, .width = 304, .height = 280 };
-            result.add(.{ .bar = .{ .bounds = card, .color = if (first + index == selected) palette.selected else palette.surface } });
-            result.add(.{ .cartridge = .{
-                .bounds = .{ .x = card.x + 62, .y = card.y + 12, .width = 180, .height = 202 },
-                .platform = game.platform_id,
-                .texture = game.assets.preview,
-                .sprite = game.assets.cover orelse game.assets.card orelse game.assets.sprite,
-                .selected = first + index == selected,
-            } });
-            result.add(.{ .text = .{
-                .bounds = .{ .x = card.x + 18, .y = card.y + 228, .width = card.width - 36, .height = 38 },
-                .value = game.title,
-                .color = if (first + index == selected) palette.pine else palette.ink,
-                .scale = 2,
-            } });
-        }
-        return result;
-    }
-    const first = if (selected >= 5) selected - 4 else 0;
-    for (games[first..@min(first + 5, games.len)], first..) |game, index| {
-        result.add(.{ .menu_row = .{
-            .bounds = .{ .x = 32, .y = 140 + @as(u16, @intCast(index - first)) * 112, .width = 424, .height = 96 },
-            .label = game.title,
-            .detail = game.system,
-            .selected = index == selected,
-        } });
     }
     const game = games[selected];
-    result.add(.{ .bar = .{ .bounds = .{ .x = 488, .y = 132, .width = 504, .height = 536 }, .color = palette.deep } });
-    result.add(.{ .cartridge = .{
-        .bounds = .{ .x = 590, .y = 154, .width = 300, .height = 346 },
-        .platform = game.platform_id,
-        .texture = game.assets.preview,
-        .sprite = game.assets.cover orelse game.assets.card orelse game.assets.sprite,
-        .selected = true,
-    } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 524, .y = 516, .width = 432, .height = 52 }, .value = game.title, .color = palette.white, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 580, .width = 420, .height = 34 }, .value = game.system, .color = palette.chrome, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 624, .width = 320, .height = 34 }, .value = "A  Open", .color = palette.white, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 34, .y = 710, .width = 300, .height = 34 }, .value = "Hold to browse", .color = palette.quiet, .scale = 2 } });
+    textLabel(&result, .{ .x = 40, .y = 114, .width = 700, .height = 40 }, game.system, palette.quiet, 2);
+    textLabel(&result, .{ .x = 820, .y = 114, .width = 164, .height = 40 }, switch (view) {
+        .list => "List",
+        .grid => "Grid",
+        .shelf => "Shelf",
+    }, palette.quiet, 2);
+    switch (view) {
+        .list => {
+            const first = if (selected > 1) @min(selected - 1, games.len - @min(games.len, 4)) else 0;
+            for (games[first..@min(first + 4, games.len)], first..) |entry, index| result.add(.{ .menu_row = .{
+                .bounds = .{ .x = 40, .y = 170 + @as(u16, @intCast(index - first)) * 84, .width = 604, .height = 80 },
+                .label = entry.title,
+                .selected = index == selected,
+                .disclosure = false,
+            } });
+            artwork(&result, game, .{ .x = 692, .y = 174, .width = 252, .height = 332 }, false, 0, 0);
+            selectedTitle(&result, game, .{ .x = 40, .y = 546, .width = 944, .height = 120 });
+        },
+        .grid => {
+            const first = (selected / 4) * 4;
+            for (games[first..@min(first + 4, games.len)], 0..) |entry, index| {
+                const x: u16 = 40 + @as(u16, @intCast(index)) * 240;
+                const active = first + index == selected;
+                if (active) result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = 166, .width = 224, .height = 342 }, .color = palette.selected } });
+                artwork(&result, entry, .{ .x = x + 16, .y = 182, .width = 192, .height = 304 }, false, 0, 0);
+                if (active) result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = 504, .width = 224, .height = 4 }, .color = palette.pine } });
+            }
+            selectedTitle(&result, game, .{ .x = 40, .y = 546, .width = 944, .height = 120 });
+        },
+        .shelf => {
+            const order = [_]i8{ -4, 4, -3, 3, -2, 2, -1, 1, 0 };
+            for (order) |relative| {
+                const index = @as(i64, @intCast(selected)) + relative;
+                if (index < 0 or index >= games.len) continue;
+                const pose = shelfPose(relative, shelf_offset);
+                artwork(&result, games[@intCast(index)], pose.bounds, true, pose.dim, pose.tilt);
+                result.elements[result.len - 1].cartridge.clip_left = pose.clip_left;
+            }
+            selectedTitle(&result, game, .{ .x = 40, .y = 568, .width = 944, .height = 104 });
+        },
+    }
+    footer(&result, "A  Play     F1  View     Menu  Options");
     return result;
 }
 
-fn shelfBase(relative: i8) Rect {
-    return switch (relative) {
-        -3 => .{ .x = 0, .y = 230, .width = 90, .height = 190 },
-        -2 => .{ .x = 34, .y = 210, .width = 140, .height = 235 },
-        -1 => .{ .x = 104, .y = 180, .width = 210, .height = 310 },
-        0 => .{ .x = 332, .y = 150, .width = 360, .height = 380 },
-        1 => .{ .x = 710, .y = 180, .width = 210, .height = 310 },
-        2 => .{ .x = 850, .y = 210, .width = 140, .height = 235 },
-        else => .{ .x = 938, .y = 230, .width = 86, .height = 190 },
-    };
-}
+const ShelfPose = struct { bounds: Rect, dim: u8, tilt: i16, clip_left: u16 };
 
-fn shelfRect(relative: i8, offset: i16) Rect {
-    const target = shelfBase(relative);
-    if (offset == 0) return target;
-    const prior_relative = relative + (if (offset > 0) @as(i8, 1) else -1);
-    const prior = shelfBase(prior_relative);
-    const amount: i32 = @min(@as(i32, 1000), @abs(@as(i32, offset)));
+fn shelfPose(relative: i8, offset: i16) ShelfPose {
+    const position = @as(i32, relative) * 1000 + offset;
+    const distance = @abs(position);
+    const center = 512 + @divTrunc(position * 274, 1000);
+    const width: i32 = if (distance < 1000) 440 - @as(i32, @intCast(distance * 240 / 1000)) else 200;
+    const height: i32 = if (distance < 1000) 400 - @as(i32, @intCast(distance * 104 / 1000)) else 296;
     return .{
-        .x = @intCast(@divTrunc(@as(i32, target.x) * (1000 - amount) + @as(i32, prior.x) * amount, 1000)),
-        .y = @intCast(@divTrunc(@as(i32, target.y) * (1000 - amount) + @as(i32, prior.y) * amount, 1000)),
-        .width = @intCast(@divTrunc(@as(i32, target.width) * (1000 - amount) + @as(i32, prior.width) * amount, 1000)),
-        .height = @intCast(@divTrunc(@as(i32, target.height) * (1000 - amount) + @as(i32, prior.height) * amount, 1000)),
+        .bounds = .{ .x = @intCast(@max(0, center - @divTrunc(width, 2))), .y = @intCast(160 + @divTrunc(400 - height, 2)), .width = @intCast(width), .height = @intCast(height) },
+        .clip_left = @intCast(@max(0, @divTrunc(width, 2) - center)),
+        .dim = @intCast(@min(120, distance * 50 / 1000)),
+        .tilt = @intCast(@max(-1000, @min(1000, position))),
     };
 }
 
 pub fn gameDetail(game: catalog.Game, launch_failed: ?[]const u8) Tree {
     var result = Tree{ .background = palette.paper };
-    header(&result, "Game");
-    result.add(.{ .bar = .{ .bounds = .{ .x = 32, .y = 118, .width = 448, .height = 570 }, .color = palette.deep } });
-    result.add(.{ .cartridge = .{
-        .bounds = .{ .x = 96, .y = 140, .width = 320, .height = 440 },
-        .platform = game.platform_id,
-        .texture = game.assets.preview,
-        .sprite = game.assets.cover orelse game.assets.card orelse game.assets.sprite,
-        .selected = true,
-    } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 132, .width = 430, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 524, .y = 184, .width = 456, .height = 114 }, .value = game.title, .color = palette.ink, .scale = 4 } });
-    result.add(.{ .bar = .{ .bounds = .{ .x = 524, .y = 330, .width = 436, .height = 92 }, .color = palette.pine } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 560, .y = 352, .width = 220, .height = 52 }, .value = "Play", .color = palette.white, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 900, .y = 356, .width = 42, .height = 44 }, .value = "A", .color = palette.white, .scale = 3 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 466, .width = 410, .height = 34 }, .value = "Progress saves automatically", .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 516, .width = 410, .height = 34 }, .value = "Menu opens the game overlay", .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 636, .width = 240, .height = 34 }, .value = "B  Back", .color = palette.pine, .scale = 2 } });
-    if (launch_failed) |message|
-        result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 690, .width = 440, .height = 34 }, .value = message, .color = palette.coral, .scale = 2 } });
+    header(&result, if (launch_failed != null) "Unable to start" else "Game");
+    artwork(&result, game, .{ .x = 40, .y = 156, .width = 280, .height = 416 }, false, 0, 0);
+    textLabel(&result, .{ .x = 368, .y = 162, .width = 616, .height = 44 }, game.system, palette.quiet, 2);
+    selectedTitle(&result, game, .{ .x = 368, .y = 222, .width = 616, .height = 144 });
+    if (launch_failed) |message| textLabel(&result, .{ .x = 368, .y = 410, .width = 616, .height = 80 }, message, palette.coral, 2);
+    footer(&result, if (launch_failed != null) "A  Retry     B  Games" else "A  Play     B  Games");
     return result;
 }
 
 pub fn settings(selected: usize, values: settings_model.Values) Tree {
-    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "About" };
-    const descriptions = [_][]const u8{ "Display brightness", "Speed and battery balance", "Turn off the display when idle", "Enter deep sleep when idle", "System information" };
-    const details = [_][]const u8{
-        values.value(.brightness),      values.value(.performance), values.value(.display_timeout),
-        values.value(.suspend_timeout), "Brick OS 0.1",
-    };
+    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend" };
+    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout) };
     var result = Tree{ .background = palette.paper };
     header(&result, "Settings");
-    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 96, .width = 320, .height = 34 }, .value = "Device", .color = palette.pine, .scale = 2 } });
-    for (items, 0..) |label, index| {
-        result.add(.{ .menu_row = .{
-            .bounds = menu.row(index),
-            .label = label,
-            .detail = details[index],
-            .selected = index == selected,
-        } });
-    }
-    result.add(.{ .bar = .{ .bounds = .{ .x = 488, .y = 128, .width = 472, .height = 300 }, .color = palette.surface } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 174, .width = 390, .height = 58 }, .value = items[selected], .color = palette.ink, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 532, .y = 244, .width = 380, .height = 34 }, .value = descriptions[selected], .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 532, .y = 334, .width = 380, .height = 44 }, .value = details[selected], .color = palette.pine, .scale = 3 } });
-    if (selected < 4)
-        result.add(.{ .text = .{ .bounds = .{ .x = 532, .y = 384, .width = 380, .height = 34 }, .value = "LEFT / RIGHT TO CHANGE", .color = palette.quiet, .scale = 2 } });
+    for (items, details, 0..) |item, value, index| result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 40, .y = 164 + @as(u16, @intCast(index)) * 112, .width = 944, .height = 96 },
+        .label = item,
+        .detail = "",
+        .value = value,
+        .selected = index == selected,
+        .disclosure = false,
+    } });
+    footer(&result, "Left / Right  Change     B  Back");
     return result;
 }
 

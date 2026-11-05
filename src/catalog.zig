@@ -19,7 +19,7 @@ pub const Game = struct {
 pub const games = [_]Game{
     .{
         .title = "FALLING",
-        .system = "NINTENDO NES",
+        .system = "NES",
         .summary = "ARCADE PLATFORMER",
         .core_path = "/usr/lib/libretro/fceumm_libretro.so",
         .rom_path = "/data/Roms/FC/falling.nes",
@@ -27,7 +27,7 @@ pub const games = [_]Game{
     },
     .{
         .title = "MINEKART MADNESS",
-        .system = "NINTENDO NES",
+        .system = "NES",
         .summary = "HIGH SPEED RAILS",
         .core_path = "/usr/lib/libretro/fceumm_libretro.so",
         .rom_path = "/data/Roms/FC/minekart-madness.nes",
@@ -35,7 +35,7 @@ pub const games = [_]Game{
     },
     .{
         .title = "ADJUSTRIS",
-        .system = "NINTENDO GAME BOY",
+        .system = "Game Boy",
         .summary = "TACTICAL BLOCK PUZZLE",
         .core_path = "/usr/lib/libretro/mgba_libretro.so",
         .rom_path = "/data/Roms/GB/adjustris.gb",
@@ -43,7 +43,7 @@ pub const games = [_]Game{
     },
     .{
         .title = "RKANOID",
-        .system = "GAME BOY ADVANCE",
+        .system = "Game Boy Advance",
         .summary = "TEN LEVEL BREAKOUT",
         .core_path = "/usr/lib/libretro/mgba_libretro.so",
         .rom_path = "/data/Roms/GBA/rkanoid.gba",
@@ -51,7 +51,7 @@ pub const games = [_]Game{
     },
     .{
         .title = "WILLOWS DREAM",
-        .system = "SEGA MEGA DRIVE",
+        .system = "Mega Drive",
         .summary = "DREAMLIKE ADVENTURE",
         .core_path = "/usr/lib/libretro/genesis_plus_gx_libretro.so",
         .rom_path = "/data/Roms/MD/willows-dream.md",
@@ -68,17 +68,17 @@ const System = struct {
 };
 
 const systems = [_]System{
-    .{ .id = "nes", .aliases = "FC NES", .label = "NINTENDO NES", .core = "fceumm", .extensions = ".nes .unf .unif .zip .7z" },
-    .{ .id = "gb", .aliases = "GB", .label = "NINTENDO GAME BOY", .core = "mgba", .extensions = ".gb .zip .7z" },
-    .{ .id = "gbc", .aliases = "GBC", .label = "GAME BOY COLOR", .core = "mgba", .extensions = ".gb .gbc .zip .7z" },
-    .{ .id = "gba", .aliases = "GBA MGBA", .label = "GAME BOY ADVANCE", .core = "mgba", .extensions = ".gba .zip .7z" },
-    .{ .id = "mastersystem", .aliases = "MS SMS MASTERSYSTEM", .label = "SEGA MASTER SYSTEM", .core = "genesis_plus_gx", .extensions = ".sms .zip .7z" },
-    .{ .id = "gamegear", .aliases = "GG GAMEGEAR", .label = "SEGA GAME GEAR", .core = "genesis_plus_gx", .extensions = ".gg .zip .7z" },
-    .{ .id = "megadrive", .aliases = "MD GENESIS MEGADRIVE", .label = "SEGA MEGA DRIVE", .core = "genesis_plus_gx", .extensions = ".md .gen .bin .smd .zip .7z" },
-    .{ .id = "snes", .aliases = "SFC SNES", .label = "SUPER NINTENDO", .core = "snes9x", .extensions = ".sfc .smc .zip .7z" },
-    .{ .id = "psx", .aliases = "PS PS1 PSX", .label = "SONY PLAYSTATION", .core = "pcsx_rearmed", .extensions = ".chd .cue .m3u .pbp .ccd" },
-    .{ .id = "neogeo", .aliases = "NEOGEO NG", .label = "NEO GEO", .core = "fbneo_neogeo", .extensions = ".zip" },
-    .{ .id = "ngpc", .aliases = "NGP NGPC", .label = "NEO GEO POCKET", .core = "mednafen_ngp", .extensions = ".ngp .ngc .zip .7z" },
+    .{ .id = "nes", .aliases = "FC NES", .label = "NES", .core = "fceumm", .extensions = ".nes .unf .unif .zip .7z" },
+    .{ .id = "gb", .aliases = "GB", .label = "Game Boy", .core = "mgba", .extensions = ".gb .zip .7z" },
+    .{ .id = "gbc", .aliases = "GBC", .label = "Game Boy Color", .core = "mgba", .extensions = ".gb .gbc .zip .7z" },
+    .{ .id = "gba", .aliases = "GBA MGBA", .label = "Game Boy Advance", .core = "mgba", .extensions = ".gba .zip .7z" },
+    .{ .id = "mastersystem", .aliases = "MS SMS MASTERSYSTEM", .label = "Master System", .core = "genesis_plus_gx", .extensions = ".sms .zip .7z" },
+    .{ .id = "gamegear", .aliases = "GG GAMEGEAR", .label = "Game Gear", .core = "genesis_plus_gx", .extensions = ".gg .zip .7z" },
+    .{ .id = "megadrive", .aliases = "MD GENESIS MEGADRIVE", .label = "Mega Drive", .core = "genesis_plus_gx", .extensions = ".md .gen .bin .smd .zip .7z" },
+    .{ .id = "snes", .aliases = "SFC SNES", .label = "Super Nintendo", .core = "snes9x", .extensions = ".sfc .smc .zip .7z" },
+    .{ .id = "psx", .aliases = "PS PS1 PSX", .label = "PlayStation", .core = "pcsx_rearmed", .extensions = ".chd .cue .m3u .pbp .ccd" },
+    .{ .id = "neogeo", .aliases = "NEOGEO NG", .label = "Neo Geo", .core = "fbneo_neogeo", .extensions = ".zip" },
+    .{ .id = "ngpc", .aliases = "NGP NGPC", .label = "Neo Geo Pocket", .core = "mednafen_ngp", .extensions = ".ngp .ngc .zip .7z" },
 };
 
 fn contains(list: []const u8, value: []const u8) bool {

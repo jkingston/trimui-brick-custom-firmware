@@ -20,6 +20,7 @@ pub const Model = struct {
     system: []const u8 = "",
     notice: []const u8 = "",
     saved: bool = false,
+    available: [4]bool = @splat(false),
     pending: ?Command = null,
     revision: u64 = 1,
 
@@ -52,10 +53,10 @@ pub const Model = struct {
     }
 
     pub fn tree(self: *const Model) ui.Tree {
-        const performance_values = [_][]const u8{ "BATTERY", "BALANCED", "PERFORMANCE" };
+        const performance_values = [_][]const u8{ "Battery", "Balanced", "Performance" };
         return switch (self.layer) {
-            .pause => ui.overlayPause(self.title, self.system, self.selected, self.save_slot, self.saved, performance_values[self.performance_profile]),
-            .states => ui.overlayStates(self.title, self.state_slot, self.notice),
+            .pause => ui.overlayPause(self.title, self.system, self.selected, self.save_slot, self.saved, performance_values[self.performance_profile], self.notice),
+            .states => ui.overlayStates(self.title, self.state_slot, self.notice, self.available),
         };
     }
 
@@ -86,7 +87,8 @@ pub const Model = struct {
             .select => switch (self.selected) {
                 0 => self.pending = .resume_game,
                 1 => {
-                    self.saved = true;
+                    self.saved = false;
+                    self.notice = "";
                     self.pending = .save_state;
                 },
                 2 => {
@@ -124,7 +126,7 @@ test "pause actions expose commands and deeper layers" {
     var state = Model{};
     try std.testing.expect(state.apply(.down));
     try std.testing.expect(state.apply(.select));
-    try std.testing.expect(state.saved);
+    try std.testing.expect(!state.saved);
     try std.testing.expectEqual(Command.save_state, state.takeCommand().?);
     try std.testing.expect(state.apply(.down));
     try std.testing.expect(state.apply(.select));

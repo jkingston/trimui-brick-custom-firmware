@@ -220,6 +220,24 @@ fn statePath(allocator: std.mem.Allocator, game: *const catalog.Game, session: S
     });
 }
 
+pub fn availableStates(io: std.Io, game: *const catalog.Game) [4]bool {
+    var result: [4]bool = @splat(false);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const id = identity(allocator, game, "/data") catch return result;
+    for (0..4) |slot| {
+        const suffix = if (slot == 3) ".auto" else std.fmt.allocPrint(allocator, ".brick-{d}", .{slot + 1}) catch continue;
+        const filename = std.fmt.allocPrint(allocator, "{s}.state{s}", .{ std.Io.Dir.path.stem(std.Io.Dir.path.basename(game.rom_path)), suffix }) catch continue;
+        const path = std.Io.Dir.path.join(allocator, &.{ "/data/Saves/games", &id, "states", coreName(game), filename }) catch continue;
+        const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch continue;
+        defer file.close(io);
+        const stat = file.stat(io) catch continue;
+        result[slot] = stat.kind == .file and stat.size != 0;
+    }
+    return result;
+}
+
 pub fn saveState(io: std.Io, game: *const catalog.Game, library: []const catalog.Game, slot: usize) !void {
     if (slot >= 3) return error.InvalidStateSlot;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -233,7 +251,10 @@ pub fn saveState(io: std.Io, game: *const catalog.Game, library: []const catalog
 
 pub fn loadState(io: std.Io, game: *const catalog.Game, library: []const catalog.Game, slot: usize) !void {
     if (slot > 3) return error.InvalidStateSlot;
-    if (slot == 3) return;
+    if (slot == 3) {
+        if (!availableStates(io, game)[3]) return error.FileNotFound;
+        return;
+    }
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();

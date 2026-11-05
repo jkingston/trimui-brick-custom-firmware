@@ -29,6 +29,7 @@ const Engine = struct {
     languageFromString: *const fn ([*:0]const u8) callconv(.c) ?*Object,
     layoutNew: *const fn (*Object) callconv(.c) ?*Object,
     layoutSetText: *const fn (*Object, [*]const u8, i32) callconv(.c) void,
+    layoutSetHeight: *const fn (*Object, i32) callconv(.c) void,
     layoutSetWidth: *const fn (*Object, i32) callconv(.c) void,
     layoutSetEllipsize: *const fn (*Object, i32) callconv(.c) void,
     layoutSetSingleParagraph: *const fn (*Object, i32) callconv(.c) void,
@@ -68,6 +69,7 @@ const Engine = struct {
             .languageFromString = try symbol(&pango, @FieldType(Engine, "languageFromString"), "pango_language_from_string"),
             .layoutNew = try symbol(&pango, @FieldType(Engine, "layoutNew"), "pango_layout_new"),
             .layoutSetText = try symbol(&pango, @FieldType(Engine, "layoutSetText"), "pango_layout_set_text"),
+            .layoutSetHeight = try symbol(&pango, @FieldType(Engine, "layoutSetHeight"), "pango_layout_set_height"),
             .layoutSetWidth = try symbol(&pango, @FieldType(Engine, "layoutSetWidth"), "pango_layout_set_width"),
             .layoutSetEllipsize = try symbol(&pango, @FieldType(Engine, "layoutSetEllipsize"), "pango_layout_set_ellipsize"),
             .layoutSetSingleParagraph = try symbol(&pango, @FieldType(Engine, "layoutSetSingleParagraph"), "pango_layout_set_single_paragraph_mode"),
@@ -85,7 +87,7 @@ const Engine = struct {
 
 var attempted = false;
 var engine: ?Engine = null;
-var bitmap_storage: [1024 * 96]u8 = undefined;
+var bitmap_storage: [1024 * 192]u8 = undefined;
 
 fn current() ?*Engine {
     if (!attempted) {
@@ -107,7 +109,7 @@ fn pixelSize(scale: u8) u16 {
     };
 }
 
-pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, scale: u8, language: []const u8) bool {
+pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, scale: u8, language: []const u8, lines: u8, max_height: u16) bool {
     const state = current() orelse return false;
     if (text.len == 0 or max_width == 0 or x >= stride) return true;
     const context = state.createContext(state.font_map) orelse return false;
@@ -128,7 +130,8 @@ pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: 
     state.layoutSetText(layout, text.ptr, @intCast(text.len));
     state.layoutSetWidth(layout, @as(i32, max_width) * pango_scale);
     state.layoutSetEllipsize(layout, pango_ellipsize_end);
-    state.layoutSetSingleParagraph(layout, 1);
+    state.layoutSetSingleParagraph(layout, if (lines == 1) 1 else 0);
+    state.layoutSetHeight(layout, -@as(i32, @max(1, lines)));
     state.layoutSetAutoDirection(layout, 1);
 
     var text_width: i32 = 0;
@@ -138,7 +141,7 @@ pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: 
     // Pango positions RTL runs against the requested layout width even when the
     // ink extents are narrower. Preserve that width or right-aligned text clips.
     const bitmap_width: usize = max_width;
-    const bitmap_height: usize = @min(@as(usize, @intCast(text_height)), 96);
+    const bitmap_height: usize = @min(@as(usize, @intCast(text_height)), @min(max_height, 192));
     @memset(bitmap_storage[0 .. bitmap_width * bitmap_height], 0);
     var bitmap = Bitmap{
         .rows = @intCast(bitmap_height),

@@ -44,7 +44,7 @@ const UpdateTextureFn = *const fn (*Texture, ?*const Rect, *const anyopaque, i32
 const RenderClearFn = *const fn (*Renderer) callconv(.c) i32;
 const RenderCopyFn = *const fn (*Renderer, *Texture, ?*const Rect, ?*const Rect) callconv(.c) i32;
 const RenderPresentFn = *const fn (*Renderer) callconv(.c) void;
-const WaitEventFn = *const fn (*Event) callconv(.c) i32;
+const WaitEventFn = *const fn (*Event, i32) callconv(.c) i32;
 const GetErrorFn = *const fn () callconv(.c) [*:0]const u8;
 
 const Sdl = struct {
@@ -91,7 +91,7 @@ const Sdl = struct {
             .renderClear = try loadSymbol(&library, RenderClearFn, "SDL_RenderClear"),
             .renderCopy = try loadSymbol(&library, RenderCopyFn, "SDL_RenderCopy"),
             .renderPresent = try loadSymbol(&library, RenderPresentFn, "SDL_RenderPresent"),
-            .waitEvent = try loadSymbol(&library, WaitEventFn, "SDL_WaitEvent"),
+            .waitEvent = try loadSymbol(&library, WaitEventFn, "SDL_WaitEventTimeout"),
             .getError = try loadSymbol(&library, GetErrorFn, "SDL_GetError"),
         };
     }
@@ -111,6 +111,7 @@ const sdl_texture_access_streaming: i32 = 1;
 const sdl_pixel_format_argb8888: u32 = 0x16362004;
 const sdl_quit: u32 = 0x100;
 const sdl_key_down: u32 = 0x300;
+const sdl_key_release: u32 = 0x301;
 
 const sdl_key_return: i32 = 13;
 const sdl_key_escape: i32 = 27;
@@ -226,13 +227,11 @@ pub fn main(init: std.process.Init) !void {
 
     if (library_check) |directory| {
         try std.Io.Dir.cwd().createDirPath(init.io, directory);
-        _ = state.apply(.select);
         tree = state.tree();
         try drawTree(&sdl, renderer, texture, pixels, &tree);
         try @import("main.zig").writePpm(init.io, try std.Io.Dir.path.join(arena.allocator(), &.{ directory, "library.ppm" }), pixels);
         for (state.games, 0..) |game, index| {
             if (state.selected != index) return error.SelectionMismatch;
-            _ = state.apply(.select);
             tree = state.tree();
             try drawTree(&sdl, renderer, texture, pixels, &tree);
             if (index == 0) try @import("main.zig").writePpm(init.io, try std.Io.Dir.path.join(arena.allocator(), &.{ directory, "detail.ppm" }), pixels);
@@ -240,12 +239,11 @@ pub fn main(init: std.process.Init) !void {
             if (state.takeLaunch() != index) return error.LaunchMismatch;
             const argv = retroarch.arguments(&game);
             std.log.info("Launch intent: {s} / {s}", .{ argv[4], game.rom_path });
-            _ = state.apply(.back);
             tree = state.tree();
             try drawTree(&sdl, renderer, texture, pixels, &tree);
             _ = state.apply(.down);
         }
-        if (state.selected != 0) return error.WrapMismatch;
+        if (state.games.len > 0 and state.selected != state.games.len - 1) return error.BoundaryMismatch;
         _ = state.apply(.up);
         tree = state.tree();
         try drawTree(&sdl, renderer, texture, pixels, &tree);
@@ -288,45 +286,68 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    var motion: @import("shelf_motion.zig").Motion = .{};
+    var repeat: @import("input_repeat.zig").Controller = .{};
+    var was_animating = false;
     while (true) {
-        // SAFETY: SDL_WaitEvent initializes the event before it is inspected.
+        const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
+        const animating = !overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now);
+        const repeat_timeout = repeat.timeout(now);
+        const timeout = if (animating) (if (repeat_timeout < 0) 16 else @min(16, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
+        // SAFETY: event is inspected only when SDL reports an initialized event.
         var event: Event = undefined;
-        if (sdl.waitEvent(&event) == 0) return failSdl(&sdl, "SDL_WaitEvent");
-        if (event.event_type == sdl_quit) break;
-        if (event.event_type != sdl_key_down or event.key.repeat != 0) continue;
-        const key = event.key.keysym.sym;
-        var changed = false;
-        if (key == 'p') {
-            physical_size = !physical_size;
-            const size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
-            sdl.setWindowSize(window, size.width, size.height);
-            changed = true;
-        } else if (key == 'm') {
-            overlay_visible = !overlay_visible;
-            if (overlay_visible) game_overlay = .{};
-            changed = true;
-        } else if (actionForKey(key)) |action| {
+        const received = sdl.waitEvent(&event, timeout) != 0;
+        const timestamp = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
+        var action: ?input.Action = repeat.due(timestamp);
+        var changed = animating or was_animating;
+        was_animating = animating;
+        if (received) {
+            if (event.event_type == sdl_quit) break;
+            if (event.event_type == sdl_key_release) {
+                if (actionForKey(event.key.keysym.sym)) |released| repeat.release(released);
+            } else if (event.event_type == sdl_key_down and event.key.repeat == 0) {
+                const key = event.key.keysym.sym;
+                if (key == 'p') {
+                    physical_size = !physical_size;
+                    const size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
+                    sdl.setWindowSize(window, size.width, size.height);
+                    changed = true;
+                } else if (key == 'm') {
+                    overlay_visible = !overlay_visible;
+                    if (overlay_visible) game_overlay = .{};
+                    repeat.reset();
+                    changed = true;
+                } else if (actionForKey(key)) |pressed| {
+                    action = pressed;
+                    if (pressed == .up or pressed == .down or pressed == .left or pressed == .right) repeat.press(pressed, timestamp);
+                }
+            }
+        }
+        if (action) |pressed| {
             if (overlay_visible) {
-                changed = game_overlay.apply(action);
+                changed = game_overlay.apply(pressed) or changed;
                 if (game_overlay.takeCommand()) |command| {
                     std.log.info("Overlay command: {s}", .{@tagName(command)});
                     switch (command) {
-                        .resume_game, .exit_game => overlay_visible = false,
-                        .load_state => overlay_visible = false,
-                        .save_state => {},
+                        .resume_game, .exit_game, .load_state => overlay_visible = false,
+                        .save_state => game_overlay.notice = "Simulator: no save written",
+                        .apply_performance => {},
                     }
                     changed = true;
                 }
             } else {
-                changed = state.apply(action);
+                const previous = state.selected;
+                changed = state.apply(pressed) or changed;
+                if (state.page == .games and state.library_view == .shelf and previous != state.selected)
+                    motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), timestamp);
                 if (state.takeLaunch()) |index| {
                     const argv = retroarch.arguments(&state.games[index]);
-                    std.log.info("Launch: {s} {s} {s} {s} {s} {s}", .{ argv[0], argv[1], argv[2], argv[3], argv[4], argv[5] });
+                    std.log.info("Launch intent: {s} / {s}", .{ argv[4], state.games[index].rom_path });
                 }
             }
         }
         if (changed) {
-            tree = if (overlay_visible) game_overlay.tree() else state.tree();
+            tree = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
             try drawTree(&sdl, renderer, texture, pixels, &tree);
         }
     }

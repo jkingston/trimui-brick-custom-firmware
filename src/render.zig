@@ -14,7 +14,9 @@ pub const Surface = struct {
         for (tree.slice()) |element| switch (element) {
             .bar => |bar| self.fill(bar.bounds, bar.color),
             .scrim => |scrim| self.fillAlpha(scrim.bounds, scrim.color, scrim.alpha),
-            .text => |text| self.drawTextBoundedLanguage(text.bounds.x, text.bounds.y, text.bounds.width, text.value, text.color, text.scale, text.language),
+            .text => |text| {
+                if (!text_pango.draw(self.pixels, width, text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.scale, text.language, text.lines, text.bounds.height)) @panic("Text renderer unavailable");
+            },
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .cover => |cover| self.drawCover(cover),
@@ -81,36 +83,23 @@ pub const Surface = struct {
     }
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
-        const background = if (item.selected) ui.palette.deep else ui.palette.paper;
-        self.fill(item.bounds, background);
-        if (item.selected) {
-            self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 6, .height = item.bounds.height }, ui.palette.pine);
-        } else {
-            self.fill(.{ .x = item.bounds.x, .y = item.bounds.y + item.bounds.height - 1, .width = item.bounds.width, .height = 1 }, ui.palette.chrome);
-        }
-        const label_color = if (item.selected) ui.palette.white else ui.palette.ink;
-        const detail_color = if (item.selected) ui.palette.white else ui.palette.quiet;
-        const value_scale: u8 = if (item.value.len != 0) 2 else 3;
-        const value_step: usize = if (value_scale == 2) 18 else 23;
-        const reserved: u16 = if (item.value.len != 0) @intCast(@as(usize, @min(item.value.len, 18)) * value_step + 28) else if (item.disclosure) 70 else 28;
-        const label_y = if (item.detail.len == 0) item.bounds.y + 16 else item.bounds.y + 4;
-        self.drawTextBounded(item.bounds.x + 28, label_y, item.bounds.width - 28 - reserved, item.label, label_color, value_scale);
-        if (item.detail.len != 0)
-            self.drawTextBounded(item.bounds.x + 30, item.bounds.y + 48, item.bounds.width - 60, item.detail, detail_color, 2);
-        if (item.value.len != 0) {
-            const value_width: u16 = @intCast(@min(item.value.len * value_step, item.bounds.width / 2));
-            const right_padding: u16 = if (item.disclosure) 70 else 28;
-            self.drawText(item.bounds.x + item.bounds.width - right_padding - value_width, label_y, item.value, label_color, value_scale);
-        }
-        if (item.disclosure)
-            self.drawChevron(item.bounds.x + item.bounds.width - 40, item.bounds.y + 30, label_color);
+        self.fill(item.bounds, if (item.selected) ui.palette.selected else ui.palette.paper);
+        if (item.selected) self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 6, .height = item.bounds.height }, ui.palette.pine);
+        const color = if (item.selected) ui.palette.pine else ui.palette.ink;
+        const stacked = item.bounds.width < 600 and item.value.len != 0;
+        const value_width: u16 = if (item.value.len != 0 and !stacked) @min(320, item.bounds.width / 2) else 0;
+        const label_y = item.bounds.y + (if (item.detail.len == 0 and !stacked) @as(u16, 22) else 4);
+        self.drawTextBounded(item.bounds.x + 24, label_y, item.bounds.width - value_width - 48, item.label, color, 3);
+        if (stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.value, ui.palette.quiet, 2);
+        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.detail, ui.palette.quiet, 2);
+        if (item.value.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + item.bounds.width - value_width, label_y, value_width - 16, item.value, color, 2);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
-        self.drawTextureDimmed(texture, bounds, 0);
+        self.drawTextureDimmed(texture, bounds, 0, 0, 0);
     }
 
-    fn drawTextureDimmed(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect, dim: u8) void {
+    fn drawTextureDimmed(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect, dim: u8, tilt: i16, clip_left: u16) void {
         if (bounds.width == 0 or bounds.height == 0) return;
         var fitted = bounds;
         const fitted_width = @as(u32, bounds.height) * texture.content_width / texture.content_height;
@@ -123,9 +112,14 @@ pub const Surface = struct {
         }
         var y: u16 = 0;
         while (y < fitted.height and fitted.y + y < height) : (y += 1) {
-            const source_y = texture.content_y + @as(usize, y) * texture.content_height / fitted.height;
             var x: u16 = 0;
-            while (x < fitted.width and fitted.x + x < width) : (x += 1) {
+            while (x < fitted.width) : (x += 1) {
+                const screen_x = @as(i32, fitted.x) + x - clip_left;
+                if (screen_x < 0 or screen_x >= width) continue;
+                const far_x = if (tilt < 0) x else fitted.width - 1 - x;
+                const inset: u16 = @intCast(@as(u32, far_x) * @abs(tilt) * fitted.height / @max(1, @as(u32, fitted.width) * 8000));
+                if (y < inset or y >= fitted.height - inset) continue;
+                const source_y = texture.content_y + @as(usize, y - inset) * texture.content_height / (fitted.height - 2 * inset);
                 const source_x = texture.content_x + @as(usize, x) * texture.content_width / fitted.width;
                 var source: ui.Color = @bitCast(texture.pixels[source_y * texture.width + source_x]);
                 if (source.a == 0) continue;
@@ -134,7 +128,7 @@ pub const Surface = struct {
                     source.g = blend255(source.g, ui.palette.deep.g, dim);
                     source.b = blend255(source.b, ui.palette.deep.b, dim);
                 }
-                const index = @as(usize, fitted.y + y) * width + fitted.x + x;
+                const index = @as(usize, fitted.y + y) * width + @as(usize, @intCast(screen_x));
                 if (source.a == 255) {
                     self.pixels[index] = @bitCast(source);
                 } else {
@@ -155,7 +149,12 @@ pub const Surface = struct {
     fn drawCartridge(self: Surface, cartridge: ui.Cartridge) void {
         const bounds = cartridge.bounds;
         if (cartridge.sprite) |sprite| {
-            self.drawTextureDimmed(sprite, bounds, cartridge.dim);
+            self.drawTextureDimmed(sprite, bounds, cartridge.dim, cartridge.tilt, cartridge.clip_left);
+            return;
+        }
+        if (cartridge.plain_fallback) {
+            self.fill(bounds, ui.palette.surface);
+            self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", ui.palette.quiet, 2);
             return;
         }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
@@ -334,7 +333,7 @@ pub const Surface = struct {
     fn drawTextBoundedLanguage(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, scale: u8, language: []const u8) void {
         if (x >= width or y >= height or scale == 0) return;
         const available = @min(max_width, width - x);
-        if (!text_pango.draw(self.pixels, width, x, y, available, value, pack(color), scale, language))
+        if (!text_pango.draw(self.pixels, width, x, y, available, value, pack(color), scale, language, 1, 96))
             @panic("PangoFT2 text renderer or required fonts are unavailable");
     }
 };
@@ -370,4 +369,22 @@ test "lowercase and uppercase preserve distinct letterforms" {
     try std.testing.expect(!std.mem.eql(u32, a, b));
     try std.testing.expect(std.mem.count(u32, a, &.{0}) < a.len);
     try std.testing.expect(std.mem.count(u32, b, &.{0}) < b.len);
+}
+
+test "multiline titles use their height and remain inside the text rectangle" {
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    @memset(pixels, Surface.pack(ui.palette.paper));
+    var tree = ui.Tree{ .background = ui.palette.paper };
+    tree.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 40, .width = 400, .height = 120 }, .value = "A long game title that must occupy two lines", .color = ui.palette.ink, .scale = 3, .lines = 2 } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    var second_line = false;
+    for (pixels, 0..) |pixel, index| {
+        if (pixel == Surface.pack(ui.palette.paper)) continue;
+        const x = index % width;
+        const y = index / width;
+        try std.testing.expect(x >= 40 and x < 440 and y >= 40 and y < 160);
+        if (y >= 90) second_line = true;
+    }
+    try std.testing.expect(second_line);
 }
