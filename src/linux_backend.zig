@@ -2,6 +2,7 @@
 const std = @import("std");
 const catalog = @import("catalog.zig");
 const model = @import("model.zig");
+const overlay = @import("overlay.zig");
 const render = @import("render.zig");
 const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
@@ -27,6 +28,7 @@ const syn_dropped: u16 = 0x03;
 const btn_south: u16 = 0x130;
 const btn_east: u16 = 0x131;
 const btn_mode: u16 = 0x13c;
+const btn_view: u16 = 0x2c0;
 const btn_dpad_up: u16 = 0x220;
 const btn_dpad_down: u16 = 0x221;
 const btn_dpad_left: u16 = 0x222;
@@ -137,6 +139,7 @@ const Framebuffer = struct {
     page_count: usize,
     draw_page: usize,
     unblanked: bool = false,
+    background: ?[]u32 = null,
 
     fn open(io: std.Io) !Framebuffer {
         const geometry = try parseGeometry(io);
@@ -169,11 +172,15 @@ const Framebuffer = struct {
     }
 
     fn close(self: *Framebuffer) void {
+        if (self.background) |background| std.heap.page_allocator.free(background);
         std.posix.munmap(self.memory);
         closeFd(self.io, self.fd, false);
     }
 
     fn show(self: *Framebuffer, tree: *const ui.Tree) !void {
+        if (tree.preserve_background) {
+            if (self.background) |background| @memcpy(self.surface.pixels, background);
+        }
         self.surface.render(tree);
         self.variable.xoffset = 0;
         self.variable.yoffset = @intCast(self.draw_page * render.height);
@@ -187,6 +194,15 @@ const Framebuffer = struct {
             try writeAttribute(self.io, blank_path, "0\n");
             self.unblanked = true;
         }
+    }
+
+    fn captureBackground(self: *Framebuffer) !void {
+        const display_page = self.variable.yoffset / render.height;
+        const pixel_pointer: [*]u32 = @ptrCast(@alignCast(self.memory.ptr));
+        const displayed = pixel_pointer[display_page * render.width * render.height ..][0 .. render.width * render.height];
+        const background = try std.heap.page_allocator.alloc(u32, render.width * render.height);
+        @memcpy(background, displayed);
+        self.background = background;
     }
 };
 
@@ -244,6 +260,7 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
         btn_east => if (event.value == 1) .select else null,
         btn_south => if (event.value == 1) .back else null,
         btn_mode => if (event.value == 1) .menu else null,
+        btn_view => if (event.value == 1) .view else null,
         else => null,
     };
 }
@@ -287,14 +304,66 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
             const events = std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read]);
             for (events) |event| {
                 if (actionForEvent(event, &dropped)) |action| {
+                    const previous_selected = state.selected;
                     if (state.apply(action)) {
                         if (state.takeSetting()) |setting|
                             settings.apply(io, state.settings, setting) catch {
                                 state.settings = settings.load(io);
                             };
                         if (state.takeLaunch()) |index| return index;
+                        if (state.page == .games and state.library_view == .shelf and previous_selected != state.selected) {
+                            const initial: i16 = if (state.selected > previous_selected) 182 else -182;
+                            var frame: i16 = 7;
+                            while (frame > 0) : (frame -= 1) {
+                                tree = state.treeWithShelfOffset(@divTrunc(initial * frame, 8));
+                                try framebuffer.show(&tree);
+                            }
+                        }
                         changed = true;
                     }
+                }
+            }
+            if (bytes_read < buffer.len) break;
+        }
+        if (changed) {
+            tree = state.tree();
+            try framebuffer.show(&tree);
+        }
+    }
+}
+
+fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
+    var console = try Console.open(io);
+    defer console.close();
+    var framebuffer = try Framebuffer.open(io);
+    defer framebuffer.close();
+    try framebuffer.captureBackground();
+
+    var tree = state.tree();
+    try framebuffer.show(&tree);
+    const input_fd = try discoverGamepad(io);
+    defer closeFd(io, input_fd, true);
+    var poll_fds = [_]std.posix.pollfd{.{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 }};
+    var dropped = false;
+    var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
+
+    while (true) {
+        _ = try std.posix.poll(&poll_fds, -1);
+        if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
+            return error.GamepadDisconnected;
+        if ((poll_fds[0].revents & std.posix.POLL.IN) == 0) continue;
+        var changed = false;
+        while (true) {
+            const bytes_read = std.posix.read(input_fd, &buffer) catch |err| switch (err) {
+                error.WouldBlock => break,
+                else => return err,
+            };
+            if (bytes_read == 0) return error.GamepadDisconnected;
+            if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
+            for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
+                if (actionForEvent(event, &dropped)) |action| {
+                    if (state.apply(action)) changed = true;
+                    if (state.takeCommand()) |command| return command;
                 }
             }
             if (bytes_read < buffer.len) break;
@@ -313,13 +382,54 @@ pub fn run(io: std.Io) !void {
     var state = model.Model{ .games = library, .settings = settings.load(io) };
     while (true) {
         const game_index = (try runSession(io, &state)) orelse continue;
-        const term = retroarch.launch(io, &state.games[game_index], state.games) catch |err| {
-            state.launchFailed(retroarch.Failure.fromError(err));
-            continue;
+        const game = &state.games[game_index];
+        var game_overlay = overlay.Model{
+            .title = game.title,
+            .system = game.system,
+            .performance_profile = @backingInt(state.settings.performance),
         };
-        switch (term) {
-            .exited => |status| if (status != 0) state.launchFailed(.emulator),
-            else => state.launchFailed(.emulator),
+        game_session: while (true) {
+            const term = retroarch.launch(io, game, state.games) catch |err| {
+                state.launchFailed(retroarch.Failure.fromError(err));
+                break :game_session;
+            };
+            switch (term) {
+                .exited => |status| if (status != 0) {
+                    state.launchFailed(.emulator);
+                    break :game_session;
+                },
+                else => {
+                    state.launchFailed(.emulator);
+                    break :game_session;
+                },
+            }
+            while (true) {
+                switch (try runOverlay(io, &game_overlay)) {
+                    .resume_game => continue :game_session,
+                    .exit_game => break :game_session,
+                    .save_state => {
+                        retroarch.saveState(io, game, state.games, game_overlay.save_slot) catch |err| {
+                            game_overlay.saved = false;
+                            game_overlay.notice = "Save failed";
+                            std.log.err("Failed to save state: {s}", .{@errorName(err)});
+                        };
+                    },
+                    .load_state => {
+                        retroarch.loadState(io, game, state.games, game_overlay.state_slot) catch |err| {
+                            game_overlay.notice = "No save in that slot";
+                            std.log.err("Failed to load state: {s}", .{@errorName(err)});
+                            continue;
+                        };
+                        game_overlay.notice = "";
+                        continue :game_session;
+                    },
+                    .apply_performance => {
+                        state.settings.performance = @fromBackingInt(@intCast(game_overlay.performance_profile));
+                        settings.apply(io, state.settings, .performance) catch |err|
+                            std.log.err("Failed to apply performance profile: {s}", .{@errorName(err)});
+                    },
+                }
+            }
         }
     }
 }

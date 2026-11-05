@@ -118,7 +118,7 @@ description = "Render deterministic UI screenshots"
 run = '''
 mkdir -p output/screenshots
 zig build -Doptimize=ReleaseSafe --prefix output/host-shell --summary all
-for screen in splash home games game settings overlay overlay-states overlay-options languages; do
+for screen in splash home games games-shelf games-grid game settings overlay overlay-states languages; do
     output/host-shell/bin/brick-shell --snapshot "output/screenshots/$screen.ppm" "$screen"
     magick "output/screenshots/$screen.ppm" "output/screenshots/$screen.png"
 done

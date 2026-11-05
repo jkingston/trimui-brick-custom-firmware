@@ -32,10 +32,13 @@ pub fn writePpm(io: std.Io, path: []const u8, pixels: []const u32) !void {
 fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: []const u8) !void {
     const pixels = try allocator.alloc(u32, render.width * render.height);
     defer allocator.free(pixels);
+    @memset(pixels, 0xff13253c);
     const surface = render.Surface{ .pixels = pixels };
     var state = model.Model{};
-    if (std.mem.eql(u8, screen, "games")) {
+    if (std.mem.eql(u8, screen, "games") or std.mem.eql(u8, screen, "games-shelf") or std.mem.eql(u8, screen, "games-grid")) {
         state.page = .games;
+        if (std.mem.eql(u8, screen, "games-shelf")) state.library_view = .shelf;
+        if (std.mem.eql(u8, screen, "games-grid")) state.library_view = .grid;
     } else if (std.mem.eql(u8, screen, "game")) {
         state.page = .game;
         state.game_index = 1;
@@ -49,11 +52,6 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
         var game_overlay = overlay.Model{};
         game_overlay.layer = .states;
         game_overlay.state_slot = 1;
-        break :blk game_overlay.tree();
-    } else if (std.mem.eql(u8, screen, "overlay-options")) blk: {
-        var game_overlay = overlay.Model{};
-        game_overlay.layer = .options;
-        game_overlay.selected = 1;
         break :blk game_overlay.tree();
     } else state.tree();
     surface.render(&tree);

@@ -11,6 +11,7 @@ const Entry = struct {
     game_id: ?[]const u8 = null,
     model: ?[]const u8 = null,
     surfaces: ?std.json.Value = null,
+    textures: ?std.json.Value = null,
     note: ?[]const u8 = null,
 };
 
@@ -27,7 +28,10 @@ pub const Assets = struct {
     top: ?[]const u8 = null,
     rear: ?[]const u8 = null,
     disc: ?[]const u8 = null,
+    preview: ?Texture = null,
 };
+
+pub const Texture = struct { width: u16, height: u16, pixels: []const u32 };
 
 fn confinedPath(allocator: std.mem.Allocator, root: []const u8, relative: []const u8) ![]const u8 {
     if (std.Io.Dir.path.isAbsolute(relative)) return error.AssetPathEscapesRoot;
@@ -60,6 +64,29 @@ fn modelPath(allocator: std.mem.Allocator, asset_root: []const u8, id: ?[]const 
     return try confinedPath(allocator, asset_root, relative);
 }
 
+fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8, textures: ?std.json.Value) !?Texture {
+    const value = textures orelse return null;
+    if (value != .object) return error.InvalidAssetTextures;
+    const member = value.object.get("artwork.front") orelse value.object.get("artwork.disc") orelse return null;
+    if (member != .string) return error.InvalidAssetTextures;
+    const path = try confinedPath(allocator, asset_root, member.string);
+    const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(4 * 1024 * 1024));
+    if (contents.len < 8 or !std.mem.eql(u8, contents[0..4], "BRTX")) return error.InvalidAssetTexture;
+    const width = @as(u16, contents[4]) | (@as(u16, contents[5]) << 8);
+    const height = @as(u16, contents[6]) | (@as(u16, contents[7]) << 8);
+    const count = @as(usize, width) * height;
+    if (width == 0 or height == 0 or contents.len != 8 + count * 4) return error.InvalidAssetTexture;
+    const pixels = try allocator.alloc(u32, count);
+    for (pixels, 0..) |*pixel, index| {
+        const offset = 8 + index * 4;
+        pixel.* = @as(u32, contents[offset]) |
+            (@as(u32, contents[offset + 1]) << 8) |
+            (@as(u32, contents[offset + 2]) << 16) |
+            (@as(u32, contents[offset + 3]) << 24);
+    }
+    return .{ .width = width, .height = height, .pixels = pixels };
+}
+
 pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
     var result: std.StringHashMap(Assets) = .init(allocator);
     const asset_root = try std.Io.Dir.path.join(allocator, &.{ data_root, "Assets", "Brick" });
@@ -79,6 +106,7 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !st
             .top = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.top"),
             .rear = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.rear"),
             .disc = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.disc"),
+            .preview = try loadTexture(io, allocator, asset_root, entry.textures),
         };
         try result.put(rom, assets);
     }
@@ -105,6 +133,32 @@ test "manifest maps confined ROM and artwork paths" {
     const mapped = assets.get(rom).?;
     try std.testing.expect(std.mem.endsWith(u8, mapped.model.?, "/Assets/Brick/models/gb.glb"));
     try std.testing.expect(std.mem.endsWith(u8, mapped.front.?, "/Assets/Brick/objects/aa/label.png"));
+}
+
+test "manifest loads the decoder-free runtime preview" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    try temporary.dir.createDirPath(io, "Assets/Brick/textures/aa");
+    try temporary.dir.writeFile(io, .{ .sub_path = "Assets/Brick/textures/aa/label.brtx", .data = "BRTX\x02\x00\x01\x00" ++
+        "\x03\x02\x01\xff\x30\x20\x10\x80" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "Assets/Brick/library.json", .data =
+        \\{"schema_version":1,"asset_index_version":"test","games":[
+        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx"}}
+        \\],"attribution":{}}
+    });
+    var assets = try load(io, allocator, root);
+    defer assets.deinit();
+    const rom = try std.Io.Dir.path.join(allocator, &.{ root, "Roms/GB/Tetris.gb" });
+    const texture = assets.get(rom).?.preview.?;
+    try std.testing.expectEqual(@as(u16, 2), texture.width);
+    try std.testing.expectEqual(@as(u16, 1), texture.height);
+    try std.testing.expectEqual(@as(u32, 0xff010203), texture.pixels[0]);
+    try std.testing.expectEqual(@as(u32, 0x80102030), texture.pixels[1]);
 }
 
 test "manifest rejects model path injection" {

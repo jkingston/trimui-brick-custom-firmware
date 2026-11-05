@@ -1,0 +1,40 @@
+From 38be17e1773d5f4f4981f2fc7c5dd8478393e12a Mon Sep 17 00:00:00 2001
+From: Brick Firmware <brick@localhost>
+Date: Thu, 5 Nov 2026 13:00:00 +0000
+Subject: [PATCH] neogeo: guard parent name before comparing it
+
+Parentless Neo Geo drivers return NULL for DRV_PARENT.  Do not pass that
+value to strcmp while checking the Crossed Swords 2 bootleg workaround.
+This matches current upstream FBNeo and fixes startup for parentless games
+such as Neo Turf Masters.
+
+Upstream-Status: Backport [https://github.com/finalburnneo/FBNeo/blob/master/src/burn/drv/neogeo/neo_run.cpp]
+Signed-off-by: Brick Firmware <brick@localhost>
+---
+ src/burn/drv/neogeo/neo_run.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/burn/drv/neogeo/neo_run.cpp b/src/burn/drv/neogeo/neo_run.cpp
+index 8a802db9b..6d578484d 100644
+--- a/src/burn/drv/neogeo/neo_run.cpp
++++ b/src/burn/drv/neogeo/neo_run.cpp
+@@ -4162,6 +4162,8 @@ static INT32 NeoInitCommon()
+ 
+ 	NEO_RASTER_IRQ_TWEAK = 0;
+ 
++	const char* drv_parent = BurnDrvGetTextA(DRV_PARENT);
++
+ 	// These games rely on reading the line counter for synchronising raster effects
+ 	if (!strcmp(BurnDrvGetTextA(DRV_NAME), "moshougi")) {
+ 		bRenderLineByLine = true;
+@@ -4172,7 +4174,7 @@ static INT32 NeoInitCommon()
+ 	if (!strcmp(BurnDrvGetTextA(DRV_NAME), "zedblade")) {
+ 		bRenderLineByLine = true;
+ 	}
+-	if (!strcmp(BurnDrvGetTextA(DRV_NAME), "crswd2bl") || !strcmp(BurnDrvGetTextA(DRV_PARENT), "crswd2bl")) {
++	if (!strcmp(BurnDrvGetTextA(DRV_NAME), "crswd2bl") || (drv_parent && !strcmp(drv_parent, "crswd2bl"))) {
+ 		bRenderLineByLine = true;
+ 	}
+ 	if (!strcmp(BurnDrvGetTextA(DRV_NAME), "spinmast")) {
+-- 
+2.51.0

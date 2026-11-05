@@ -191,7 +191,9 @@ pub fn prepare(io: std.Io, allocator: std.mem.Allocator, game: *const catalog.Ga
     const text = try std.fmt.allocPrint(allocator, "savefile_directory = \"{s}\"\nsavestate_directory = \"{s}\"\n" ++
         "sort_savefiles_enable = \"true\"\nsort_savestates_enable = \"true\"\n" ++
         "sort_savefiles_by_content_enable = \"false\"\nsort_savestates_by_content_enable = \"false\"\n" ++
-        "savefiles_in_content_dir = \"false\"\nsavestates_in_content_dir = \"false\"\n", .{ session.saves, session.states });
+        "savefiles_in_content_dir = \"false\"\nsavestates_in_content_dir = \"false\"\n" ++
+        "savestate_auto_save = \"true\"\nsavestate_auto_load = \"true\"\nautosave_interval = \"10\"\n" ++
+        "config_save_on_exit = \"false\"\n", .{ session.saves, session.states });
     cwd.writeFile(io, .{ .sub_path = session.config, .data = text }) catch return error.SaveStorageUnavailable;
     return session;
 }
@@ -205,9 +207,40 @@ pub fn launch(io: std.Io, game: *const catalog.Game, library: []const catalog.Ga
     try performance(io, "game");
     defer performance(io, "menu") catch |err|
         std.log.err("Failed to restore the menu performance profile: {s}", .{@errorName(err)});
-    const argv = arguments(game) ++ [_][]const u8{ "--appendconfig", session.config };
+    const argv = arguments(game) ++ [_][]const u8{ "--verbose", "--appendconfig", session.config };
     var child = try std.process.spawn(io, .{ .argv = &argv, .stdout = .{ .file = log }, .stderr = .{ .file = log } });
     return child.wait(io);
+}
+
+fn statePath(allocator: std.mem.Allocator, game: *const catalog.Game, session: Session, suffix: []const u8) ![]const u8 {
+    return std.Io.Dir.path.join(allocator, &.{
+        session.states,
+        coreName(game),
+        try std.fmt.allocPrint(allocator, "{s}.state{s}", .{ std.Io.Dir.path.stem(std.Io.Dir.path.basename(game.rom_path)), suffix }),
+    });
+}
+
+pub fn saveState(io: std.Io, game: *const catalog.Game, library: []const catalog.Game, slot: usize) !void {
+    if (slot >= 3) return error.InvalidStateSlot;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const session = try prepare(io, allocator, game, library, "/data", "/run/brick-shell");
+    const automatic = try statePath(allocator, game, session, ".auto");
+    const manual = try statePath(allocator, game, session, try std.fmt.allocPrint(allocator, ".brick-{d}", .{slot + 1}));
+    try std.Io.Dir.cwd().copyFile(automatic, std.Io.Dir.cwd(), manual, io, .{ .replace = true });
+}
+
+pub fn loadState(io: std.Io, game: *const catalog.Game, library: []const catalog.Game, slot: usize) !void {
+    if (slot > 3) return error.InvalidStateSlot;
+    if (slot == 3) return;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const session = try prepare(io, allocator, game, library, "/data", "/run/brick-shell");
+    const automatic = try statePath(allocator, game, session, ".auto");
+    const manual = try statePath(allocator, game, session, try std.fmt.allocPrint(allocator, ".brick-{d}", .{slot + 1}));
+    try std.Io.Dir.cwd().copyFile(manual, std.Io.Dir.cwd(), automatic, io, .{ .replace = true });
 }
 
 test "launch contract uses an explicit core, config and content path" {

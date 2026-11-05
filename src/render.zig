@@ -10,7 +10,7 @@ pub const Surface = struct {
     pixels: []u32,
 
     pub fn render(self: Surface, tree: *const ui.Tree) void {
-        @memset(self.pixels, pack(tree.background));
+        if (!tree.preserve_background) @memset(self.pixels, pack(tree.background));
         for (tree.slice()) |element| switch (element) {
             .bar => |bar| self.fill(bar.bounds, bar.color),
             .scrim => |scrim| self.fillAlpha(scrim.bounds, scrim.color, scrim.alpha),
@@ -18,7 +18,7 @@ pub const Surface = struct {
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .cover => |cover| self.drawCover(cover),
-            .game_scene => |scene| self.drawGameScene(scene),
+            .cartridge => |cartridge| self.drawCartridge(cartridge),
             .overlay_row => |item| self.drawOverlayRow(item),
         };
     }
@@ -80,65 +80,6 @@ pub const Surface = struct {
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, color);
     }
 
-    fn drawGameScene(self: Surface, scene: ui.GameScene) void {
-        const b = scene.bounds;
-        self.fill(b, ui.palette.navy);
-        const horizon = b.y + percent(b.height, 46);
-        self.fill(.{ .x = b.x, .y = horizon, .width = b.width, .height = b.height - (horizon - b.y) }, ui.Color{ .r = 0x9e, .g = 0x59, .b = 0x67 });
-        const water = b.y + percent(b.height, 72);
-        self.fill(.{ .x = b.x, .y = water, .width = b.width, .height = b.height - (water - b.y) }, ui.Color{ .r = 0x18, .g = 0x43, .b = 0x4d });
-
-        const sun = @max(@as(u16, 30), b.width / 10);
-        self.fill(.{
-            .x = b.x + percent(b.width, 72),
-            .y = b.y + percent(b.height, 18),
-            .width = sun,
-            .height = sun,
-        }, ui.palette.gold);
-
-        const mountain_y = b.y + percent(b.height, 54);
-        var step: u16 = 0;
-        while (step < 7) : (step += 1) {
-            const inset = step * b.width / 50;
-            self.fill(.{
-                .x = b.x + b.width / 12 + inset,
-                .y = mountain_y - step * 9,
-                .width = percent(b.width, 40) - inset * 2,
-                .height = 10,
-            }, ui.Color{ .r = 0x21, .g = 0x32, .b = 0x49 });
-        }
-        step = 0;
-        while (step < 7) : (step += 1) {
-            const inset = step * b.width / 50;
-            self.fill(.{
-                .x = b.x + percent(b.width, 48) + inset,
-                .y = mountain_y + 20 - step * 9,
-                .width = percent(b.width, 44) - inset * 2,
-                .height = 10,
-            }, ui.Color{ .r = 0x18, .g = 0x28, .b = 0x3d });
-        }
-
-        const track_y = b.y + percent(b.height, 80);
-        const rail = @max(@as(u16, 3), b.width / 100);
-        self.fill(.{ .x = b.x + percent(b.width, 27), .y = track_y, .width = rail, .height = b.height - (track_y - b.y) }, ui.palette.gold);
-        self.fill(.{ .x = b.x + percent(b.width, 67), .y = track_y, .width = rail, .height = b.height - (track_y - b.y) }, ui.palette.gold);
-        step = 0;
-        while (step < 5) : (step += 1) {
-            self.fill(.{
-                .x = b.x + percent(b.width, 20),
-                .y = track_y + step * @max(@as(u16, 9), b.height / 45),
-                .width = percent(b.width, 55),
-                .height = rail,
-            }, ui.palette.chrome_dark);
-        }
-        self.fill(.{
-            .x = b.x + percent(b.width, 41),
-            .y = track_y - b.height / 12,
-            .width = b.width / 6,
-            .height = b.height / 11,
-        }, ui.palette.coral);
-    }
-
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
         const background = if (item.selected) ui.palette.deep else ui.palette.paper;
         self.fill(item.bounds, background);
@@ -163,6 +104,94 @@ pub const Surface = struct {
         }
         if (item.disclosure)
             self.drawChevron(item.bounds.x + item.bounds.width - 40, item.bounds.y + 30, label_color);
+    }
+
+    fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
+        if (bounds.width == 0 or bounds.height == 0) return;
+        var y: u16 = 0;
+        while (y < bounds.height and bounds.y + y < height) : (y += 1) {
+            const source_y = @as(usize, y) * texture.height / bounds.height;
+            var x: u16 = 0;
+            while (x < bounds.width and bounds.x + x < width) : (x += 1) {
+                const source_x = @as(usize, x) * texture.width / bounds.width;
+                const source: ui.Color = @bitCast(texture.pixels[source_y * texture.width + source_x]);
+                if (source.a == 0) continue;
+                const index = @as(usize, bounds.y + y) * width + bounds.x + x;
+                if (source.a == 255) {
+                    self.pixels[index] = @bitCast(source);
+                } else {
+                    var destination: ui.Color = @bitCast(self.pixels[index]);
+                    destination.r = blend255(destination.r, source.r, source.a);
+                    destination.g = blend255(destination.g, source.g, source.a);
+                    destination.b = blend255(destination.b, source.b, source.a);
+                    self.pixels[index] = @bitCast(destination);
+                }
+            }
+        }
+    }
+
+    fn platformIs(value: []const u8, expected: []const u8) bool {
+        return std.mem.eql(u8, value, expected);
+    }
+
+    fn drawCartridge(self: Surface, cartridge: ui.Cartridge) void {
+        const bounds = cartridge.bounds;
+        const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
+            .{ .width = 15, .height = 9 }
+        else if (platformIs(cartridge.platform, "snes"))
+            .{ .width = 12, .height = 10 }
+        else if (platformIs(cartridge.platform, "megadrive"))
+            .{ .width = 10, .height = 12 }
+        else if (platformIs(cartridge.platform, "psx"))
+            .{ .width = 1, .height = 1 }
+        else
+            .{ .width = 4, .height = 5 };
+        var body_width: u16 = bounds.width;
+        var body_height: u16 = @intCast(@as(u32, body_width) * ratio.height / ratio.width);
+        if (body_height > bounds.height) {
+            body_height = bounds.height;
+            body_width = @intCast(@as(u32, body_height) * ratio.width / ratio.height);
+        }
+        const body = ui.Rect{
+            .x = bounds.x + (bounds.width - body_width) / 2,
+            .y = bounds.y + (bounds.height - body_height) / 2,
+            .width = body_width,
+            .height = body_height,
+        };
+        const shell = if (platformIs(cartridge.platform, "gb"))
+            ui.Color{ .r = 0x9b, .g = 0x9a, .b = 0x91 }
+        else if (platformIs(cartridge.platform, "gbc"))
+            ui.Color{ .r = 0x3b, .g = 0x3d, .b = 0x43 }
+        else if (platformIs(cartridge.platform, "gba"))
+            ui.Color{ .r = 0x58, .g = 0x5d, .b = 0x64 }
+        else if (platformIs(cartridge.platform, "nes"))
+            ui.Color{ .r = 0x98, .g = 0x99, .b = 0x95 }
+        else if (platformIs(cartridge.platform, "snes"))
+            ui.Color{ .r = 0xb8, .g = 0xb8, .b = 0xb2 }
+        else if (platformIs(cartridge.platform, "ngpc"))
+            ui.Color{ .r = 0x38, .g = 0x3b, .b = 0x3d }
+        else
+            ui.Color{ .r = 0x24, .g = 0x27, .b = 0x29 };
+        self.fill(.{ .x = body.x + 8, .y = body.y + 10, .width = body.width, .height = body.height }, ui.palette.chrome_dark);
+        self.fill(body, shell);
+        const edge: u16 = if (cartridge.selected) 5 else 2;
+        const edge_color = if (cartridge.selected) ui.palette.pine else ui.palette.chrome_dark;
+        self.fill(.{ .x = body.x, .y = body.y, .width = body.width, .height = edge }, edge_color);
+        self.fill(.{ .x = body.x, .y = body.y + body.height - edge, .width = body.width, .height = edge }, edge_color);
+        self.fill(.{ .x = body.x, .y = body.y, .width = edge, .height = body.height }, edge_color);
+        self.fill(.{ .x = body.x + body.width - edge, .y = body.y, .width = edge, .height = body.height }, edge_color);
+        const label = ui.Rect{
+            .x = body.x + body.width / 8,
+            .y = body.y + body.height / 6,
+            .width = body.width * 3 / 4,
+            .height = body.height * 3 / 5,
+        };
+        self.fill(label, ui.palette.surface);
+        if (cartridge.texture) |texture| self.drawTexture(texture, label);
+        if (platformIs(cartridge.platform, "gba")) {
+            const lip = @max(@as(u16, 4), body.height / 14);
+            self.fill(.{ .x = body.x + body.width / 12, .y = body.y, .width = body.width * 5 / 6, .height = lip }, shell);
+        }
     }
 
     fn drawCover(self: Surface, cover: ui.Cover) void {

@@ -15,6 +15,7 @@ const settings_count = 5;
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
     page: Page = .home,
+    library_view: ui.LibraryView = .list,
     selected: usize = 0,
     game_index: usize = 0,
     pending_launch: ?usize = null,
@@ -28,22 +29,47 @@ pub const Model = struct {
         const before_selected = self.selected;
         const before_game = self.game_index;
         const before_error = self.launch_failed;
+        const before_view = self.library_view;
 
         switch (action) {
             .up => {
-                if (self.page != .game and self.itemCount() > 0)
+                if (self.page == .games) switch (self.library_view) {
+                    .list => if (self.itemCount() > 0) {
+                        self.selected = if (self.selected == 0) self.itemCount() - 1 else self.selected - 1;
+                    },
+                    .shelf => {},
+                    .grid => if (self.selected >= 4) {
+                        self.selected -= 4;
+                    },
+                } else if (self.page != .game and self.itemCount() > 0)
                     self.selected = if (self.selected == 0) self.itemCount() - 1 else self.selected - 1;
             },
             .down => {
-                if (self.page != .game and self.itemCount() > 0)
+                if (self.page == .games) switch (self.library_view) {
+                    .list => if (self.itemCount() > 0) {
+                        self.selected = (self.selected + 1) % self.itemCount();
+                    },
+                    .shelf => {},
+                    .grid => if (self.selected + 4 < self.itemCount()) {
+                        self.selected += 4;
+                    },
+                } else if (self.page != .game and self.itemCount() > 0)
                     self.selected = (self.selected + 1) % self.itemCount();
             },
-            .left => if (self.page == .settings and self.selected < 4) {
+            .left => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
+                if (self.selected % 4 != 0) self.selected -= 1;
+            } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
+                if (self.selected != 0) self.selected -= 1;
+            } else if (self.page == .settings and self.selected < 4) {
                 const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
                 self.settings.adjust(setting, -1);
                 self.pending_setting = setting;
             },
-            .right => if (self.page == .settings and self.selected < 4) {
+            .right => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
+                if (self.selected % 4 != 3 and self.selected + 1 < self.games.len) self.selected += 1;
+            } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
+                if (self.selected + 1 < self.games.len) self.selected += 1;
+            } else if (self.page == .settings and self.selected < 4) {
                 const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
                 self.settings.adjust(setting, 1);
                 self.pending_setting = setting;
@@ -92,10 +118,17 @@ pub const Model = struct {
                 self.selected = 0;
                 self.launch_failed = null;
             },
+            .view => if (self.page == .games) {
+                self.library_view = switch (self.library_view) {
+                    .list => .shelf,
+                    .shelf => .grid,
+                    .grid => .list,
+                };
+            },
         }
 
         const changed = before_page != self.page or before_selected != self.selected or
-            before_game != self.game_index or before_error != self.launch_failed or
+            before_game != self.game_index or before_error != self.launch_failed or before_view != self.library_view or
             self.pending_launch != null or self.pending_setting != null;
         if (changed) self.revision += 1;
         return changed;
@@ -128,9 +161,13 @@ pub const Model = struct {
     }
 
     pub fn tree(self: *const Model) ui.Tree {
+        return self.treeWithShelfOffset(0);
+    }
+
+    pub fn treeWithShelfOffset(self: *const Model, shelf_offset: i16) ui.Tree {
         return switch (self.page) {
             .home => ui.home(self.selected),
-            .games => ui.library(self.games, self.selected),
+            .games => ui.library(self.games, self.selected, self.library_view, shelf_offset),
             .game => ui.gameDetail(self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
             .settings => ui.settings(self.selected, self.settings),
         };
@@ -179,6 +216,25 @@ test "large libraries render a bounded window around selection" {
     try std.testing.expect(tree.len < tree.elements.len);
     _ = state.apply(.down);
     try std.testing.expectEqual(@as(usize, 0), state.selected);
+}
+
+test "F1 cycles library views and shelf navigation stops at the ends" {
+    var state = Model{ .page = .games };
+    try std.testing.expect(state.apply(.view));
+    try std.testing.expectEqual(ui.LibraryView.shelf, state.library_view);
+    try std.testing.expect(!state.apply(.left));
+    try std.testing.expect(state.apply(.right));
+    try std.testing.expectEqual(@as(usize, 1), state.selected);
+    try std.testing.expect(state.apply(.view));
+    try std.testing.expectEqual(ui.LibraryView.grid, state.library_view);
+    state.selected = 0;
+    try std.testing.expect(state.apply(.down));
+    try std.testing.expectEqual(@as(usize, 4), state.selected);
+    try std.testing.expect(!state.apply(.left));
+    try std.testing.expect(state.apply(.up));
+    try std.testing.expectEqual(@as(usize, 0), state.selected);
+    try std.testing.expect(state.apply(.view));
+    try std.testing.expectEqual(ui.LibraryView.list, state.library_view);
 }
 
 test "launch errors remain visible until retry or leaving details" {
