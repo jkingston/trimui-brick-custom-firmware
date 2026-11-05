@@ -222,6 +222,7 @@ pub fn main(init: std.process.Init) !void {
         state.games = try catalog.discover(init.io, arena.allocator(), absolute);
     }
     var game_overlay = overlay.Model{};
+    game_overlay.appearance = state.settings.appearance;
     var tree = if (overlay_visible) game_overlay.tree() else state.tree();
     try drawTree(&sdl, renderer, texture, pixels, &tree);
 
@@ -347,6 +348,7 @@ pub fn main(init: std.process.Init) !void {
             }
         }
         if (changed) {
+            game_overlay.appearance = state.settings.appearance;
             tree = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
             try drawTree(&sdl, renderer, texture, pixels, &tree);
         }

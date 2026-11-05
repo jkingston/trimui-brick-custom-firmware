@@ -10,7 +10,7 @@ pub const Action = input.Action;
 pub const Page = enum { home, games, game, settings };
 
 const home_count = 2;
-const settings_count = 4;
+const settings_count = @typeInfo(settings.Setting).@"enum".field_names.len;
 
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
@@ -62,7 +62,7 @@ pub const Model = struct {
                 if (self.selected != 0) self.selected -= 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected != 0) self.selected -= 1;
-            } else if (self.page == .settings and self.selected < 4) {
+            } else if (self.page == .settings and self.selected < settings_count) {
                 const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
                 self.settings.adjust(setting, -1);
                 self.pending_setting = setting;
@@ -71,7 +71,7 @@ pub const Model = struct {
                 if (self.selected + 1 < self.games.len) self.selected += 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected + 1 < self.games.len) self.selected += 1;
-            } else if (self.page == .settings and self.selected < 4) {
+            } else if (self.page == .settings and self.selected < settings_count) {
                 const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
                 self.settings.adjust(setting, 1);
                 self.pending_setting = setting;
@@ -174,13 +174,14 @@ pub const Model = struct {
     }
 
     pub fn treeWithShelfOffset(self: *const Model, shelf_offset: i16) ui.Tree {
+        const theme = self.settings.appearance.colors();
         var result = switch (self.page) {
-            .home => ui.home(self.selected),
-            .games => ui.library(self.games, self.selected, self.library_view, shelf_offset),
-            .game => if (self.games.len == 0) ui.library(self.games, 0, self.library_view, 0) else ui.gameDetail(self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
+            .home => ui.home(theme, self.selected),
+            .games => ui.library(theme, self.games, self.selected, self.library_view, shelf_offset),
+            .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
             .settings => ui.settings(self.selected, self.settings),
         };
-        if (self.notice.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 630, .width = 944, .height = 44 }, .value = self.notice, .color = ui.palette.coral, .scale = 2 } });
+        if (self.notice.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 630, .width = 944, .height = 44 }, .value = self.notice, .color = theme.danger, .scale = 2 } });
         return result;
     }
 };
@@ -235,4 +236,16 @@ test "launch failure is visible and retry preserves the game" {
     state.launchFailed(.missing_core);
     _ = state.apply(.back);
     try std.testing.expectEqual(@as(usize, 1), state.selected);
+}
+
+test "appearance changes every page without losing game selection" {
+    var state = Model{ .page = .settings, .selected = 4, .library_selection = 2 };
+    try std.testing.expect(state.apply(.right));
+    try std.testing.expectEqual(settings.Setting.appearance, state.takeSetting().?);
+    try std.testing.expectEqual(@import("theme.zig").dark.background, state.tree().background);
+    _ = state.apply(.back);
+    try std.testing.expectEqual(@import("theme.zig").dark.background, state.tree().background);
+    _ = state.apply(.back);
+    try std.testing.expectEqual(@as(usize, 2), state.selected);
+    try std.testing.expectEqual(@import("theme.zig").dark.background, state.tree().background);
 }

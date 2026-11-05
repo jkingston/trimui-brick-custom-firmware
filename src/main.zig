@@ -30,12 +30,13 @@ pub fn writePpm(io: std.Io, path: []const u8, pixels: []const u32) !void {
     try writer.interface.flush();
 }
 
-fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: []const u8, games: ?[]const catalog.Game, selected: usize) !void {
+fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: []const u8, games: ?[]const catalog.Game, selected: usize, appearance: @import("theme.zig").Mode) !void {
     const pixels = try allocator.alloc(u32, render.width * render.height);
     defer allocator.free(pixels);
     @memset(pixels, 0xff13253c);
     const surface = render.Surface{ .pixels = pixels };
     var state = model.Model{};
+    state.settings.appearance = appearance;
     if (std.mem.eql(u8, screen, "home")) state.page = .home;
     if (games) |library| {
         state.games = library;
@@ -54,11 +55,11 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
     } else if (std.mem.eql(u8, screen, "settings")) {
         state.page = .settings;
     }
-    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash() else if (std.mem.eql(u8, screen, "languages")) ui.languageProof() else if (std.mem.eql(u8, screen, "overlay")) blk: {
-        const game_overlay = overlay.Model{};
+    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash(state.settings.appearance.colors()) else if (std.mem.eql(u8, screen, "languages")) ui.languageProof(state.settings.appearance.colors()) else if (std.mem.eql(u8, screen, "overlay")) blk: {
+        const game_overlay = overlay.Model{ .appearance = appearance };
         break :blk game_overlay.tree();
     } else if (std.mem.eql(u8, screen, "overlay-states")) blk: {
-        var game_overlay = overlay.Model{};
+        var game_overlay = overlay.Model{ .appearance = appearance };
         game_overlay.layer = .states;
         game_overlay.state_slot = 1;
         break :blk game_overlay.tree();
@@ -71,13 +72,13 @@ pub fn main(init: std.process.Init) !void {
     var arguments = std.process.Args.Iterator.init(init.minimal.args);
     _ = arguments.next();
     const command = arguments.next() orelse {
-        try snapshot(init.io, init.gpa, "brick-home.ppm", "home", null, 0);
+        try snapshot(init.io, init.gpa, "brick-home.ppm", "home", null, 0, .light);
         return;
     };
     if (std.mem.eql(u8, command, "--snapshot")) {
         const path = arguments.next() orelse return error.MissingPath;
         const screen = arguments.next() orelse "home";
-        try snapshot(init.io, init.gpa, path, screen, null, 0);
+        try snapshot(init.io, init.gpa, path, screen, null, 0, try parseAppearance(arguments.next()));
         return;
     }
     if (std.mem.eql(u8, command, "--snapshot-library")) {
@@ -88,7 +89,7 @@ pub fn main(init: std.process.Init) !void {
         var arena = std.heap.ArenaAllocator.init(init.gpa);
         defer arena.deinit();
         const library = try catalog.discover(init.io, arena.allocator(), root);
-        try snapshot(init.io, arena.allocator(), path, screen, library, selected);
+        try snapshot(init.io, arena.allocator(), path, screen, library, selected, try parseAppearance(arguments.next()));
         return;
     }
     if (std.mem.eql(u8, command, "--idle-proof")) {
@@ -128,4 +129,11 @@ test {
     _ = library_scan;
     _ = @import("shelf_motion.zig");
     _ = @import("library_preferences.zig");
+}
+
+fn parseAppearance(value: ?[]const u8) !@import("theme.zig").Mode {
+    const name = value orelse return .light;
+    if (std.mem.eql(u8, name, "light")) return .light;
+    if (std.mem.eql(u8, name, "dark")) return .dark;
+    return error.InvalidAppearance;
 }

@@ -11,6 +11,7 @@ const state_count = 4;
 const save_slot_count = 3;
 
 pub const Model = struct {
+    appearance: @import("theme.zig").Mode = .light,
     layer: Layer = .pause,
     selected: usize = 0,
     state_slot: usize = 0,
@@ -55,8 +56,8 @@ pub const Model = struct {
     pub fn tree(self: *const Model) ui.Tree {
         const performance_values = [_][]const u8{ "Battery", "Balanced", "Performance" };
         return switch (self.layer) {
-            .pause => ui.overlayPause(self.title, self.system, self.selected, self.save_slot, self.saved, performance_values[self.performance_profile], self.notice),
-            .states => ui.overlayStates(self.title, self.state_slot, self.notice, self.available),
+            .pause => ui.overlayPause(self.appearance.colors(), self.title, self.system, self.selected, self.save_slot, self.saved, performance_values[self.performance_profile], self.notice),
+            .states => ui.overlayStates(self.appearance.colors(), self.title, self.state_slot, self.notice, self.available),
         };
     }
 

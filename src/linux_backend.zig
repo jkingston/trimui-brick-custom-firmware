@@ -330,7 +330,7 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
     var framebuffer = try Framebuffer.open(io);
     defer framebuffer.close();
 
-    var splash_tree = ui.splash();
+    var splash_tree = ui.splash(state.settings.appearance.colors());
     try framebuffer.show(&splash_tree);
     // One short, deliberate beat makes boot progress visible without adding a
     // quarter-second gate before the first interactive frame.
@@ -470,6 +470,7 @@ pub fn run(io: std.Io) !void {
         const game_index = (try runSession(io, &state)) orelse continue;
         const game = &state.games[game_index];
         var game_overlay = overlay.Model{
+            .appearance = state.settings.appearance,
             .title = game.title,
             .system = game.system,
             .performance_profile = @backingInt(state.settings.performance),

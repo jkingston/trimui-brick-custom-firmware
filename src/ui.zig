@@ -2,12 +2,8 @@
 const catalog = @import("catalog.zig");
 const settings_model = @import("settings.zig");
 
-pub const Color = packed struct(u32) {
-    b: u8,
-    g: u8,
-    r: u8,
-    a: u8 = 0xff,
-};
+pub const Color = @import("color.zig").Color;
+pub const Theme = @import("theme.zig").Theme;
 
 pub const Rect = struct { x: u16, y: u16, width: u16, height: u16 };
 pub const Text = struct { bounds: Rect, value: []const u8, color: Color, scale: u8 = 3, language: []const u8 = "", lines: u8 = 1 };
@@ -54,6 +50,7 @@ pub const Element = union(enum) {
 };
 
 pub const Tree = struct {
+    theme: Theme = @import("theme.zig").light,
     background: Color,
     preserve_background: bool = false,
     // SAFETY: callers only read the initialized prefix below `len`.
@@ -100,24 +97,26 @@ const menu = struct {
 };
 
 fn gameCaption(result: *Tree, title: []const u8, system: []const u8) void {
-    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 636, .width = 390, .height = 44 }, .value = title, .color = palette.white, .scale = 3 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 42, .y = 684, .width = 350, .height = 34 }, .value = system, .color = palette.chrome, .scale = 2 } });
+    const theme = result.theme;
+    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 636, .width = 390, .height = 44 }, .value = title, .color = theme.on_scrim, .scale = 3 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 42, .y = 684, .width = 350, .height = 34 }, .value = system, .color = theme.border, .scale = 2 } });
 }
 
 fn overlayFrame(result: *Tree, title: []const u8, context: []const u8, game_title: []const u8, system: []const u8) void {
+    const theme = result.theme;
     result.preserve_background = true;
-    result.add(.{ .scrim = .{ .bounds = .{ .x = 0, .y = 0, .width = 1024, .height = 768 }, .color = palette.deep, .alpha = 126 } });
+    result.add(.{ .scrim = .{ .bounds = .{ .x = 0, .y = 0, .width = 1024, .height = 768 }, .color = theme.scrim, .alpha = 126 } });
     gameCaption(result, game_title, system);
-    result.add(.{ .bar = .{ .bounds = .{ .x = 456, .y = 48, .width = 536, .height = 680 }, .color = palette.deep } });
-    result.add(.{ .bar = .{ .bounds = .{ .x = 446, .y = 38, .width = 536, .height = 680 }, .color = palette.paper } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 486, .y = 70, .width = 430, .height = 58 }, .value = title, .color = palette.ink, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 488, .y = 128, .width = 420, .height = 34 }, .value = context, .color = palette.quiet, .scale = 2 } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 456, .y = 48, .width = 536, .height = 680 }, .color = theme.scrim } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 446, .y = 38, .width = 536, .height = 680 }, .color = theme.background } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 486, .y = 70, .width = 430, .height = 58 }, .value = title, .color = theme.text, .scale = 4 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 488, .y = 128, .width = 420, .height = 34 }, .value = context, .color = theme.muted, .scale = 2 } });
 }
 
-pub fn overlayPause(game_title: []const u8, system: []const u8, selected: usize, state_slot: usize, saved: bool, performance: []const u8, notice: []const u8) Tree {
+pub fn overlayPause(theme: Theme, game_title: []const u8, system: []const u8, selected: usize, state_slot: usize, saved: bool, performance: []const u8, notice: []const u8) Tree {
     const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
-    var result = Tree{ .background = palette.paper };
+    var result = Tree{ .theme = theme, .background = theme.background };
     overlayFrame(&result, "Paused", if (notice.len != 0) notice else system, game_title, "");
     for (labels, 0..) |label, index| {
         const resolved_detail = if (index == 1)
@@ -139,14 +138,14 @@ pub fn overlayPause(game_title: []const u8, system: []const u8, selected: usize,
             .disclosure = index == 2,
         } });
     }
-    textLabel(&result, .{ .x = 486, .y = 674, .width = 458, .height = 40 }, if (selected == 1) "← / → Slot   A Save   B Back" else if (selected == 3) "← / → Change   B Back" else "A Select   B Continue", palette.quiet, 2);
+    textLabel(&result, .{ .x = 486, .y = 674, .width = 458, .height = 40 }, if (selected == 1) "← / → Slot   A Save   B Back" else if (selected == 3) "← / → Change   B Back" else "A Select   B Continue", theme.muted, 2);
     return result;
 }
 
-pub fn overlayStates(game_title: []const u8, selected: usize, notice: []const u8, available: [4]bool) Tree {
+pub fn overlayStates(theme: Theme, game_title: []const u8, selected: usize, notice: []const u8, available: [4]bool) Tree {
     const labels = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3", "Automatic save" };
     const details = [_][]const u8{ "Manual save", "Manual save", "Manual save", "Latest session" };
-    var result = Tree{ .background = palette.paper };
+    var result = Tree{ .theme = theme, .background = theme.background };
     overlayFrame(&result, "Load a save", if (notice.len == 0) "Select a save slot" else notice, game_title, "");
     for (labels, details, 0..) |label, detail, index| {
         result.add(.{ .overlay_row = .{
@@ -157,7 +156,7 @@ pub fn overlayStates(game_title: []const u8, selected: usize, notice: []const u8
             .disclosure = false,
         } });
     }
-    result.add(.{ .text = .{ .bounds = .{ .x = 488, .y = 674, .width = 430, .height = 34 }, .value = "A Load    B Back    Menu Resume", .color = palette.quiet, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 488, .y = 674, .width = 430, .height = 34 }, .value = "A Load    B Back    Menu Resume", .color = theme.muted, .scale = 2 } });
     return result;
 }
 
@@ -171,13 +170,15 @@ fn textLabel(result: *Tree, bounds: Rect, value: []const u8, color: Color, scale
 }
 
 fn header(result: *Tree, title: []const u8) void {
-    textLabel(result, .{ .x = layout.margin, .y = 28, .width = 800, .height = 58 }, title, palette.ink, 4);
-    result.add(.{ .bar = .{ .bounds = .{ .x = layout.margin, .y = 100, .width = 944, .height = 2 }, .color = palette.chrome } });
+    const theme = result.theme;
+    textLabel(result, .{ .x = layout.margin, .y = 28, .width = 800, .height = 58 }, title, theme.text, 4);
+    result.add(.{ .bar = .{ .bounds = .{ .x = layout.margin, .y = 100, .width = 944, .height = 2 }, .color = theme.border } });
 }
 
 fn footer(result: *Tree, actions: []const u8) void {
-    result.add(.{ .bar = .{ .bounds = .{ .x = layout.margin, .y = layout.footer_y - 16, .width = 944, .height = 2 }, .color = palette.chrome } });
-    textLabel(result, .{ .x = layout.margin, .y = layout.footer_y, .width = 944, .height = 44 }, actions, palette.quiet, 2);
+    const theme = result.theme;
+    result.add(.{ .bar = .{ .bounds = .{ .x = layout.margin, .y = layout.footer_y - 16, .width = 944, .height = 2 }, .color = theme.border } });
+    textLabel(result, .{ .x = layout.margin, .y = layout.footer_y, .width = 944, .height = 44 }, actions, theme.muted, 2);
 }
 
 fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, dim: u8, tilt: i16) void {
@@ -194,11 +195,12 @@ fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, dim: u8,
 }
 
 fn selectedTitle(result: *Tree, game: catalog.Game, bounds: Rect) void {
-    result.add(.{ .text = .{ .bounds = bounds, .value = game.title, .color = palette.ink, .scale = 3, .lines = 2 } });
+    const theme = result.theme;
+    result.add(.{ .text = .{ .bounds = bounds, .value = game.title, .color = theme.text, .scale = 3, .lines = 2 } });
 }
 
-pub fn home(selected: usize) Tree {
-    var result = Tree{ .background = palette.paper };
+pub fn home(theme: Theme, selected: usize) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Menu");
     const items = [_][]const u8{ "Games", "Settings" };
     for (items, 0..) |item, index| result.add(.{ .menu_row = .{
@@ -210,22 +212,22 @@ pub fn home(selected: usize) Tree {
     return result;
 }
 
-pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
-    var result = Tree{ .background = palette.paper };
+pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Games");
     if (games.len == 0) {
-        textLabel(&result, .{ .x = 40, .y = 180, .width = 900, .height = 58 }, "No games yet", palette.ink, 4);
-        textLabel(&result, .{ .x = 40, .y = 256, .width = 900, .height = 44 }, "Add games to the Roms folder on your SD card.", palette.quiet, 2);
+        textLabel(&result, .{ .x = 40, .y = 180, .width = 900, .height = 58 }, "No games yet", theme.text, 4);
+        textLabel(&result, .{ .x = 40, .y = 256, .width = 900, .height = 44 }, "Add games to the Roms folder on your SD card.", theme.muted, 2);
         footer(&result, "Menu  Settings");
         return result;
     }
     const game = games[selected];
-    textLabel(&result, .{ .x = 40, .y = 114, .width = 700, .height = 40 }, game.system, palette.quiet, 2);
+    textLabel(&result, .{ .x = 40, .y = 114, .width = 700, .height = 40 }, game.system, theme.muted, 2);
     textLabel(&result, .{ .x = 820, .y = 114, .width = 164, .height = 40 }, switch (view) {
         .list => "List",
         .grid => "Grid",
         .shelf => "Shelf",
-    }, palette.quiet, 2);
+    }, theme.muted, 2);
     switch (view) {
         .list => {
             const first = if (selected > 1) @min(selected - 1, games.len - @min(games.len, 4)) else 0;
@@ -243,9 +245,9 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
             for (games[first..@min(first + 4, games.len)], 0..) |entry, index| {
                 const x: u16 = 40 + @as(u16, @intCast(index)) * 240;
                 const active = first + index == selected;
-                if (active) result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = 166, .width = 224, .height = 342 }, .color = palette.selected } });
+                if (active) result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = 166, .width = 224, .height = 342 }, .color = theme.selection } });
                 artwork(&result, entry, .{ .x = x + 16, .y = 182, .width = 192, .height = 304 }, false, 0, 0);
-                if (active) result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = 504, .width = 224, .height = 4 }, .color = palette.pine } });
+                if (active) result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = 504, .width = 224, .height = 4 }, .color = theme.accent } });
             }
             selectedTitle(&result, game, .{ .x = 40, .y = 546, .width = 944, .height = 120 });
         },
@@ -281,24 +283,25 @@ fn shelfPose(relative: i8, offset: i16) ShelfPose {
     };
 }
 
-pub fn gameDetail(game: catalog.Game, launch_failed: ?[]const u8) Tree {
-    var result = Tree{ .background = palette.paper };
+pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, if (launch_failed != null) "Unable to start" else "Game");
     artwork(&result, game, .{ .x = 40, .y = 156, .width = 280, .height = 416 }, false, 0, 0);
-    textLabel(&result, .{ .x = 368, .y = 162, .width = 616, .height = 44 }, game.system, palette.quiet, 2);
+    textLabel(&result, .{ .x = 368, .y = 162, .width = 616, .height = 44 }, game.system, theme.muted, 2);
     selectedTitle(&result, game, .{ .x = 368, .y = 222, .width = 616, .height = 144 });
-    if (launch_failed) |message| textLabel(&result, .{ .x = 368, .y = 410, .width = 616, .height = 80 }, message, palette.coral, 2);
+    if (launch_failed) |message| textLabel(&result, .{ .x = 368, .y = 410, .width = 616, .height = 80 }, message, theme.danger, 2);
     footer(&result, if (launch_failed != null) "A  Retry     B  Games" else "A  Play     B  Games");
     return result;
 }
 
 pub fn settings(selected: usize, values: settings_model.Values) Tree {
-    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend" };
-    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout) };
-    var result = Tree{ .background = palette.paper };
+    const theme = values.appearance.colors();
+    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance" };
+    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance) };
+    var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Settings");
     for (items, details, 0..) |item, value, index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 40, .y = 164 + @as(u16, @intCast(index)) * 112, .width = 944, .height = 96 },
+        .bounds = .{ .x = 40, .y = 144 + @as(u16, @intCast(index)) * 104, .width = 944, .height = 96 },
         .label = item,
         .detail = "",
         .value = value,
@@ -309,16 +312,16 @@ pub fn settings(selected: usize, values: settings_model.Values) Tree {
     return result;
 }
 
-pub fn splash() Tree {
-    var result = Tree{ .background = palette.deep };
-    result.add(.{ .bar = .{ .bounds = .{ .x = 438, .y = 246, .width = 68, .height = 68 }, .color = palette.pine } });
-    result.add(.{ .bar = .{ .bounds = .{ .x = 518, .y = 246, .width = 68, .height = 68 }, .color = palette.selected } });
-    result.add(.{ .bar = .{ .bounds = .{ .x = 438, .y = 326, .width = 148, .height = 68 }, .color = palette.white } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 424, .y = 442, .width = 240, .height = 72 }, .value = "Brick", .color = palette.white, .scale = 6 } });
+pub fn splash(theme: Theme) Tree {
+    var result = Tree{ .theme = theme, .background = theme.scrim };
+    result.add(.{ .bar = .{ .bounds = .{ .x = 438, .y = 246, .width = 68, .height = 68 }, .color = theme.accent } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 518, .y = 246, .width = 68, .height = 68 }, .color = theme.selection } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 438, .y = 326, .width = 148, .height = 68 }, .color = theme.on_scrim } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 424, .y = 442, .width = 240, .height = 72 }, .value = "Brick", .color = theme.on_scrim, .scale = 6 } });
     return result;
 }
 
-pub fn languageProof() Tree {
+pub fn languageProof(theme: Theme) Tree {
     const left = [_][]const u8{
         "Français — Pokémon Écarlate",
         "Español — Continuar partida",
@@ -340,13 +343,13 @@ pub fn languageProof() Tree {
     };
     const left_languages = [_][]const u8{ "fr", "es", "pt", "pl", "el", "ru", "uk" };
     const right_languages = [_][]const u8{ "ar", "he", "hi", "th", "ja", "zh-Hans", "zh-Hant", "ko" };
-    var result = Tree{ .background = palette.paper };
+    var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Language proof");
-    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 96, .width = 420, .height = 34 }, .value = "Shaping and fallback", .color = palette.pine, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 96, .width = 420, .height = 34 }, .value = "Shaping and fallback", .color = theme.accent, .scale = 2 } });
     for (left, left_languages, 0..) |sample, language, index|
-        result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 150 + @as(u16, @intCast(index)) * 76, .width = 438, .height = 48 }, .value = sample, .color = palette.ink, .scale = 2, .language = language } });
-    result.add(.{ .bar = .{ .bounds = .{ .x = 510, .y = 118, .width = 2, .height = 590 }, .color = palette.chrome } });
+        result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 150 + @as(u16, @intCast(index)) * 76, .width = 438, .height = 48 }, .value = sample, .color = theme.text, .scale = 2, .language = language } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 510, .y = 118, .width = 2, .height = 590 }, .color = theme.border } });
     for (right, right_languages, 0..) |sample, language, index|
-        result.add(.{ .text = .{ .bounds = .{ .x = 544, .y = 126 + @as(u16, @intCast(index)) * 70, .width = 438, .height = 48 }, .value = sample, .color = palette.ink, .scale = 2, .language = language } });
+        result.add(.{ .text = .{ .bounds = .{ .x = 544, .y = 126 + @as(u16, @intCast(index)) * 70, .width = 438, .height = 48 }, .value = sample, .color = theme.text, .scale = 2, .language = language } });
     return result;
 }

@@ -8,8 +8,11 @@ pub const height = 768;
 
 pub const Surface = struct {
     pixels: []u32,
+    theme: ui.Theme = @import("theme.zig").light,
 
-    pub fn render(self: Surface, tree: *const ui.Tree) void {
+    pub fn render(target: Surface, tree: *const ui.Tree) void {
+        var self = target;
+        self.theme = tree.theme;
         if (!tree.preserve_background) @memset(self.pixels, pack(tree.background));
         for (tree.slice()) |element| switch (element) {
             .bar => |bar| self.fill(bar.bounds, bar.color),
@@ -66,32 +69,32 @@ pub const Surface = struct {
 
     fn menuRow(self: Surface, row: ui.MenuRow) void {
         if (row.selected) {
-            self.fill(row.bounds, ui.palette.selected);
-            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y, .width = 6, .height = row.bounds.height }, ui.palette.pine);
+            self.fill(row.bounds, self.theme.selection);
+            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y, .width = 6, .height = row.bounds.height }, self.theme.accent);
         } else {
-            self.fill(row.bounds, ui.palette.paper);
-            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y + row.bounds.height - 1, .width = row.bounds.width, .height = 1 }, ui.palette.chrome);
+            self.fill(row.bounds, self.theme.background);
+            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y + row.bounds.height - 1, .width = row.bounds.width, .height = 1 }, self.theme.border);
         }
-        const color = if (row.selected) ui.palette.pine else ui.palette.ink;
+        const color = if (row.selected) self.theme.accent else self.theme.text;
         const label_y = if (row.detail.len == 0) row.bounds.y + 22 else row.bounds.y + 8;
         self.drawTextBounded(row.bounds.x + 28, label_y, row.bounds.width - 76, row.label, color, 3);
         if (row.detail.len != 0) {
-            const detail_color = if (row.selected) ui.palette.pine else ui.palette.quiet;
+            const detail_color = if (row.selected) self.theme.accent else self.theme.muted;
             self.drawTextBounded(row.bounds.x + 30, row.bounds.y + 57, row.bounds.width - 76, row.detail, detail_color, 2);
         }
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, color);
     }
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
-        self.fill(item.bounds, if (item.selected) ui.palette.selected else ui.palette.paper);
-        if (item.selected) self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 6, .height = item.bounds.height }, ui.palette.pine);
-        const color = if (item.selected) ui.palette.pine else ui.palette.ink;
+        self.fill(item.bounds, if (item.selected) self.theme.selection else self.theme.background);
+        if (item.selected) self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 6, .height = item.bounds.height }, self.theme.accent);
+        const color = if (item.selected) self.theme.accent else self.theme.text;
         const stacked = item.bounds.width < 600 and item.value.len != 0;
         const value_width: u16 = if (item.value.len != 0 and !stacked) @min(320, item.bounds.width / 2) else 0;
         const label_y = item.bounds.y + (if (item.detail.len == 0 and !stacked) @as(u16, 22) else 4);
         self.drawTextBounded(item.bounds.x + 24, label_y, item.bounds.width - value_width - 48, item.label, color, 3);
-        if (stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.value, ui.palette.quiet, 2);
-        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.detail, ui.palette.quiet, 2);
+        if (stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.value, self.theme.muted, 2);
+        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.detail, self.theme.muted, 2);
         if (item.value.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + item.bounds.width - value_width, label_y, value_width - 16, item.value, color, 2);
     }
 
@@ -153,8 +156,8 @@ pub const Surface = struct {
             return;
         }
         if (cartridge.plain_fallback) {
-            self.fill(bounds, ui.palette.surface);
-            self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", ui.palette.quiet, 2);
+            self.fill(bounds, self.theme.surface);
+            self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", self.theme.muted, 2);
             return;
         }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
@@ -304,14 +307,14 @@ pub const Surface = struct {
 
     fn drawBattery(self: Surface, battery: ui.Battery) void {
         const body = battery.bounds;
-        self.fill(.{ .x = body.x, .y = body.y, .width = body.width - 8, .height = 3 }, ui.palette.ink);
-        self.fill(.{ .x = body.x, .y = body.y + body.height - 3, .width = body.width - 8, .height = 3 }, ui.palette.ink);
-        self.fill(.{ .x = body.x, .y = body.y, .width = 3, .height = body.height }, ui.palette.ink);
-        self.fill(.{ .x = body.x + body.width - 11, .y = body.y, .width = 3, .height = body.height }, ui.palette.ink);
-        self.fill(.{ .x = body.x + body.width - 8, .y = body.y + 7, .width = 8, .height = body.height - 14 }, ui.palette.ink);
+        self.fill(.{ .x = body.x, .y = body.y, .width = body.width - 8, .height = 3 }, self.theme.text);
+        self.fill(.{ .x = body.x, .y = body.y + body.height - 3, .width = body.width - 8, .height = 3 }, self.theme.text);
+        self.fill(.{ .x = body.x, .y = body.y, .width = 3, .height = body.height }, self.theme.text);
+        self.fill(.{ .x = body.x + body.width - 11, .y = body.y, .width = 3, .height = body.height }, self.theme.text);
+        self.fill(.{ .x = body.x + body.width - 8, .y = body.y + 7, .width = 8, .height = body.height - 14 }, self.theme.text);
         const capacity: u16 = body.width - 17;
         const charge: u16 = @intCast((@as(u32, capacity) * battery.percent) / 100);
-        self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, ui.palette.pine);
+        self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, self.theme.accent);
     }
 
     fn drawChevron(self: Surface, x: u16, y: u16, color: ui.Color) void {
@@ -387,4 +390,26 @@ test "multiline titles use their height and remain inside the text rectangle" {
         if (y >= 90) second_line = true;
     }
     try std.testing.expect(second_line);
+}
+
+test "theme changes interface surfaces but preserves artwork pixels" {
+    const a = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(a);
+    const b = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(b);
+    const themes = @import("theme.zig");
+    var light = ui.home(themes.light, 0);
+    var dark = ui.home(themes.dark, 0);
+    (Surface{ .pixels = a }).render(&light);
+    (Surface{ .pixels = b }).render(&dark);
+    try std.testing.expect(a[0] != b[0]);
+    try std.testing.expect(a[150 * width + 50] != b[150 * width + 50]);
+    light = .{ .theme = themes.light, .background = themes.light.background };
+    dark = .{ .theme = themes.dark, .background = themes.dark.background };
+    const cover = ui.Element{ .cover = .{ .bounds = .{ .x = 100, .y = 100, .width = 200, .height = 300 }, .kind = .falling } };
+    light.add(cover);
+    dark.add(cover);
+    (Surface{ .pixels = a }).render(&light);
+    (Surface{ .pixels = b }).render(&dark);
+    for (100..400) |y| try std.testing.expectEqualSlices(u32, a[y * width + 100 .. y * width + 300], b[y * width + 100 .. y * width + 300]);
 }

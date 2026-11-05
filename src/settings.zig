@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 
-pub const Setting = enum { brightness, performance, display_timeout, suspend_timeout };
+pub const Setting = enum { brightness, performance, display_timeout, suspend_timeout, appearance };
 pub const Performance = enum { battery, balanced, performance };
 
 pub const Values = struct {
+    appearance: @import("theme.zig").Mode = .light,
     brightness: u8 = 10,
     performance: Performance = .balanced,
     display_timeout: u8 = 4,
@@ -12,6 +13,7 @@ pub const Values = struct {
 
     pub fn adjust(self: *Values, setting: Setting, direction: i8) void {
         switch (setting) {
+            .appearance => self.appearance = if (self.appearance == .light) .dark else .light,
             .brightness => self.brightness = step(self.brightness, 11, direction),
             .performance => self.performance = @fromBackingInt(@intCast(step(@backingInt(self.performance), 3, direction))),
             .display_timeout => self.display_timeout = step(self.display_timeout, display_seconds.len, direction),
@@ -21,6 +23,7 @@ pub const Values = struct {
 
     pub fn value(self: Values, setting: Setting) []const u8 {
         return switch (setting) {
+            .appearance => if (self.appearance == .light) "Light" else "Dark",
             .brightness => brightness_labels[self.brightness],
             .performance => performance_labels[@backingInt(self.performance)],
             .display_timeout => display_labels[self.display_timeout],
@@ -64,6 +67,7 @@ fn indexOf(comptime values: anytype, value: u32) ?u8 {
 
 pub fn load(io: std.Io) Values {
     var result = Values{};
+    if (readNumber(io, "/data/settings/appearance", 1)) |value| result.appearance = @fromBackingInt(@intCast(value));
     if (readBrightness(io)) |value| result.brightness = value;
     if (readNumber(io, "/data/settings/display-timeout", 86400)) |value|
         result.display_timeout = indexOf(display_seconds, value) orelse result.display_timeout;
@@ -80,8 +84,14 @@ pub fn load(io: std.Io) Values {
 }
 
 pub fn apply(io: std.Io, values: Values, setting: Setting) !void {
+    if (setting == .appearance) {
+        const dir = try std.Io.Dir.cwd().createDirPathOpen(io, "/data/settings", .{});
+        defer dir.close(io);
+        return saveAppearance(io, dir, values.appearance);
+    }
     var number: [16]u8 = undefined;
     const value = switch (setting) {
+        .appearance => unreachable,
         .brightness => try std.fmt.bufPrint(&number, "{d}", .{values.brightness}),
         .performance => @tagName(values.performance),
         .display_timeout => try std.fmt.bufPrint(&number, "{d}", .{display_seconds[values.display_timeout]}),
@@ -105,4 +115,24 @@ test "settings wrap in both directions" {
     values.performance = .performance;
     values.adjust(.performance, 1);
     try std.testing.expectEqual(Performance.battery, values.performance);
+}
+
+pub fn saveAppearance(io: std.Io, dir: std.Io.Dir, mode: @import("theme.zig").Mode) !void {
+    try dir.writeFile(io, .{ .sub_path = "appearance.tmp", .data = if (mode == .light) "0\n" else "1\n" });
+    try dir.rename("appearance.tmp", dir, "appearance", io);
+}
+
+test "appearance saves atomically without affecting device settings" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var values = Values{};
+    values.adjust(.appearance, 1);
+    try std.testing.expectEqual(@import("theme.zig").Mode.dark, values.appearance);
+    try saveAppearance(std.testing.io, temporary.dir, values.appearance);
+    var buffer: [8]u8 = undefined;
+    try std.testing.expectEqualStrings("1\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
+    values.adjust(.appearance, -1);
+    try saveAppearance(std.testing.io, temporary.dir, values.appearance);
+    try std.testing.expectEqualStrings("0\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
+    try std.testing.expectEqual(@as(u8, 10), values.brightness);
 }
