@@ -14,7 +14,7 @@ pub const Values = struct {
     pub fn adjust(self: *Values, setting: Setting, direction: i8) void {
         switch (setting) {
             .appearance => self.appearance = if (self.appearance == .light) .dark else .light,
-            .brightness => self.brightness = step(self.brightness, 11, direction),
+            .brightness => self.brightness = if (direction < 0) self.brightness -| 1 else @min(self.brightness + 1, 10),
             .performance => self.performance = @fromBackingInt(@intCast(step(@backingInt(self.performance), 3, direction))),
             .display_timeout => self.display_timeout = step(self.display_timeout, display_seconds.len, direction),
             .suspend_timeout => self.suspend_timeout = step(self.suspend_timeout, suspend_seconds.len, direction),
@@ -105,13 +105,17 @@ pub fn apply(io: std.Io, values: Values, setting: Setting) !void {
     }
 }
 
-test "settings wrap in both directions" {
+test "brightness clamps while discrete performance choices wrap" {
     var values = Values{};
+    values.adjust(.brightness, 1);
+    try std.testing.expectEqual(@as(u8, 10), values.brightness);
+    values.adjust(.brightness, -1);
+    try std.testing.expectEqual(@as(u8, 9), values.brightness);
     values.brightness = 0;
     values.adjust(.brightness, -1);
-    try std.testing.expectEqual(@as(u8, 10), values.brightness);
-    values.adjust(.brightness, 1);
     try std.testing.expectEqual(@as(u8, 0), values.brightness);
+    values.adjust(.brightness, 1);
+    try std.testing.expectEqual(@as(u8, 1), values.brightness);
     values.performance = .performance;
     values.adjust(.performance, 1);
     try std.testing.expectEqual(Performance.battery, values.performance);

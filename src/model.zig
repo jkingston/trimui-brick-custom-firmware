@@ -399,3 +399,17 @@ test "Back at Home is inert with or without a resumable session" {
         try std.testing.expect(state.pending_power == null);
     }
 }
+
+test "brightness shortcut cannot wrap maximum to minimum" {
+    var state = Model{ .page = .settings, .selected = 0 };
+    for (0..20) |_| {
+        _ = state.apply(.right);
+        _ = state.takeSetting();
+    }
+    try std.testing.expectEqual(@as(u8, 10), state.settings.brightness);
+    for (0..20) |_| {
+        _ = state.apply(.left);
+        _ = state.takeSetting();
+    }
+    try std.testing.expectEqual(@as(u8, 0), state.settings.brightness);
+}
