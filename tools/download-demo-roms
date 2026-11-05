@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+fetch() {
+    destination=$1
+    url=$2
+    checksum=$3
+    test -f "$root/$destination" && return
+    mkdir -p "$(dirname -- "$root/$destination")"
+    curl -fL --retry 3 "$url" -o "$root/$destination.tmp"
+    printf '%s  %s\n' "$checksum" "$root/$destination.tmp" | sha256sum -c -
+    mv "$root/$destination.tmp" "$root/$destination"
+}
+
+fetch roms/FC/falling.nes \
+    https://raw.githubusercontent.com/xram64/falling-nes/52dcb8a951200562e696dfc2aba5d4d14edd0078/falling.nes \
+    e22b947542c2d7e595bf84725b333be7af8189c5965b9c53e356a249c7d79943
+fetch roms/FC/minekart-madness.nes \
+    https://github.com/mhughson/mbh-cart/releases/download/v1.0/minekart_madness_mmc1.nes \
+    45d18d8b3662e6c08043759e550e658bcd23e48394a00f24de5e5fbe57e4900a
+fetch roms/GB/adjustris.gb \
+    https://github.com/tbsp/Adjustris/releases/download/v1.1/adjustris.gb \
+    b6c8affe6d906419cfc99ff459718f33a1868af03254a2f65cea2a9430394712
+fetch roms/GBA/rkanoid.gba \
+    'https://raw.githubusercontent.com/benoror/gbadev/b61cb1e8d6646789c833522a7d3d64adda27581a/public/roms/%40rkanoid%20MODERN%20-%20RECOMPILED.gba' \
+    99ae825ffb1b7e8b48b33cd2715ceb8ca524858f99fee4b22938489460083d94
+fetch roms/MD/willows-dream.md \
+    https://raw.githubusercontent.com/marcellodash/willows-dream/9ff80c7ef5f7b31e178b57fd4542f8ceee27eca4/out/rom.bin \
+    4200bfebc7a15d5cac1bdc1f5aa5e61c3d7b02f2b68af913275720436c2645b0
+
+cd "$root/roms"
+sha256sum -c SHA256SUMS

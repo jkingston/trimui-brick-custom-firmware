@@ -1,5 +1,5 @@
 # Official prebuilt host compiler, pinned for reproducible product builds.
-HOST_ZIG_BIN_VERSION = 0.16.0
+HOST_ZIG_BIN_VERSION = 0.17.1
 HOST_ZIG_BIN_SOURCE = zig-x86_64-linux-$(HOST_ZIG_BIN_VERSION).tar.xz
 HOST_ZIG_BIN_SITE = https://ziglang.org/download/$(HOST_ZIG_BIN_VERSION)
 HOST_ZIG_BIN_LICENSE = MIT

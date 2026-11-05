@@ -1,0 +1,142 @@
+[tools]
+zig = "0.17.1"
+"github:DonIsaac/zlint" = "v0.10.0"
+
+[env]
+ZIG_LOCAL_CACHE_DIR = "{{ config_root }}/.zig-cache"
+ZIG_GLOBAL_CACHE_DIR = "{{ config_root }}/.zig-global-cache"
+
+[tasks.format]
+alias = "fmt"
+description = "Format Zig sources"
+run = "zig fmt --ast-check build.zig build.zig.zon src"
+
+[tasks.lint]
+description = "Check formatting, syntax and static analysis"
+run = [
+    "zig fmt --check --ast-check build.zig build.zig.zon src",
+    "zlint --deny-warnings src",
+]
+
+[tasks.test]
+description = "Run host-side unit tests"
+run = "zig build test --summary all"
+
+[tasks.build-shell]
+description = "Build the stripped AArch64 shell"
+run = '''
+rm -rf output/check
+zig build -Dtarget=aarch64-linux-gnu -Dcpu=cortex_a53 -Doptimize=ReleaseSmall \
+    --prefix output/check --summary all
+test "$(stat -c %s output/check/bin/brick-shell)" -le 524288
+'''
+
+[tasks.check]
+description = "Run every required source check"
+run = [{ tasks = ["lint", "test", "build-shell"] }]
+
+[tasks.configure]
+description = "Configure the composed Buildroot tree"
+run = '''
+root="$MISE_PROJECT_ROOT"
+base="$(realpath "${BASE:-../firmware}")"
+buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
+buildroot="$base/output/buildroot-$buildroot_version"
+output="$(realpath -m "${O:-$root/output/build}")"
+externals="$base $root"
+test -f "$base/Makefile"
+make -C "$base" O="$output" EXTERNALS="$externals" configure
+"$buildroot/utils/config" --file "$output/.config" --enable BR2_PACKAGE_BRICK_SHELL
+"$buildroot/utils/config" --file "$output/.config" --set-str \
+    BR2_PACKAGE_GOOGLEFONTDIRECTORY_FONTS \
+    'ofl/notosans ofl/notosansarabic ofl/notosanshebrew ofl/notosansdevanagari ofl/notosansbengali ofl/notosansgurmukhi ofl/notosansgujarati ofl/notosansoriya ofl/notosanstamil ofl/notosanstelugu ofl/notosanskannada ofl/notosansmalayalam ofl/notosanssinhala ofl/notosansthai ofl/notosanslao ofl/notosanskhmer ofl/notosanssc ofl/notosansarmenian ofl/notosansgeorgian ofl/notosansethiopic ofl/notosansmyanmar ofl/notosanssymbols2 ofl/notoemoji'
+"$buildroot/utils/config" --file "$output/.config" --set-str BR2_ROOTFS_POST_BUILD_SCRIPT \
+    '$(BR2_EXTERNAL_BRICK_PATH)/board/trimui/brick/post-build.sh $(BR2_EXTERNAL_BRICK_UI_PATH)/board/trimui/brick/post-build.sh'
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
+    BR2_DL_DIR="$base/output/downloads" olddefconfig
+grep -qx 'BR2_PACKAGE_BRICK_SHELL=y' "$output/.config"
+'''
+
+[tasks.build]
+alias = "default"
+description = "Build the complete firmware image"
+depends = ["configure"]
+run = '''
+root="$MISE_PROJECT_ROOT"
+base="$(realpath "${BASE:-../firmware}")"
+buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
+buildroot="$base/output/buildroot-$buildroot_version"
+output="$(realpath -m "${O:-$root/output/build}")"
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" \
+    BR2_DL_DIR="$base/output/downloads"
+'''
+
+[tasks.clean]
+description = "Clean the composed Buildroot output"
+run = '''
+root="$MISE_PROJECT_ROOT"
+base="$(realpath "${BASE:-../firmware}")"
+buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
+buildroot="$base/output/buildroot-$buildroot_version"
+output="$(realpath -m "${O:-$root/output/build}")"
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" clean
+'''
+
+[tasks.release]
+description = "Build and verify a clean release image"
+run = '''
+root="$MISE_PROJECT_ROOT"
+base="$(realpath "${BASE:-../firmware}")"
+buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
+buildroot="$base/output/buildroot-$buildroot_version"
+output="$(realpath -m "${RELEASE_O:-$root/output/release}")"
+externals="$base $root"
+test ! -e "$output/.config"
+test ! -e "$output/local.mk"
+O="$output" mise run configure
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
+    BR2_DL_DIR="$base/output/downloads"
+make -C "$base" O="$output" EXTERNALS="$externals" release-check
+'''
+
+[tasks.simulator-build]
+description = "Build the desktop UI simulator"
+run = "zig build simulator --prefix output/host --summary all"
+
+[tasks.simulator]
+description = "Run the simulator at the Brick's physical size"
+depends = ["simulator-build"]
+run = "output/host/bin/brick-ui-simulator --physical"
+
+[tasks.simulator-pixels]
+description = "Run the simulator at one desktop pixel per device pixel"
+depends = ["simulator-build"]
+run = "output/host/bin/brick-ui-simulator --pixels"
+
+[tasks.screenshots]
+description = "Render deterministic UI screenshots"
+run = '''
+mkdir -p output/screenshots
+zig build -Doptimize=ReleaseSafe --prefix output/host-shell --summary all
+for screen in splash home games game settings overlay overlay-states overlay-options languages; do
+    output/host-shell/bin/brick-shell --snapshot "output/screenshots/$screen.ppm" "$screen"
+    magick "output/screenshots/$screen.ppm" "output/screenshots/$screen.png"
+done
+'''
+
+[tasks.demo-roms]
+description = "Download and verify public homebrew test ROMs"
+run = "tools/download-demo-roms"
+
+[tasks.simulator-check]
+description = "Exercise library discovery and navigation headlessly"
+depends = ["simulator-build", "demo-roms"]
+run = '''
+rm -rf output/sim-data output/sim-empty output/library-check output/empty-check
+mkdir -p output/sim-data/Roms output/sim-empty
+cp -R roms/FC roms/GB roms/GBA roms/MD output/sim-data/Roms/
+SDL_VIDEODRIVER=dummy output/host/bin/brick-ui-simulator \
+    --data-root output/sim-data --library-check output/library-check
+SDL_VIDEODRIVER=dummy output/host/bin/brick-ui-simulator \
+    --data-root output/sim-empty --library-check output/empty-check
+'''

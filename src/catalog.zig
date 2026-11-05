@@ -91,7 +91,7 @@ fn contains(list: []const u8, value: []const u8) bool {
 
 fn systemFor(name: []const u8) ?System {
     // Accept MinUI's human-readable folder names with emulator tags too.
-    const tag = if (std.mem.lastIndexOfScalar(u8, name, '(')) |start|
+    const tag = if (std.mem.findScalarLast(u8, name, '(')) |start|
         if (std.mem.endsWith(u8, name, ")")) name[start + 1 .. name.len - 1] else name
     else
         name;
@@ -122,14 +122,14 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
     var roots = data.iterate();
     while (try roots.next(io)) |entry| {
         if (entry.kind != .directory or !std.ascii.eqlIgnoreCase(entry.name, "roms")) continue;
-        const rom_root = try std.fs.path.join(allocator, &.{ root, entry.name });
+        const rom_root = try std.Io.Dir.path.join(allocator, &.{ root, entry.name });
         var roms = try data.openDir(io, entry.name, .{ .iterate = true });
         defer roms.close(io);
         var folders = roms.iterate();
         while (try folders.next(io)) |folder| {
             if (folder.kind != .directory) continue;
             const system = systemFor(folder.name) orelse continue;
-            const folder_path = try std.fs.path.join(allocator, &.{ rom_root, folder.name });
+            const folder_path = try std.Io.Dir.path.join(allocator, &.{ rom_root, folder.name });
             var dir = try roms.openDir(io, folder.name, .{ .iterate = true });
             defer dir.close(io);
             var walker = try dir.walk(allocator);
@@ -140,10 +140,10 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
                     continue;
                 }
                 if (file.kind != .file or std.ascii.eqlIgnoreCase(file.basename, "neogeo.zip")) continue;
-                if (!contains(system.extensions, std.fs.path.extension(file.basename))) continue;
-                const path = try std.fs.path.join(allocator, &.{ folder_path, file.path });
+                if (!contains(system.extensions, std.Io.Dir.path.extension(file.basename))) continue;
+                const path = try std.Io.Dir.path.join(allocator, &.{ folder_path, file.path });
                 var game = Game{
-                    .title = try allocator.dupe(u8, std.fs.path.stem(file.basename)),
+                    .title = try allocator.dupe(u8, std.Io.Dir.path.stem(file.basename)),
                     .system = system.label,
                     .platform_id = system.id,
                     .summary = system.label,
@@ -152,7 +152,7 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
                     .cover = .library,
                 };
                 for (games) |demo| {
-                    if (std.mem.eql(u8, std.fs.path.basename(demo.rom_path), file.basename)) {
+                    if (std.mem.eql(u8, std.Io.Dir.path.basename(demo.rom_path), file.basename)) {
                         game.title = demo.title;
                         game.summary = demo.summary;
                         game.cover = demo.cover;
@@ -166,7 +166,7 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
     // Playlist members are launched through their playlist, not separate entries.
     var members: std.StringHashMap(void) = .init(allocator);
     for (found.items) |game| {
-        if (!std.ascii.eqlIgnoreCase(std.fs.path.extension(game.rom_path), ".m3u")) continue;
+        if (!std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(game.rom_path), ".m3u")) continue;
         const contents = std.Io.Dir.cwd().readFileAlloc(io, game.rom_path, allocator, .limited(1024 * 1024)) catch |err| switch (err) {
             error.OutOfMemory => return err,
             else => {
@@ -178,9 +178,9 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
         while (lines.next()) |line| {
             const path = std.mem.trim(u8, line, " \t\r\xef\xbb\xbf");
             if (path.len == 0 or path[0] == '#') continue;
-            const resolved = try std.fs.path.resolve(allocator, &.{ std.fs.path.dirname(game.rom_path).?, path });
+            const resolved = try std.Io.Dir.path.resolve(allocator, &.{ std.Io.Dir.path.dirname(game.rom_path).?, path });
             // Do not allow mutually referencing playlists to hide each other.
-            if (!std.ascii.eqlIgnoreCase(std.fs.path.extension(resolved), ".m3u")) try members.put(resolved, {});
+            if (!std.ascii.eqlIgnoreCase(std.Io.Dir.path.extension(resolved), ".m3u")) try members.put(resolved, {});
         }
     }
     var count: usize = 0;

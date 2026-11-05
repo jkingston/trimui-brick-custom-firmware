@@ -5,6 +5,7 @@ const model = @import("model.zig");
 const render = @import("render.zig");
 const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
+const settings = @import("settings.zig");
 
 const framebuffer_path = "/dev/fb0";
 const blank_path = "/sys/class/graphics/fb0/blank";
@@ -12,24 +13,24 @@ const virtual_size_path = "/sys/class/graphics/fb0/virtual_size";
 const bits_path = "/sys/class/graphics/fb0/bits_per_pixel";
 const stride_path = "/sys/class/graphics/fb0/stride";
 const tty_path = "/dev/tty0";
-const KDSETMODE: u32 = 0x4b3a;
-const KD_TEXT: usize = 0;
-const KD_GRAPHICS: usize = 1;
-const FBIOGET_VSCREENINFO: u32 = 0x4600;
-const FBIOPAN_DISPLAY: u32 = 0x4606;
-const FB_ACTIVATE_VBL: u32 = 16;
+const kd_set_mode: u32 = 0x4b3a;
+const kd_text: usize = 0;
+const kd_graphics: usize = 1;
+const fb_io_get_variable_screen_info: u32 = 0x4600;
+const fb_io_pan_display: u32 = 0x4606;
+const fb_activate_vertical_blank: u32 = 16;
 
-const EV_SYN: u16 = 0x00;
-const EV_KEY: u16 = 0x01;
-const SYN_REPORT: u16 = 0x00;
-const SYN_DROPPED: u16 = 0x03;
-const BTN_SOUTH: u16 = 0x130;
-const BTN_EAST: u16 = 0x131;
-const BTN_MODE: u16 = 0x13c;
-const BTN_DPAD_UP: u16 = 0x220;
-const BTN_DPAD_DOWN: u16 = 0x221;
-const BTN_DPAD_LEFT: u16 = 0x222;
-const BTN_DPAD_RIGHT: u16 = 0x223;
+const ev_syn: u16 = 0x00;
+const ev_key: u16 = 0x01;
+const syn_report: u16 = 0x00;
+const syn_dropped: u16 = 0x03;
+const btn_south: u16 = 0x130;
+const btn_east: u16 = 0x131;
+const btn_mode: u16 = 0x13c;
+const btn_dpad_up: u16 = 0x220;
+const btn_dpad_down: u16 = 0x221;
+const btn_dpad_left: u16 = 0x222;
+const btn_dpad_right: u16 = 0x223;
 
 const InputEvent = extern struct {
     seconds: isize,
@@ -103,7 +104,7 @@ fn readAttribute(io: std.Io, path: []const u8, buffer: []u8) ![]const u8 {
 fn parseGeometry(io: std.Io) !Geometry {
     var size_buffer: [64]u8 = undefined;
     const size = try readAttribute(io, virtual_size_path, &size_buffer);
-    const comma = std.mem.indexOfScalar(u8, size, ',') orelse return error.InvalidFramebufferGeometry;
+    const comma = std.mem.findScalar(u8, size, ',') orelse return error.InvalidFramebufferGeometry;
     var bits_buffer: [32]u8 = undefined;
     var stride_buffer: [32]u8 = undefined;
     return .{
@@ -142,8 +143,9 @@ const Framebuffer = struct {
         try geometry.validate();
         const fd = try std.posix.openat(std.posix.AT.FDCWD, framebuffer_path, .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);
         errdefer closeFd(io, fd, false);
+        // SAFETY: a successful FBIOGET_VSCREENINFO call initializes every byte.
         var variable: FbVarScreeninfo = undefined;
-        if (std.posix.errno(std.os.linux.ioctl(fd, FBIOGET_VSCREENINFO, @intFromPtr(&variable))) != .SUCCESS)
+        if (std.posix.errno(std.os.linux.ioctl(fd, fb_io_get_variable_screen_info, @intFromPtr(&variable))) != .SUCCESS)
             return error.FramebufferInfoFailed;
         if (variable.xres != render.width or variable.yres != render.height or
             variable.yres_virtual != geometry.virtual_height or geometry.virtual_height % render.height != 0)
@@ -175,8 +177,8 @@ const Framebuffer = struct {
         self.surface.render(tree);
         self.variable.xoffset = 0;
         self.variable.yoffset = @intCast(self.draw_page * render.height);
-        self.variable.activate = FB_ACTIVATE_VBL;
-        if (std.posix.errno(std.os.linux.ioctl(self.fd, FBIOPAN_DISPLAY, @intFromPtr(&self.variable))) != .SUCCESS)
+        self.variable.activate = fb_activate_vertical_blank;
+        if (std.posix.errno(std.os.linux.ioctl(self.fd, fb_io_pan_display, @intFromPtr(&self.variable))) != .SUCCESS)
             return error.FramebufferPresentFailed;
         self.draw_page = (self.draw_page + 1) % self.page_count;
         const pixel_pointer: [*]u32 = @ptrCast(@alignCast(self.memory.ptr));
@@ -195,13 +197,13 @@ const Console = struct {
     fn open(io: std.Io) !Console {
         const fd = try std.posix.openat(std.posix.AT.FDCWD, tty_path, .{ .ACCMODE = .WRONLY, .CLOEXEC = true }, 0);
         errdefer closeFd(io, fd, false);
-        if (std.posix.errno(std.os.linux.ioctl(fd, KDSETMODE, KD_GRAPHICS)) != .SUCCESS)
+        if (std.posix.errno(std.os.linux.ioctl(fd, kd_set_mode, kd_graphics)) != .SUCCESS)
             return error.ConsoleGraphicsModeFailed;
         return .{ .io = io, .fd = fd };
     }
 
     fn close(self: *Console) void {
-        _ = std.os.linux.ioctl(self.fd, KDSETMODE, KD_TEXT);
+        _ = std.os.linux.ioctl(self.fd, kd_set_mode, kd_text);
         closeFd(self.io, self.fd, false);
     }
 };
@@ -225,23 +227,23 @@ fn discoverGamepad(io: std.Io) !std.posix.fd_t {
 }
 
 fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
-    if (event.event_type == EV_SYN and event.code == SYN_DROPPED) {
+    if (event.event_type == ev_syn and event.code == syn_dropped) {
         dropped.* = true;
         return null;
     }
     if (dropped.*) {
-        if (event.event_type == EV_SYN and event.code == SYN_REPORT) dropped.* = false;
+        if (event.event_type == ev_syn and event.code == syn_report) dropped.* = false;
         return null;
     }
-    if (event.event_type != EV_KEY or (event.value != 1 and event.value != 2)) return null;
+    if (event.event_type != ev_key or (event.value != 1 and event.value != 2)) return null;
     return switch (event.code) {
-        BTN_DPAD_UP => .up,
-        BTN_DPAD_DOWN => .down,
-        BTN_DPAD_LEFT => .left,
-        BTN_DPAD_RIGHT => .right,
-        BTN_EAST => if (event.value == 1) .select else null,
-        BTN_SOUTH => if (event.value == 1) .back else null,
-        BTN_MODE => if (event.value == 1) .menu else null,
+        btn_dpad_up => .up,
+        btn_dpad_down => .down,
+        btn_dpad_left => .left,
+        btn_dpad_right => .right,
+        btn_east => if (event.value == 1) .select else null,
+        btn_south => if (event.value == 1) .back else null,
+        btn_mode => if (event.value == 1) .menu else null,
         else => null,
     };
 }
@@ -255,7 +257,9 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
 
     var splash_tree = ui.splash();
     try framebuffer.show(&splash_tree);
-    try std.Io.sleep(io, .fromMilliseconds(250), .awake);
+    // One short, deliberate beat makes boot progress visible without adding a
+    // quarter-second gate before the first interactive frame.
+    try std.Io.sleep(io, .fromMilliseconds(120), .awake);
 
     var tree = state.tree();
     try framebuffer.show(&tree);
@@ -284,6 +288,10 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
             for (events) |event| {
                 if (actionForEvent(event, &dropped)) |action| {
                     if (state.apply(action)) {
+                        if (state.takeSetting()) |setting|
+                            settings.apply(io, state.settings, setting) catch {
+                                state.settings = settings.load(io);
+                            };
                         if (state.takeLaunch()) |index| return index;
                         changed = true;
                     }
@@ -302,7 +310,7 @@ pub fn run(io: std.Io) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const library = try catalog.discover(io, arena.allocator(), "/data");
-    var state = model.Model{ .games = library };
+    var state = model.Model{ .games = library, .settings = settings.load(io) };
     while (true) {
         const game_index = (try runSession(io, &state)) orelse continue;
         const term = retroarch.launch(io, &state.games[game_index], state.games) catch |err| {
@@ -331,13 +339,13 @@ pub fn probe(io: std.Io) !void {
 test "navigation repeats and dropped streams resynchronise" {
     const testing = std.testing;
     var dropped = false;
-    try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_DPAD_DOWN, .value = 1 }, &dropped).?);
-    try testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_DPAD_LEFT, .value = 1 }, &dropped).?);
-    try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_DPAD_DOWN, .value = 2 }, &dropped).?);
-    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_EAST, .value = 2 }, &dropped) == null);
-    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_SYN, .code = SYN_DROPPED, .value = 0 }, &dropped) == null);
+    try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 1 }, &dropped).?);
+    try testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_left, .value = 1 }, &dropped).?);
+    try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 2 }, &dropped).?);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 2 }, &dropped) == null);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = syn_dropped, .value = 0 }, &dropped) == null);
     try testing.expect(dropped);
-    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_KEY, .code = BTN_EAST, .value = 1 }, &dropped) == null);
-    _ = actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = EV_SYN, .code = 0, .value = 0 }, &dropped);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 1 }, &dropped) == null);
+    _ = actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = 0, .value = 0 }, &dropped);
     try testing.expect(!dropped);
 }

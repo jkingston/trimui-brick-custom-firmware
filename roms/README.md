@@ -1,6 +1,6 @@
 # Demo ROMs
 
-`make demo-roms` downloads publicly distributed homebrew games from pinned author
+`mise run demo-roms` downloads publicly distributed homebrew games from pinned author
 releases or source revisions and verifies their hashes. ROM files are local
 test data and are ignored by Git.
 

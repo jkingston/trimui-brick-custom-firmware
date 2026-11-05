@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+[ "$#" -eq 2 ] || exit 2
+key=$1
+value=$2
+directory=/data/settings
+mkdir -p "$directory"
+
+write_setting() {
+	target=$1
+	content=$2
+	tmp=$(mktemp "$target.XXXXXX")
+	trap 'rm -f "$tmp"' EXIT HUP INT TERM
+	printf '%s\n' "$content" > "$tmp"
+	chmod 600 "$tmp"
+	mv -f "$tmp" "$target"
+	trap - EXIT HUP INT TERM
+}
+
+case "$key" in
+brightness)
+	case "$value" in 0|1|2|3|4|5|6|7|8|9|10) ;; *) exit 2 ;; esac
+	/usr/sbin/brick-brightness --set "$value"
+	write_setting "$directory/brightness" "1 $value"
+	;;
+performance)
+	case "$value" in battery|balanced|performance) ;; *) exit 2 ;; esac
+	write_setting "$directory/performance" "$value"
+	/usr/sbin/brick-performance menu
+	;;
+display_timeout)
+	case "$value" in 0|30|60|180|300|600) ;; *) exit 2 ;; esac
+	write_setting "$directory/display-timeout" "$value"
+	/etc/init.d/S49powerkey restart
+	;;
+suspend_timeout)
+	case "$value" in 0|300|900|1800|3600) ;; *) exit 2 ;; esac
+	write_setting "$directory/suspend-timeout" "$value"
+	/etc/init.d/S49powerkey restart
+	;;
+*) exit 2 ;;
+esac

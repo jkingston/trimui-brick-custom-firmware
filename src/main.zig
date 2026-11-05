@@ -39,8 +39,10 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
     } else if (std.mem.eql(u8, screen, "game")) {
         state.page = .game;
         state.game_index = 1;
+    } else if (std.mem.eql(u8, screen, "settings")) {
+        state.page = .settings;
     }
-    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash() else if (std.mem.eql(u8, screen, "overlay")) blk: {
+    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash() else if (std.mem.eql(u8, screen, "languages")) ui.languageProof() else if (std.mem.eql(u8, screen, "overlay")) blk: {
         const game_overlay = overlay.Model{};
         break :blk game_overlay.tree();
     } else if (std.mem.eql(u8, screen, "overlay-states")) blk: {
@@ -102,6 +104,7 @@ test {
     _ = overlay;
     _ = @import("retroarch.zig");
     _ = scheduler;
+    _ = @import("settings.zig");
     _ = @import("asset_manifest.zig");
     _ = library_scan;
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const ui = @import("ui.zig");
+const text_pango = @import("text_pango.zig");
 
 pub const width = 1024;
 pub const height = 768;
@@ -12,7 +13,8 @@ pub const Surface = struct {
         @memset(self.pixels, pack(tree.background));
         for (tree.slice()) |element| switch (element) {
             .bar => |bar| self.fill(bar.bounds, bar.color),
-            .text => |text| self.drawTextBounded(text.bounds.x, text.bounds.y, text.bounds.width, text.value, text.color, text.scale),
+            .scrim => |scrim| self.fillAlpha(scrim.bounds, scrim.color, scrim.alpha),
+            .text => |text| self.drawTextBoundedLanguage(text.bounds.x, text.bounds.y, text.bounds.width, text.value, text.color, text.scale, text.language),
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .cover => |cover| self.drawCover(cover),
@@ -39,22 +41,43 @@ pub const Surface = struct {
         }
     }
 
+    fn fillAlpha(self: Surface, rect: ui.Rect, color: ui.Color, alpha: u8) void {
+        if (rect.x >= width or rect.y >= height) return;
+        const right = @min(@as(usize, rect.x) + rect.width, width);
+        const bottom = @min(@as(usize, rect.y) + rect.height, height);
+        var y: usize = rect.y;
+        while (y < bottom) : (y += 1) {
+            var x: usize = rect.x;
+            while (x < right) : (x += 1) {
+                var destination: ui.Color = @bitCast(self.pixels[y * width + x]);
+                destination.r = blend255(destination.r, color.r, alpha);
+                destination.g = blend255(destination.g, color.g, alpha);
+                destination.b = blend255(destination.b, color.b, alpha);
+                self.pixels[y * width + x] = pack(destination);
+            }
+        }
+    }
+
+    fn blend255(destination: u8, source: u8, alpha: u8) u8 {
+        return @intCast((@as(u32, source) * alpha + @as(u32, destination) * (255 - alpha) + 127) / 255);
+    }
+
     fn menuRow(self: Surface, row: ui.MenuRow) void {
         if (row.selected) {
-            self.fill(row.bounds, ui.palette.blue);
-            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y, .width = 8, .height = row.bounds.height }, ui.palette.blue_dark);
+            self.fill(row.bounds, ui.palette.selected);
+            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y, .width = 6, .height = row.bounds.height }, ui.palette.pine);
         } else {
-            self.fill(row.bounds, ui.palette.white);
+            self.fill(row.bounds, ui.palette.paper);
             self.fill(.{ .x = row.bounds.x, .y = row.bounds.y + row.bounds.height - 1, .width = row.bounds.width, .height = 1 }, ui.palette.chrome);
         }
-        const color = if (row.selected) ui.palette.white else ui.palette.ink;
-        const label_y = if (row.detail.len == 0) row.bounds.y + 27 else row.bounds.y + 17;
-        self.drawTextBounded(row.bounds.x + 26, label_y, row.bounds.width - 76, row.label, color, if (row.detail.len == 0) 4 else 3);
+        const color = if (row.selected) ui.palette.pine else ui.palette.ink;
+        const label_y = if (row.detail.len == 0) row.bounds.y + 22 else row.bounds.y + 8;
+        self.drawTextBounded(row.bounds.x + 28, label_y, row.bounds.width - 76, row.label, color, 3);
         if (row.detail.len != 0) {
-            const detail_color = if (row.selected) ui.palette.white else ui.palette.quiet;
-            self.drawTextBounded(row.bounds.x + 28, row.bounds.y + 61, row.bounds.width - 76, row.detail, detail_color, 2);
+            const detail_color = if (row.selected) ui.palette.pine else ui.palette.quiet;
+            self.drawTextBounded(row.bounds.x + 30, row.bounds.y + 57, row.bounds.width - 76, row.detail, detail_color, 2);
         }
-        if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 25, color);
+        if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, color);
     }
 
     fn drawGameScene(self: Surface, scene: ui.GameScene) void {
@@ -117,24 +140,29 @@ pub const Surface = struct {
     }
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
-        const background = if (item.selected) ui.palette.blue else ui.palette.white;
+        const background = if (item.selected) ui.palette.deep else ui.palette.paper;
         self.fill(item.bounds, background);
         if (item.selected) {
-            self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 8, .height = item.bounds.height }, ui.palette.blue_dark);
+            self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 6, .height = item.bounds.height }, ui.palette.pine);
         } else {
             self.fill(.{ .x = item.bounds.x, .y = item.bounds.y + item.bounds.height - 1, .width = item.bounds.width, .height = 1 }, ui.palette.chrome);
         }
         const label_color = if (item.selected) ui.palette.white else ui.palette.ink;
         const detail_color = if (item.selected) ui.palette.white else ui.palette.quiet;
-        self.drawText(item.bounds.x + 28, item.bounds.y + 18, item.label, label_color, 3);
-        self.drawText(item.bounds.x + 30, item.bounds.y + 57, item.detail, detail_color, 2);
+        const value_scale: u8 = if (item.value.len != 0) 2 else 3;
+        const value_step: usize = if (value_scale == 2) 18 else 23;
+        const reserved: u16 = if (item.value.len != 0) @intCast(@as(usize, @min(item.value.len, 18)) * value_step + 28) else if (item.disclosure) 70 else 28;
+        const label_y = if (item.detail.len == 0) item.bounds.y + 16 else item.bounds.y + 4;
+        self.drawTextBounded(item.bounds.x + 28, label_y, item.bounds.width - 28 - reserved, item.label, label_color, value_scale);
+        if (item.detail.len != 0)
+            self.drawTextBounded(item.bounds.x + 30, item.bounds.y + 48, item.bounds.width - 60, item.detail, detail_color, 2);
         if (item.value.len != 0) {
-            const value_width: u16 = @intCast(item.value.len * 18);
+            const value_width: u16 = @intCast(@min(item.value.len * value_step, item.bounds.width / 2));
             const right_padding: u16 = if (item.disclosure) 70 else 28;
-            self.drawText(item.bounds.x + item.bounds.width - right_padding - value_width, item.bounds.y + 18, item.value, label_color, 3);
+            self.drawText(item.bounds.x + item.bounds.width - right_padding - value_width, label_y, item.value, label_color, value_scale);
         }
         if (item.disclosure)
-            self.drawChevron(item.bounds.x + item.bounds.width - 40, item.bounds.y + 29, label_color);
+            self.drawChevron(item.bounds.x + item.bounds.width - 40, item.bounds.y + 30, label_color);
     }
 
     fn drawCover(self: Surface, cover: ui.Cover) void {
@@ -233,7 +261,7 @@ pub const Surface = struct {
         self.fill(.{ .x = body.x + body.width - 8, .y = body.y + 7, .width = 8, .height = body.height - 14 }, ui.palette.ink);
         const capacity: u16 = body.width - 17;
         const charge: u16 = @intCast((@as(u32, capacity) * battery.percent) / 100);
-        self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, ui.palette.blue);
+        self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, ui.palette.pine);
     }
 
     fn drawChevron(self: Surface, x: u16, y: u16, color: ui.Color) void {
@@ -249,77 +277,16 @@ pub const Surface = struct {
     }
 
     fn drawTextBounded(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, scale: u8) void {
+        self.drawTextBoundedLanguage(x, y, max_width, value, color, scale, "");
+    }
+
+    fn drawTextBoundedLanguage(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, scale: u8, language: []const u8) void {
         if (x >= width or y >= height or scale == 0) return;
         const available = @min(max_width, width - x);
-        const columns = available / (6 * @as(u16, scale));
-        const count = @min(value.len, columns);
-        var cursor: u16 = x;
-        for (value[0..count], 0..) |character, index| {
-            const truncated = value.len > columns and columns >= 3 and index >= columns - 3;
-            const rows = glyph(if (truncated) '.' else std.ascii.toUpper(character));
-            for (rows, 0..) |bits, row| {
-                var column: u3 = 0;
-                while (column < 5) : (column += 1) {
-                    if ((bits & (@as(u5, 1) << @intCast(4 - column))) != 0) {
-                        self.fill(.{
-                            .x = cursor + @as(u16, column) * scale,
-                            .y = y + @as(u16, @intCast(row)) * scale,
-                            .width = scale,
-                            .height = scale,
-                        }, color);
-                    }
-                }
-            }
-            cursor += 6 * @as(u16, scale);
-        }
+        if (!text_pango.draw(self.pixels, width, x, y, available, value, pack(color), scale, language))
+            @panic("PangoFT2 text renderer or required fonts are unavailable");
     }
 };
-
-fn glyph(character: u8) [7]u5 {
-    return switch (character) {
-        'A' => .{ 0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 },
-        'B' => .{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110 },
-        'C' => .{ 0b01111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01111 },
-        'D' => .{ 0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110 },
-        'E' => .{ 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111 },
-        'F' => .{ 0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000 },
-        'G' => .{ 0b01111, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111 },
-        'H' => .{ 0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001 },
-        'I' => .{ 0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111 },
-        'J' => .{ 0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100 },
-        'K' => .{ 0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001 },
-        'L' => .{ 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111 },
-        'M' => .{ 0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001 },
-        'N' => .{ 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001 },
-        'O' => .{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 },
-        'P' => .{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000 },
-        'Q' => .{ 0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101 },
-        'R' => .{ 0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001 },
-        'S' => .{ 0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110 },
-        'T' => .{ 0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 },
-        'U' => .{ 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110 },
-        'V' => .{ 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100 },
-        'W' => .{ 0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010 },
-        'X' => .{ 0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001 },
-        'Y' => .{ 0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100 },
-        'Z' => .{ 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111 },
-        '0' => .{ 0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110 },
-        '1' => .{ 0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 },
-        '2' => .{ 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111 },
-        '3' => .{ 0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110 },
-        '4' => .{ 0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010 },
-        '5' => .{ 0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110 },
-        '6' => .{ 0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110 },
-        '7' => .{ 0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000 },
-        '8' => .{ 0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110 },
-        '9' => .{ 0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110 },
-        '.' => .{ 0, 0, 0, 0, 0, 0b00100, 0b00100 },
-        ':' => .{ 0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0 },
-        '-' => .{ 0, 0, 0, 0b11111, 0, 0, 0 },
-        ' ' => .{ 0, 0, 0, 0, 0, 0, 0 },
-        else => .{ 0b11111, 0b00001, 0b00010, 0b00100, 0b00100, 0, 0b00100 },
-    };
-}
 
 test "long text stays within its bounds and offscreen rectangles are harmless" {
     const pixels = try std.testing.allocator.alloc(u32, width * height);
@@ -327,19 +294,20 @@ test "long text stays within its bounds and offscreen rectangles are harmless" {
     @memset(pixels, 0);
     const surface = Surface{ .pixels = pixels };
     surface.fill(.{ .x = 2000, .y = 10, .width = 5, .height = 5 }, ui.palette.white);
-    surface.drawTextBounded(10, 10, 90, "B" ** 255, ui.palette.white, 3);
+    const long_text: [255]u8 = @splat('B');
+    surface.drawTextBounded(10, 10, 90, &long_text, ui.palette.white, 3);
     var written: usize = 0;
     for (pixels, 0..) |pixel, index| {
         if (pixel != 0) {
             written += 1;
             try std.testing.expect(index % width >= 10 and index % width < 100);
-            try std.testing.expect(index / width >= 10 and index / width < 31);
+            try std.testing.expect(index / width >= 10 and index / width < 64);
         }
     }
     try std.testing.expect(written > 0);
 }
 
-test "lowercase titles render like uppercase titles" {
+test "lowercase and uppercase preserve distinct letterforms" {
     const a = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(a);
     const b = try std.testing.allocator.alloc(u32, width * height);
@@ -348,5 +316,7 @@ test "lowercase titles render like uppercase titles" {
     @memset(b, 0);
     (Surface{ .pixels = a }).drawText(10, 10, "hello pong", ui.palette.white, 3);
     (Surface{ .pixels = b }).drawText(10, 10, "HELLO PONG", ui.palette.white, 3);
-    try std.testing.expectEqualSlices(u32, a, b);
+    try std.testing.expect(!std.mem.eql(u32, a, b));
+    try std.testing.expect(std.mem.count(u32, a, &.{0}) < a.len);
+    try std.testing.expect(std.mem.count(u32, b, &.{0}) < b.len);
 }

@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+mode=${1:-menu}
+case "$mode" in menu|game) ;; *) exit 2 ;; esac
+profile=balanced
+if [ -r /data/settings/performance ]; then
+	IFS= read -r profile < /data/settings/performance || profile=balanced
+fi
+case "$profile" in battery|balanced|performance) ;; *) profile=balanced ;; esac
+
+case "$profile:$mode" in
+battery:menu)      maximum=1200000; governor=ondemand ;;
+battery:game)      maximum=1416000; governor=ondemand ;;
+balanced:menu)     maximum=1992000; governor=ondemand ;;
+balanced:game)     maximum=1992000; governor=ondemand ;;
+performance:menu) maximum=1992000; governor=ondemand ;;
+performance:game) maximum=1992000; governor=performance ;;
+esac
+
+# 600 MHz is the lowest point validated with this display and UI. Stock's
+# 1.2 GHz floor is retained as evidence, not as an idle-power requirement.
+for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+	[ -d "$policy" ] || continue
+	grep -qw 600000 "$policy/scaling_available_frequencies" || exit 1
+	grep -qw "$maximum" "$policy/scaling_available_frequencies" || exit 1
+	echo "$maximum" > "$policy/scaling_max_freq"
+	echo 600000 > "$policy/scaling_min_freq"
+	echo "$governor" > "$policy/scaling_governor"
+done

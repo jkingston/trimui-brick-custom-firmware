@@ -30,12 +30,12 @@ pub const Assets = struct {
 };
 
 fn confinedPath(allocator: std.mem.Allocator, root: []const u8, relative: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsolute(relative)) return error.AssetPathEscapesRoot;
-    const resolved_root = try std.fs.path.resolve(allocator, &.{root});
-    const resolved = try std.fs.path.resolve(allocator, &.{ resolved_root, relative });
+    if (std.Io.Dir.path.isAbsolute(relative)) return error.AssetPathEscapesRoot;
+    const resolved_root = try std.Io.Dir.path.resolve(allocator, &.{root});
+    const resolved = try std.Io.Dir.path.resolve(allocator, &.{ resolved_root, relative });
     if (!std.mem.eql(u8, resolved, resolved_root)) {
         if (!std.mem.startsWith(u8, resolved, resolved_root) or
-            resolved.len <= resolved_root.len or resolved[resolved_root.len] != std.fs.path.sep)
+            resolved.len <= resolved_root.len or resolved[resolved_root.len] != std.Io.Dir.path.sep)
             return error.AssetPathEscapesRoot;
     }
     return resolved;
@@ -62,15 +62,13 @@ fn modelPath(allocator: std.mem.Allocator, asset_root: []const u8, id: ?[]const 
 
 pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
     var result: std.StringHashMap(Assets) = .init(allocator);
-    const asset_root = try std.fs.path.join(allocator, &.{ data_root, "Assets", "Brick" });
-    const manifest_path = try std.fs.path.join(allocator, &.{ asset_root, "library.json" });
-    const contents = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator,
-        .limited(maximum_manifest_bytes)) catch |err| switch (err) {
+    const asset_root = try std.Io.Dir.path.join(allocator, &.{ data_root, "Assets", "Brick" });
+    const manifest_path = try std.Io.Dir.path.join(allocator, &.{ asset_root, "library.json" });
+    const contents = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(maximum_manifest_bytes)) catch |err| switch (err) {
         error.FileNotFound => return result,
         else => return err,
     };
-    const manifest = try std.json.parseFromSliceLeaky(Manifest, allocator, contents,
-        .{ .ignore_unknown_fields = false, .allocate = .alloc_always });
+    const manifest = try std.json.parseFromSliceLeaky(Manifest, allocator, contents, .{ .ignore_unknown_fields = false, .allocate = .alloc_always });
     if (manifest.schema_version != 1) return error.UnsupportedAssetManifest;
     for (manifest.games) |entry| {
         if (entry.model == null or entry.surfaces == null) continue;
@@ -103,7 +101,7 @@ test "manifest maps confined ROM and artwork paths" {
     });
     var assets = try load(io, allocator, root);
     defer assets.deinit();
-    const rom = try std.fs.path.join(allocator, &.{ root, "Roms/GB/Tetris.gb" });
+    const rom = try std.Io.Dir.path.join(allocator, &.{ root, "Roms/GB/Tetris.gb" });
     const mapped = assets.get(rom).?;
     try std.testing.expect(std.mem.endsWith(u8, mapped.model.?, "/Assets/Brick/models/gb.glb"));
     try std.testing.expect(std.mem.endsWith(u8, mapped.front.?, "/Assets/Brick/objects/aa/label.png"));

@@ -13,26 +13,25 @@ exits. ROMs and saves live on the writable SD partition under `/data`.
 Place this repository beside the Brick base repository, then run:
 
 ```sh
-make check
-make configure
-make
+mise run check
+mise run build
 ```
 
 The build composes two Buildroot external trees: the base first and this product
 tree second. Set `BASE=/path/to/base` when they are not siblings.
 
-`make release` produces and verifies a clean complete image under
+`mise run release` produces and verifies a clean complete image under
 `output/release/images`.
 
-`make demo-roms` downloads pinned, publicly distributed NES, Game Boy,
+`mise run demo-roms` downloads pinned, publicly distributed NES, Game Boy,
 Game Boy Advance and Mega Drive homebrew games for local testing. Their sources and
 hashes are recorded in `roms/`; the ROM binaries are ignored by Git.
 
-For desktop work, `make simulator` opens the same 1024x768 model, layout and
+For desktop work, `mise run simulator` opens the same 1024x768 model, layout and
 software renderer used by the device, sized to the Brick's 3.2-inch 4:3 panel.
 Press P to switch between physical-size and 1:1 pixel views. Arrow keys navigate,
 Z/Enter confirms, X/Escape returns, H returns home and M previews the in-game
-overlay. `make screenshots` renders the shell and overlay screens without
+overlay. `mise run screenshots` renders the shell and overlay screens without
 opening a window.
 
 ## SD card content
@@ -99,7 +98,7 @@ ROM contents never leave the device; cartridge files are hashed on the Brick.
 The workflow does not require wireless networking.
 
 The simulator uses fixtures by default. To browse actual content, run
-`output/host/brick-ui-simulator --data-root /path/to/content` after
-`make simulator-build`. `make simulator-check` downloads the homebrew samples,
+`output/host/bin/brick-ui-simulator --data-root /path/to/content` after
+`mise run simulator-build`. `mise run simulator-check` downloads the homebrew samples,
 scans them and checks library navigation with SDL's headless renderer, saving
 screenshots under `output/library-check/`. It checks launch requests, not emulation.

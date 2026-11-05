@@ -2,12 +2,6 @@
 
 case "$1" in
 	start)
-		# Stock holds a 1.2 GHz floor. The native page-flipped UI sustains
-		# every 60 Hz refresh at 600 MHz, while ondemand retains full game speed.
-		for policy in /sys/devices/system/cpu/cpufreq/policy*; do
-			grep -qw 600000 "$policy/scaling_available_frequencies" || exit 1
-			echo 600000 > "$policy/scaling_min_freq" || exit 1
-			echo ondemand > "$policy/scaling_governor" || exit 1
-		done
+		/usr/sbin/brick-performance menu
 		;;
 esac

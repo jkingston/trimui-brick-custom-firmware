@@ -51,21 +51,21 @@ const Sdl = struct {
     library: std.DynLib,
     init: InitFn,
     quit: QuitFn,
-    create_window: CreateWindowFn,
-    destroy_window: DestroyWindowFn,
-    set_window_size: SetWindowSizeFn,
-    get_display_dpi: GetDisplayDpiFn,
-    create_renderer: CreateRendererFn,
-    destroy_renderer: DestroyRendererFn,
-    render_set_logical_size: RenderSetLogicalSizeFn,
-    create_texture: CreateTextureFn,
-    destroy_texture: DestroyTextureFn,
-    update_texture: UpdateTextureFn,
-    render_clear: RenderClearFn,
-    render_copy: RenderCopyFn,
-    render_present: RenderPresentFn,
-    wait_event: WaitEventFn,
-    get_error: GetErrorFn,
+    createWindow: CreateWindowFn,
+    destroyWindow: DestroyWindowFn,
+    setWindowSize: SetWindowSizeFn,
+    getDisplayDpi: GetDisplayDpiFn,
+    createRenderer: CreateRendererFn,
+    destroyRenderer: DestroyRendererFn,
+    renderSetLogicalSize: RenderSetLogicalSizeFn,
+    createTexture: CreateTextureFn,
+    destroyTexture: DestroyTextureFn,
+    updateTexture: UpdateTextureFn,
+    renderClear: RenderClearFn,
+    renderCopy: RenderCopyFn,
+    renderPresent: RenderPresentFn,
+    waitEvent: WaitEventFn,
+    getError: GetErrorFn,
 
     fn loadSymbol(library: *std.DynLib, comptime T: type, comptime name: [:0]const u8) !T {
         return library.lookup(T, name) orelse error.MissingSdlSymbol;
@@ -78,21 +78,21 @@ const Sdl = struct {
             .library = library,
             .init = try loadSymbol(&library, InitFn, "SDL_Init"),
             .quit = try loadSymbol(&library, QuitFn, "SDL_Quit"),
-            .create_window = try loadSymbol(&library, CreateWindowFn, "SDL_CreateWindow"),
-            .destroy_window = try loadSymbol(&library, DestroyWindowFn, "SDL_DestroyWindow"),
-            .set_window_size = try loadSymbol(&library, SetWindowSizeFn, "SDL_SetWindowSize"),
-            .get_display_dpi = try loadSymbol(&library, GetDisplayDpiFn, "SDL_GetDisplayDPI"),
-            .create_renderer = try loadSymbol(&library, CreateRendererFn, "SDL_CreateRenderer"),
-            .destroy_renderer = try loadSymbol(&library, DestroyRendererFn, "SDL_DestroyRenderer"),
-            .render_set_logical_size = try loadSymbol(&library, RenderSetLogicalSizeFn, "SDL_RenderSetLogicalSize"),
-            .create_texture = try loadSymbol(&library, CreateTextureFn, "SDL_CreateTexture"),
-            .destroy_texture = try loadSymbol(&library, DestroyTextureFn, "SDL_DestroyTexture"),
-            .update_texture = try loadSymbol(&library, UpdateTextureFn, "SDL_UpdateTexture"),
-            .render_clear = try loadSymbol(&library, RenderClearFn, "SDL_RenderClear"),
-            .render_copy = try loadSymbol(&library, RenderCopyFn, "SDL_RenderCopy"),
-            .render_present = try loadSymbol(&library, RenderPresentFn, "SDL_RenderPresent"),
-            .wait_event = try loadSymbol(&library, WaitEventFn, "SDL_WaitEvent"),
-            .get_error = try loadSymbol(&library, GetErrorFn, "SDL_GetError"),
+            .createWindow = try loadSymbol(&library, CreateWindowFn, "SDL_CreateWindow"),
+            .destroyWindow = try loadSymbol(&library, DestroyWindowFn, "SDL_DestroyWindow"),
+            .setWindowSize = try loadSymbol(&library, SetWindowSizeFn, "SDL_SetWindowSize"),
+            .getDisplayDpi = try loadSymbol(&library, GetDisplayDpiFn, "SDL_GetDisplayDPI"),
+            .createRenderer = try loadSymbol(&library, CreateRendererFn, "SDL_CreateRenderer"),
+            .destroyRenderer = try loadSymbol(&library, DestroyRendererFn, "SDL_DestroyRenderer"),
+            .renderSetLogicalSize = try loadSymbol(&library, RenderSetLogicalSizeFn, "SDL_RenderSetLogicalSize"),
+            .createTexture = try loadSymbol(&library, CreateTextureFn, "SDL_CreateTexture"),
+            .destroyTexture = try loadSymbol(&library, DestroyTextureFn, "SDL_DestroyTexture"),
+            .updateTexture = try loadSymbol(&library, UpdateTextureFn, "SDL_UpdateTexture"),
+            .renderClear = try loadSymbol(&library, RenderClearFn, "SDL_RenderClear"),
+            .renderCopy = try loadSymbol(&library, RenderCopyFn, "SDL_RenderCopy"),
+            .renderPresent = try loadSymbol(&library, RenderPresentFn, "SDL_RenderPresent"),
+            .waitEvent = try loadSymbol(&library, WaitEventFn, "SDL_WaitEvent"),
+            .getError = try loadSymbol(&library, GetErrorFn, "SDL_GetError"),
         };
     }
 
@@ -101,23 +101,23 @@ const Sdl = struct {
     }
 };
 
-const SDL_INIT_VIDEO: u32 = 0x00000020;
-const SDL_WINDOWPOS_CENTERED: i32 = 0x2fff0000;
-const SDL_WINDOW_RESIZABLE: u32 = 0x00000020;
-const SDL_RENDERER_SOFTWARE: u32 = 0x00000001;
-const SDL_RENDERER_ACCELERATED: u32 = 0x00000002;
-const SDL_RENDERER_PRESENTVSYNC: u32 = 0x00000004;
-const SDL_TEXTUREACCESS_STREAMING: i32 = 1;
-const SDL_PIXELFORMAT_ARGB8888: u32 = 0x16362004;
-const SDL_QUIT: u32 = 0x100;
-const SDL_KEYDOWN: u32 = 0x300;
+const sdl_init_video: u32 = 0x00000020;
+const sdl_window_position_centered: i32 = 0x2fff0000;
+const sdl_window_resizable: u32 = 0x00000020;
+const sdl_renderer_software: u32 = 0x00000001;
+const sdl_renderer_accelerated: u32 = 0x00000002;
+const sdl_renderer_present_vsync: u32 = 0x00000004;
+const sdl_texture_access_streaming: i32 = 1;
+const sdl_pixel_format_argb8888: u32 = 0x16362004;
+const sdl_quit: u32 = 0x100;
+const sdl_key_down: u32 = 0x300;
 
-const SDLK_RETURN: i32 = 13;
-const SDLK_ESCAPE: i32 = 27;
-const SDLK_UP: i32 = 1073741906;
-const SDLK_DOWN: i32 = 1073741905;
-const SDLK_LEFT: i32 = 1073741904;
-const SDLK_RIGHT: i32 = 1073741903;
+const sdl_key_return: i32 = 13;
+const sdl_key_escape: i32 = 27;
+const sdl_key_up: i32 = 1073741906;
+const sdl_key_down_arrow: i32 = 1073741905;
+const sdl_key_left: i32 = 1073741904;
+const sdl_key_right: i32 = 1073741903;
 
 const WindowSize = struct { width: i32, height: i32 };
 
@@ -125,7 +125,7 @@ fn physicalWindowSize(sdl: *const Sdl) WindowSize {
     var diagonal_dpi: f32 = 96;
     var horizontal_dpi: f32 = 96;
     var vertical_dpi: f32 = 96;
-    _ = sdl.get_display_dpi(0, &diagonal_dpi, &horizontal_dpi, &vertical_dpi);
+    _ = sdl.getDisplayDpi(0, &diagonal_dpi, &horizontal_dpi, &vertical_dpi);
     if (horizontal_dpi < 50 or horizontal_dpi > 800) horizontal_dpi = 96;
     if (vertical_dpi < 50 or vertical_dpi > 800) vertical_dpi = horizontal_dpi;
     return .{
@@ -135,27 +135,27 @@ fn physicalWindowSize(sdl: *const Sdl) WindowSize {
 }
 
 fn failSdl(sdl: *const Sdl, operation: []const u8) !void {
-    std.debug.print("{s}: {s}\n", .{ operation, std.mem.span(sdl.get_error()) });
+    std.log.err("{s}: {s}", .{ operation, std.mem.span(sdl.getError()) });
     return error.SdlFailure;
 }
 
 fn drawTree(sdl: *const Sdl, renderer: *Renderer, texture: *Texture, pixels: []u32, tree: *const ui.Tree) !void {
     (render.Surface{ .pixels = pixels }).render(tree);
-    if (sdl.update_texture(texture, null, pixels.ptr, render.width * @sizeOf(u32)) != 0)
+    if (sdl.updateTexture(texture, null, pixels.ptr, render.width * @sizeOf(u32)) != 0)
         return failSdl(sdl, "SDL_UpdateTexture");
-    if (sdl.render_clear(renderer) != 0) return failSdl(sdl, "SDL_RenderClear");
-    if (sdl.render_copy(renderer, texture, null, null) != 0) return failSdl(sdl, "SDL_RenderCopy");
-    sdl.render_present(renderer);
+    if (sdl.renderClear(renderer) != 0) return failSdl(sdl, "SDL_RenderClear");
+    if (sdl.renderCopy(renderer, texture, null, null) != 0) return failSdl(sdl, "SDL_RenderCopy");
+    sdl.renderPresent(renderer);
 }
 
 fn actionForKey(key: i32) ?input.Action {
     return switch (key) {
-        SDLK_UP, 'w' => .up,
-        SDLK_DOWN, 's' => .down,
-        SDLK_LEFT, 'a' => .left,
-        SDLK_RIGHT, 'd' => .right,
-        SDLK_RETURN, 'z' => .select,
-        SDLK_ESCAPE, 'x' => .back,
+        sdl_key_up, 'w' => .up,
+        sdl_key_down_arrow, 's' => .down,
+        sdl_key_left, 'a' => .left,
+        sdl_key_right, 'd' => .right,
+        sdl_key_return, 'z' => .select,
+        sdl_key_escape, 'x' => .back,
         'h' => .menu,
         else => null,
     };
@@ -188,28 +188,28 @@ pub fn main(init: std.process.Init) !void {
 
     var sdl = try Sdl.open();
     defer sdl.close();
-    if (sdl.init(SDL_INIT_VIDEO) != 0) return failSdl(&sdl, "SDL_Init");
+    if (sdl.init(sdl_init_video) != 0) return failSdl(&sdl, "SDL_Init");
     defer sdl.quit();
 
     const physical = physicalWindowSize(&sdl);
     const initial_size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
-    const window = sdl.create_window(
+    const window = sdl.createWindow(
         "Brick UI Simulator - M game menu, arrows, Z/A, X/B, P scale",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
+        sdl_window_position_centered,
+        sdl_window_position_centered,
         initial_size.width,
         initial_size.height,
-        SDL_WINDOW_RESIZABLE,
+        sdl_window_resizable,
     ) orelse return failSdl(&sdl, "SDL_CreateWindow");
-    defer sdl.destroy_window(window);
-    const renderer = sdl.create_renderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) orelse
-        sdl.create_renderer(window, -1, SDL_RENDERER_SOFTWARE) orelse return failSdl(&sdl, "SDL_CreateRenderer");
-    defer sdl.destroy_renderer(renderer);
-    if (sdl.render_set_logical_size(renderer, render.width, render.height) != 0)
+    defer sdl.destroyWindow(window);
+    const renderer = sdl.createRenderer(window, -1, sdl_renderer_accelerated | sdl_renderer_present_vsync) orelse
+        sdl.createRenderer(window, -1, sdl_renderer_software) orelse return failSdl(&sdl, "SDL_CreateRenderer");
+    defer sdl.destroyRenderer(renderer);
+    if (sdl.renderSetLogicalSize(renderer, render.width, render.height) != 0)
         return failSdl(&sdl, "SDL_RenderSetLogicalSize");
-    const texture = sdl.create_texture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, render.width, render.height) orelse
+    const texture = sdl.createTexture(renderer, sdl_pixel_format_argb8888, sdl_texture_access_streaming, render.width, render.height) orelse
         return failSdl(&sdl, "SDL_CreateTexture");
-    defer sdl.destroy_texture(texture);
+    defer sdl.destroyTexture(texture);
 
     const pixels = try init.gpa.alloc(u32, render.width * render.height);
     defer init.gpa.free(pixels);
@@ -229,17 +229,17 @@ pub fn main(init: std.process.Init) !void {
         _ = state.apply(.select);
         tree = state.tree();
         try drawTree(&sdl, renderer, texture, pixels, &tree);
-        try @import("main.zig").writePpm(init.io, try std.fs.path.join(arena.allocator(), &.{ directory, "library.ppm" }), pixels);
+        try @import("main.zig").writePpm(init.io, try std.Io.Dir.path.join(arena.allocator(), &.{ directory, "library.ppm" }), pixels);
         for (state.games, 0..) |game, index| {
             if (state.selected != index) return error.SelectionMismatch;
             _ = state.apply(.select);
             tree = state.tree();
             try drawTree(&sdl, renderer, texture, pixels, &tree);
-            if (index == 0) try @import("main.zig").writePpm(init.io, try std.fs.path.join(arena.allocator(), &.{ directory, "detail.ppm" }), pixels);
+            if (index == 0) try @import("main.zig").writePpm(init.io, try std.Io.Dir.path.join(arena.allocator(), &.{ directory, "detail.ppm" }), pixels);
             _ = state.apply(.select);
             if (state.takeLaunch() != index) return error.LaunchMismatch;
             const argv = retroarch.arguments(&game);
-            std.debug.print("launch intent: {s} / {s}\n", .{ argv[4], game.rom_path });
+            std.log.info("Launch intent: {s} / {s}", .{ argv[4], game.rom_path });
             _ = state.apply(.back);
             tree = state.tree();
             try drawTree(&sdl, renderer, texture, pixels, &tree);
@@ -249,8 +249,8 @@ pub fn main(init: std.process.Init) !void {
         _ = state.apply(.up);
         tree = state.tree();
         try drawTree(&sdl, renderer, texture, pixels, &tree);
-        try @import("main.zig").writePpm(init.io, try std.fs.path.join(arena.allocator(), &.{ directory, "library-last.ppm" }), pixels);
-        std.debug.print("Simulator library check passed: {d} games (launch intents only)\n", .{state.games.len});
+        try @import("main.zig").writePpm(init.io, try std.Io.Dir.path.join(arena.allocator(), &.{ directory, "library-last.ppm" }), pixels);
+        std.log.info("Simulator library check passed: {d} games (launch intents only)", .{state.games.len});
         return;
     }
 
@@ -282,23 +282,24 @@ pub fn main(init: std.process.Init) !void {
             tree = game_overlay.tree();
             try drawTree(&sdl, renderer, texture, pixels, &tree);
             if (game_overlay.takeCommand()) |command|
-                std.debug.print("overlay: {s}\n", .{@tagName(command)});
+                std.log.info("Overlay command: {s}", .{@tagName(command)});
         }
         try std.Io.sleep(init.io, .fromMilliseconds(1400), .awake);
         return;
     }
 
     while (true) {
+        // SAFETY: SDL_WaitEvent initializes the event before it is inspected.
         var event: Event = undefined;
-        if (sdl.wait_event(&event) == 0) return failSdl(&sdl, "SDL_WaitEvent");
-        if (event.event_type == SDL_QUIT) break;
-        if (event.event_type != SDL_KEYDOWN or event.key.repeat != 0) continue;
+        if (sdl.waitEvent(&event) == 0) return failSdl(&sdl, "SDL_WaitEvent");
+        if (event.event_type == sdl_quit) break;
+        if (event.event_type != sdl_key_down or event.key.repeat != 0) continue;
         const key = event.key.keysym.sym;
         var changed = false;
         if (key == 'p') {
             physical_size = !physical_size;
             const size = if (physical_size) physical else WindowSize{ .width = render.width, .height = render.height };
-            sdl.set_window_size(window, size.width, size.height);
+            sdl.setWindowSize(window, size.width, size.height);
             changed = true;
         } else if (key == 'm') {
             overlay_visible = !overlay_visible;
@@ -308,7 +309,7 @@ pub fn main(init: std.process.Init) !void {
             if (overlay_visible) {
                 changed = game_overlay.apply(action);
                 if (game_overlay.takeCommand()) |command| {
-                    std.debug.print("overlay: {s}\n", .{@tagName(command)});
+                    std.log.info("Overlay command: {s}", .{@tagName(command)});
                     switch (command) {
                         .resume_game, .exit_game => overlay_visible = false,
                         .load_state => overlay_visible = false,
@@ -320,7 +321,7 @@ pub fn main(init: std.process.Init) !void {
                 changed = state.apply(action);
                 if (state.takeLaunch()) |index| {
                     const argv = retroarch.arguments(&state.games[index]);
-                    std.debug.print("launch: {s} {s} {s} {s} {s} {s}\n", .{ argv[0], argv[1], argv[2], argv[3], argv[4], argv[5] });
+                    std.log.info("Launch: {s} {s} {s} {s} {s} {s}", .{ argv[0], argv[1], argv[2], argv[3], argv[4], argv[5] });
                 }
             }
         }

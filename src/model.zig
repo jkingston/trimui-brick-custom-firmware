@@ -3,6 +3,7 @@ const std = @import("std");
 const retroarch = @import("retroarch.zig");
 const catalog = @import("catalog.zig");
 const input = @import("input.zig");
+const settings = @import("settings.zig");
 const ui = @import("ui.zig");
 
 pub const Action = input.Action;
@@ -18,6 +19,8 @@ pub const Model = struct {
     game_index: usize = 0,
     pending_launch: ?usize = null,
     launch_failed: ?retroarch.Failure = null,
+    settings: settings.Values = .{},
+    pending_setting: ?settings.Setting = null,
     revision: u64 = 1,
 
     pub fn apply(self: *Model, action: Action) bool {
@@ -35,8 +38,16 @@ pub const Model = struct {
                 if (self.page != .game and self.itemCount() > 0)
                     self.selected = (self.selected + 1) % self.itemCount();
             },
-            .left => {},
-            .right => {},
+            .left => if (self.page == .settings and self.selected < 4) {
+                const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
+                self.settings.adjust(setting, -1);
+                self.pending_setting = setting;
+            },
+            .right => if (self.page == .settings and self.selected < 4) {
+                const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
+                self.settings.adjust(setting, 1);
+                self.pending_setting = setting;
+            },
             .select => switch (self.page) {
                 .home => if (self.selected == 3) {
                     self.page = .settings;
@@ -54,7 +65,11 @@ pub const Model = struct {
                     self.pending_launch = self.game_index;
                     self.launch_failed = null;
                 },
-                .settings => {},
+                .settings => if (self.selected < 4) {
+                    const setting: settings.Setting = @fromBackingInt(@intCast(self.selected));
+                    self.settings.adjust(setting, 1);
+                    self.pending_setting = setting;
+                },
             },
             .back => switch (self.page) {
                 .home => {},
@@ -80,7 +95,8 @@ pub const Model = struct {
         }
 
         const changed = before_page != self.page or before_selected != self.selected or
-            before_game != self.game_index or before_error != self.launch_failed or self.pending_launch != null;
+            before_game != self.game_index or before_error != self.launch_failed or
+            self.pending_launch != null or self.pending_setting != null;
         if (changed) self.revision += 1;
         return changed;
     }
@@ -88,6 +104,12 @@ pub const Model = struct {
     pub fn takeLaunch(self: *Model) ?usize {
         const pending = self.pending_launch;
         self.pending_launch = null;
+        return pending;
+    }
+
+    pub fn takeSetting(self: *Model) ?settings.Setting {
+        const pending = self.pending_setting;
+        self.pending_setting = null;
         return pending;
     }
 
@@ -110,7 +132,7 @@ pub const Model = struct {
             .home => ui.home(self.selected),
             .games => ui.library(self.games, self.selected),
             .game => ui.gameDetail(self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
-            .settings => ui.settings(self.selected),
+            .settings => ui.settings(self.selected, self.settings),
         };
     }
 };
@@ -151,7 +173,7 @@ test "empty library navigation cannot launch or underflow" {
 }
 
 test "large libraries render a bounded window around selection" {
-    const entries = [_]catalog.Game{catalog.games[0]} ** 100;
+    const entries: [100]catalog.Game = @splat(catalog.games[0]);
     var state = Model{ .games = &entries, .page = .games, .selected = 99 };
     const tree = state.tree();
     try std.testing.expect(tree.len < tree.elements.len);
