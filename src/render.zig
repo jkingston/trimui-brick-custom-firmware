@@ -16,7 +16,7 @@ pub const Surface = struct {
     pub fn render(self: Surface, tree: *const ui.Tree) void {
         if (!tree.preserve_background) @memset(self.pixels, pack(tree.background));
         for (tree.slice()) |element| switch (element) {
-            .bar => |bar| self.fill(bar.bounds, bar.color),
+            .bar => |bar| self.fillRounded(bar.bounds, bar.color, bar.radius),
             .scrim => |scrim| self.fillAlpha(scrim.bounds, scrim.color, scrim.alpha),
             .text => |text| {
                 if (!text_pango.draw(self.pixels, width, text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.font, text.language, text.lines, text.bounds.height)) @panic("Text renderer unavailable");
@@ -56,6 +56,19 @@ pub const Surface = struct {
         }
     }
 
+    fn fillRounded(self: Surface, rect: ui.Rect, color: ui.Color, requested_radius: u16) void {
+        const radius = @min(requested_radius, @min(rect.width / 2, rect.height / 2));
+        if (radius == 0) return self.fill(rect, color);
+        self.fill(.{ .x = rect.x, .y = rect.y + radius, .width = rect.width, .height = rect.height - 2 * radius }, color);
+        for (0..radius) |row| {
+            const dy = radius - @as(u16, @intCast(row)) - 1;
+            var inset: u16 = 0;
+            while ((radius - inset) * (radius - inset) + dy * dy > radius * radius) inset += 1;
+            self.fill(.{ .x = rect.x + inset, .y = rect.y + @as(u16, @intCast(row)), .width = rect.width - 2 * inset, .height = 1 }, color);
+            self.fill(.{ .x = rect.x + inset, .y = rect.y + rect.height - 1 - @as(u16, @intCast(row)), .width = rect.width - 2 * inset, .height = 1 }, color);
+        }
+    }
+
     fn fillAlpha(self: Surface, rect: ui.Rect, color: ui.Color, alpha: u8) void {
         if (rect.x >= width or rect.y >= height) return;
         const right = @min(@as(usize, rect.x) + rect.width, width);
@@ -78,26 +91,20 @@ pub const Surface = struct {
     }
 
     fn menuRow(self: Surface, row: ui.MenuRow) void {
-        if (row.selected) {
-            self.fill(row.bounds, row.style.background);
-            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y, .width = geometry.focus, .height = row.bounds.height }, row.style.accent);
-        } else {
-            self.fill(row.bounds, row.style.background);
-            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y + row.bounds.height - 1, .width = row.bounds.width, .height = 1 }, row.style.border);
-        }
-        const color = row.style.text;
-        const label_y = if (row.detail.len == 0) row.bounds.y + 22 else row.bounds.y + 8;
-        self.drawTextBounded(row.bounds.x + 28, label_y, row.bounds.width - 76, row.label, color, font.body);
-        if (row.detail.len != 0) {
-            const detail_color = row.style.detail;
-            self.drawTextBounded(row.bounds.x + 30, row.bounds.y + 57, row.bounds.width - 76, row.detail, detail_color, font.caption);
-        }
-        if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, color);
+        self.fillRounded(row.bounds, row.style.background, geometry.radius);
+        var title_font = font.body;
+        title_font.weight = if (row.selected) .medium else .regular;
+        if (row.lines == 2) title_font.line_height = 44;
+        const padding = geometry.row_padding;
+        const y = row.bounds.y + (if (row.lines == 2) @as(u16, 8) else if (row.detail.len != 0) @as(u16, 12) else geometry.row_text_y);
+        const available = row.bounds.width - 2 * padding - (if (row.disclosure) @as(u16, 24) else 0);
+        if (!text_pango.draw(self.pixels, width, row.bounds.x + padding, y, available, row.label, pack(row.style.text), title_font, "", row.lines, row.bounds.height - (if (row.lines == 2) @as(u16, 16) else 24))) @panic("Text renderer unavailable");
+        if (row.detail.len != 0) self.drawTextBounded(row.bounds.x + padding, row.bounds.y + 56, available, row.detail, row.style.detail, font.caption);
+        if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, row.style.text);
     }
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
-        self.fill(item.bounds, item.style.background);
-        if (item.selected) self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = geometry.focus, .height = item.bounds.height }, item.style.accent);
+        self.fillRounded(item.bounds, item.style.background, geometry.radius);
         const color = item.style.text;
         const stacked = item.bounds.width < 600 and item.value.len != 0;
         const value_width: u16 = if (item.value.len != 0 and !stacked) @min(320, item.bounds.width / 2) else 0;
@@ -438,9 +445,9 @@ test "resolved styles render identically to literal colours and ignore later the
         .label = "Selected game",
         .selected = true,
         .style = .{
-            .background = .{ .r = 0x2b, .g = 0x47, .b = 0x38 },
-            .text = .{ .r = 0x9c, .g = 0xd3, .b = 0xb4 },
-            .detail = .{ .r = 0x9c, .g = 0xd3, .b = 0xb4 },
+            .background = .{ .r = 0xb5, .g = 0xd8, .b = 0xc1 },
+            .text = .{ .r = 0x14, .g = 0x21, .b = 0x1b },
+            .detail = .{ .r = 0x14, .g = 0x21, .b = 0x1b },
             .border = .{ .r = 0x3c, .g = 0x4d, .b = 0x43 },
             .accent = .{ .r = 0x9c, .g = 0xd3, .b = 0xb4 },
         },

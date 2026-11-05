@@ -10,6 +10,7 @@ pub const Action = input.Action;
 pub const Page = enum { home, games, game, settings };
 
 const home_count = 2;
+const columns = @import("design.zig").geometry.grid_columns;
 const settings_count = @typeInfo(settings.Setting).@"enum".field_names.len;
 
 pub const Model = struct {
@@ -40,8 +41,8 @@ pub const Model = struct {
                         self.selected -|= 1;
                     },
                     .shelf => {},
-                    .grid => if (self.selected >= 4) {
-                        self.selected -= 4;
+                    .grid => if (self.selected >= columns) {
+                        self.selected -= columns;
                     },
                 } else if (self.page != .game and self.itemCount() > 0)
                     self.selected -|= 1;
@@ -52,14 +53,14 @@ pub const Model = struct {
                         self.selected = @min(self.selected + 1, self.itemCount() - 1);
                     },
                     .shelf => {},
-                    .grid => if (self.selected + 4 < self.itemCount()) {
-                        self.selected += 4;
+                    .grid => if ((self.selected / columns + 1) * columns < self.itemCount()) {
+                        self.selected = @min(self.selected + columns, self.itemCount() - 1);
                     },
                 } else if (self.page != .game and self.itemCount() > 0)
                     self.selected = @min(self.selected + 1, self.itemCount() - 1);
             },
             .left => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
-                if (self.selected != 0) self.selected -= 1;
+                if (self.selected % columns != 0) self.selected -= 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected != 0) self.selected -= 1;
             } else if (self.page == .settings and self.selected < settings_count) {
@@ -68,7 +69,7 @@ pub const Model = struct {
                 self.pending_setting = setting;
             },
             .right => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
-                if (self.selected + 1 < self.games.len) self.selected += 1;
+                if (self.selected % columns + 1 < columns and self.selected + 1 < self.games.len) self.selected += 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected + 1 < self.games.len) self.selected += 1;
             } else if (self.page == .settings and self.selected < settings_count) {
@@ -218,7 +219,7 @@ test "empty library cannot launch and navigation clamps in every view" {
     _ = state.apply(.view);
     try std.testing.expect(!state.apply(.right));
     _ = state.apply(.up);
-    try std.testing.expectEqual(@as(usize, 0), state.selected);
+    try std.testing.expectEqual(state.games.len - 1 - columns, state.selected);
 }
 
 test "launch failure is visible and retry preserves the game" {
@@ -248,4 +249,17 @@ test "appearance changes every page without losing game selection" {
     _ = state.apply(.back);
     try std.testing.expectEqual(@as(usize, 2), state.selected);
     try std.testing.expectEqual(@import("theme.zig").dark.background, state.tree().background);
+}
+
+test "grid navigation respects columns and incomplete final rows" {
+    var state = Model{ .library_view = .grid, .selected = 2 };
+    try std.testing.expect(!state.apply(.right));
+    try std.testing.expect(state.apply(.down));
+    try std.testing.expectEqual(@as(usize, 4), state.selected);
+    try std.testing.expect(!state.apply(.down));
+    _ = state.apply(.left);
+    try std.testing.expectEqual(@as(usize, 3), state.selected);
+    try std.testing.expect(!state.apply(.left));
+    _ = state.apply(.up);
+    try std.testing.expectEqual(@as(usize, 0), state.selected);
 }
