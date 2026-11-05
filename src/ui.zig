@@ -174,7 +174,10 @@ fn header(result: *Tree, title: []const u8) void {
 pub const Hint = struct { control: @import("input.zig").HintControl, label: []const u8 };
 
 fn hint(result: *Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
-    const size = geometry.glyph_size;
+    const size: u16 = switch (item.control) {
+        .view, .menu => geometry.glyph_size,
+        else => 40,
+    };
     const colour = result.theme.muted;
     switch (item.control) {
         .confirm, .back, .horizontal => {
@@ -183,19 +186,30 @@ fn hint(result: *Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
                 .back => "B",
                 else => "↔",
             };
+            if (item.control != .horizontal) {
+                result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = y + 1, .width = 38, .height = 38 }, .color = colour, .radius = 19 } });
+                result.add(.{ .bar = .{ .bounds = .{ .x = x + 2, .y = y + 3, .width = 34, .height = 34 }, .color = result.background, .radius = 17 } });
+            }
             var glyph_font = font.control;
             glyph_font.alignment = .center;
             result.add(.{ .text = .{ .bounds = .{ .x = x, .y = y, .width = size, .height = size }, .value = symbol, .color = colour, .font = glyph_font } });
         },
         .view, .menu => {
-            // Physical groups: upper pair and lower trio. Highlight the bound key.
-            const count: u16 = if (item.control == .view) 2 else 3;
-            const gap = design.spacing.small / 2;
-            const key_width = (size - (count - 1) * gap) / count;
-            for (0..count) |index| result.add(.{ .bar = .{
-                .bounds = .{ .x = x + @as(u16, @intCast(index)) * (key_width + gap), .y = y + size / 3, .width = key_width, .height = size / 3 },
-                .color = if (index == 0) colour else result.theme.border,
-            } });
+            // The upper controls are narrow pills; the lower row has round keys.
+            const upper = item.control == .view;
+            const count: u16 = if (upper) 2 else 3;
+            const key_width: u16 = if (upper) 28 else 18;
+            const key_height: u16 = if (upper) 12 else 18;
+            const gap: u16 = if (upper) 8 else 5;
+            for (0..count) |index| {
+                const bounds = Rect{ .x = x + @as(u16, @intCast(index)) * (key_width + gap), .y = y + (40 - key_height) / 2, .width = key_width, .height = key_height };
+                result.add(.{ .bar = .{ .bounds = bounds, .color = colour, .radius = key_height / 2 } });
+                if (index != 0) result.add(.{ .bar = .{
+                    .bounds = .{ .x = bounds.x + 2, .y = bounds.y + 2, .width = key_width - 4, .height = key_height - 4 },
+                    .color = result.background,
+                    .radius = key_height / 2 - 2,
+                } });
+            }
         },
     }
     textLabel(result, .{ .x = x + size + geometry.hint_gap / 2, .y = y, .width = label_width, .height = 44 }, item.label, colour, font.control);
@@ -329,7 +343,9 @@ const ShelfPose = struct { bounds: Rect, dim: u8, tilt: i16, clip_left: u16 };
 fn shelfPose(relative: i8, offset: i16) ShelfPose {
     const position = @as(i32, relative) * 1000 + offset;
     const distance = @abs(position);
-    const center = 512 + @divTrunc(position * 274, 1000);
+    // Keep the focused cartridge large, then overlap the three neighbours on
+    // each side. The fourth is offscreen, ready for a continuous transition.
+    const center = 512 + @divTrunc(position * geometry.shelf_step, 1000) + @divTrunc(@max(-1000, @min(1000, position)) * 104, 1000);
     const width: i32 = if (distance < 1000) 480 - @as(i32, @intCast(distance * 260 / 1000)) else 220;
     const height: i32 = if (distance < 1000) 440 - @as(i32, @intCast(distance * 120 / 1000)) else 320;
     return .{

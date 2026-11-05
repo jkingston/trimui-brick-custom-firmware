@@ -439,17 +439,17 @@ test "resolved styles render identically to literal colours and ignore later the
     const themes = @import("theme.zig");
     var configured = ui.Tree{ .theme = themes.dark, .background = themes.dark.background };
     configured.add(.{ .menu_row = .{ .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 }, .label = "Selected game", .selected = true } });
-    var literal = ui.Tree{ .background = .{ .r = 0x14, .g = 0x1c, .b = 0x19 } };
+    var literal = ui.Tree{ .background = .{ .r = 0x15, .g = 0x15, .b = 0x18 } };
     literal.elements[0] = .{ .menu_row = .{
         .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 },
         .label = "Selected game",
         .selected = true,
         .style = .{
-            .background = .{ .r = 0xb5, .g = 0xd8, .b = 0xc1 },
-            .text = .{ .r = 0x14, .g = 0x21, .b = 0x1b },
-            .detail = .{ .r = 0x14, .g = 0x21, .b = 0x1b },
-            .border = .{ .r = 0x3c, .g = 0x4d, .b = 0x43 },
-            .accent = .{ .r = 0x9c, .g = 0xd3, .b = 0xb4 },
+            .background = .{ .r = 0x37, .g = 0x6f, .b = 0xce },
+            .text = .{ .r = 0xff, .g = 0xff, .b = 0xff },
+            .detail = .{ .r = 0xff, .g = 0xff, .b = 0xff },
+            .border = .{ .r = 0x48, .g = 0x48, .b = 0x50 },
+            .accent = .{ .r = 0x80, .g = 0xb1, .b = 0xff },
         },
     } };
     literal.len = 1;
