@@ -181,7 +181,7 @@ pub const Model = struct {
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
             .settings => ui.settings(self.selected, self.settings),
         };
-        if (self.notice.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 630, .width = 944, .height = 44 }, .value = self.notice, .color = theme.danger, .scale = 2 } });
+        if (self.notice.len != 0) ui.showNotice(&result, self.notice);
         return result;
     }
 };

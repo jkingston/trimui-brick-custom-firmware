@@ -353,7 +353,7 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
         const now = nowMilliseconds(io);
         const repeat_timeout = repeat.timeout(now);
         const animation = state.page == .games and state.library_view == .shelf and motion.active(now);
-        var timeout: i32 = if (animation) (if (repeat_timeout < 0) 16 else @min(16, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
+        var timeout: i32 = if (animation) (if (repeat_timeout < 0) @import("design.zig").motion.frame_ms else @min(@import("design.zig").motion.frame_ms, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
         if (save_deadline) |deadline| {
             const remaining: i32 = @intCast(@max(0, deadline - now));
             timeout = if (timeout < 0) remaining else @min(timeout, remaining);

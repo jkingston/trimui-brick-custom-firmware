@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Runtime-loaded PangoFT2 backend: UTF-8, shaping, bidi and font fallback.
+const design = @import("design.zig");
 const std = @import("std");
 
 const Object = opaque {};
@@ -27,6 +28,12 @@ const Engine = struct {
     createContext: *const fn (*Object) callconv(.c) ?*Object,
     contextSetLanguage: *const fn (*Object, *Object) callconv(.c) void,
     languageFromString: *const fn ([*:0]const u8) callconv(.c) ?*Object,
+    layoutSetAlignment: *const fn (*Object, i32) callconv(.c) void,
+    layoutSetAttributes: *const fn (*Object, *Object) callconv(.c) void,
+    attributeListNew: *const fn () callconv(.c) ?*Object,
+    attributeListInsert: *const fn (*Object, *Object) callconv(.c) void,
+    attributeListUnref: *const fn (*Object) callconv(.c) void,
+    lineHeightNew: *const fn (i32) callconv(.c) ?*Object,
     layoutNew: *const fn (*Object) callconv(.c) ?*Object,
     layoutSetText: *const fn (*Object, [*]const u8, i32) callconv(.c) void,
     layoutSetHeight: *const fn (*Object, i32) callconv(.c) void,
@@ -67,6 +74,12 @@ const Engine = struct {
             .createContext = try symbol(&pango, @FieldType(Engine, "createContext"), "pango_font_map_create_context"),
             .contextSetLanguage = try symbol(&pango, @FieldType(Engine, "contextSetLanguage"), "pango_context_set_language"),
             .languageFromString = try symbol(&pango, @FieldType(Engine, "languageFromString"), "pango_language_from_string"),
+            .layoutSetAlignment = try symbol(&pango, @FieldType(Engine, "layoutSetAlignment"), "pango_layout_set_alignment"),
+            .layoutSetAttributes = try symbol(&pango, @FieldType(Engine, "layoutSetAttributes"), "pango_layout_set_attributes"),
+            .attributeListNew = try symbol(&pango, @FieldType(Engine, "attributeListNew"), "pango_attr_list_new"),
+            .attributeListInsert = try symbol(&pango, @FieldType(Engine, "attributeListInsert"), "pango_attr_list_insert"),
+            .attributeListUnref = try symbol(&pango, @FieldType(Engine, "attributeListUnref"), "pango_attr_list_unref"),
+            .lineHeightNew = try symbol(&pango, @FieldType(Engine, "lineHeightNew"), "pango_attr_line_height_new_absolute"),
             .layoutNew = try symbol(&pango, @FieldType(Engine, "layoutNew"), "pango_layout_new"),
             .layoutSetText = try symbol(&pango, @FieldType(Engine, "layoutSetText"), "pango_layout_set_text"),
             .layoutSetHeight = try symbol(&pango, @FieldType(Engine, "layoutSetHeight"), "pango_layout_set_height"),
@@ -100,16 +113,7 @@ fn current() ?*Engine {
     return if (engine) |*value| value else null;
 }
 
-fn pixelSize(scale: u8) u16 {
-    return switch (scale) {
-        2 => 28,
-        3 => 36,
-        4 => 48,
-        else => 60,
-    };
-}
-
-pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, scale: u8, language: []const u8, lines: u8, max_height: u16) bool {
+pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, font: design.Font, language: []const u8, lines: u8, max_height: u16) bool {
     const state = current() orelse return false;
     if (text.len == 0 or max_width == 0 or x >= stride) return true;
     const context = state.createContext(state.font_map) orelse return false;
@@ -122,10 +126,14 @@ pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: 
     }
     const layout = state.layoutNew(context) orelse return false;
     defer state.unref(layout);
-    const family: [*:0]const u8 = if (scale >= 4) "Noto Sans SemiBold" else "Noto Sans";
+    const family: [*:0]const u8 = switch (font.weight) {
+        .regular => "Noto Sans",
+        .medium => "Noto Sans Medium",
+        .semibold => "Noto Sans SemiBold",
+    };
     const description = state.descriptionFromString(family) orelse return false;
     defer state.descriptionFree(description);
-    state.descriptionSetAbsoluteSize(description, @as(f64, @floatFromInt(pixelSize(scale) * pango_scale)));
+    state.descriptionSetAbsoluteSize(description, @as(f64, @floatFromInt(@as(u32, font.size) * pango_scale)));
     state.layoutSetFont(layout, description);
     state.layoutSetText(layout, text.ptr, @intCast(text.len));
     state.layoutSetWidth(layout, @as(i32, max_width) * pango_scale);
@@ -133,6 +141,18 @@ pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: 
     state.layoutSetSingleParagraph(layout, if (lines == 1) 1 else 0);
     state.layoutSetHeight(layout, -@as(i32, @max(1, lines)));
     state.layoutSetAutoDirection(layout, 1);
+    state.layoutSetAlignment(layout, switch (font.alignment) {
+        .start => 0,
+        .center => 1,
+        .end => 2,
+    });
+    if (font.line_height != 0) {
+        const attributes = state.attributeListNew() orelse return false;
+        defer state.attributeListUnref(attributes);
+        const height = state.lineHeightNew(@as(i32, font.line_height) * pango_scale) orelse return false;
+        state.attributeListInsert(attributes, height);
+        state.layoutSetAttributes(layout, attributes);
+    }
 
     var text_width: i32 = 0;
     var text_height: i32 = 0;

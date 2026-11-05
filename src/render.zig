@@ -1,30 +1,40 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const design = @import("design.zig");
+const font = design.typeface;
+const geometry = design.geometry;
+const artwork_colors = @import("artwork_colors.zig");
 const ui = @import("ui.zig");
 const text_pango = @import("text_pango.zig");
 
-pub const width = 1024;
-pub const height = 768;
+pub const width: usize = design.geometry.width;
+pub const height: usize = design.geometry.height;
 
 pub const Surface = struct {
     pixels: []u32,
-    theme: ui.Theme = @import("theme.zig").light,
 
-    pub fn render(target: Surface, tree: *const ui.Tree) void {
-        var self = target;
-        self.theme = tree.theme;
+    pub fn render(self: Surface, tree: *const ui.Tree) void {
         if (!tree.preserve_background) @memset(self.pixels, pack(tree.background));
         for (tree.slice()) |element| switch (element) {
             .bar => |bar| self.fill(bar.bounds, bar.color),
             .scrim => |scrim| self.fillAlpha(scrim.bounds, scrim.color, scrim.alpha),
             .text => |text| {
-                if (!text_pango.draw(self.pixels, width, text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.scale, text.language, text.lines, text.bounds.height)) @panic("Text renderer unavailable");
+                if (!text_pango.draw(self.pixels, width, text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.font, text.language, text.lines, text.bounds.height)) @panic("Text renderer unavailable");
             },
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .cover => |cover| self.drawCover(cover),
             .cartridge => |cartridge| self.drawCartridge(cartridge),
             .overlay_row => |item| self.drawOverlayRow(item),
+        };
+    }
+
+    fn artworkFont(size: u16) design.Font {
+        return switch (@max(2, size)) {
+            2 => font.caption,
+            3 => font.body,
+            4 => font.title,
+            else => font.brand,
         };
     }
 
@@ -69,33 +79,33 @@ pub const Surface = struct {
 
     fn menuRow(self: Surface, row: ui.MenuRow) void {
         if (row.selected) {
-            self.fill(row.bounds, self.theme.selection);
-            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y, .width = 6, .height = row.bounds.height }, self.theme.accent);
+            self.fill(row.bounds, row.style.background);
+            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y, .width = geometry.focus, .height = row.bounds.height }, row.style.accent);
         } else {
-            self.fill(row.bounds, self.theme.background);
-            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y + row.bounds.height - 1, .width = row.bounds.width, .height = 1 }, self.theme.border);
+            self.fill(row.bounds, row.style.background);
+            self.fill(.{ .x = row.bounds.x, .y = row.bounds.y + row.bounds.height - 1, .width = row.bounds.width, .height = 1 }, row.style.border);
         }
-        const color = if (row.selected) self.theme.accent else self.theme.text;
+        const color = row.style.text;
         const label_y = if (row.detail.len == 0) row.bounds.y + 22 else row.bounds.y + 8;
-        self.drawTextBounded(row.bounds.x + 28, label_y, row.bounds.width - 76, row.label, color, 3);
+        self.drawTextBounded(row.bounds.x + 28, label_y, row.bounds.width - 76, row.label, color, font.body);
         if (row.detail.len != 0) {
-            const detail_color = if (row.selected) self.theme.accent else self.theme.muted;
-            self.drawTextBounded(row.bounds.x + 30, row.bounds.y + 57, row.bounds.width - 76, row.detail, detail_color, 2);
+            const detail_color = row.style.detail;
+            self.drawTextBounded(row.bounds.x + 30, row.bounds.y + 57, row.bounds.width - 76, row.detail, detail_color, font.caption);
         }
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, color);
     }
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
-        self.fill(item.bounds, if (item.selected) self.theme.selection else self.theme.background);
-        if (item.selected) self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = 6, .height = item.bounds.height }, self.theme.accent);
-        const color = if (item.selected) self.theme.accent else self.theme.text;
+        self.fill(item.bounds, item.style.background);
+        if (item.selected) self.fill(.{ .x = item.bounds.x, .y = item.bounds.y, .width = geometry.focus, .height = item.bounds.height }, item.style.accent);
+        const color = item.style.text;
         const stacked = item.bounds.width < 600 and item.value.len != 0;
         const value_width: u16 = if (item.value.len != 0 and !stacked) @min(320, item.bounds.width / 2) else 0;
-        const label_y = item.bounds.y + (if (item.detail.len == 0 and !stacked) @as(u16, 22) else 4);
-        self.drawTextBounded(item.bounds.x + 24, label_y, item.bounds.width - value_width - 48, item.label, color, 3);
-        if (stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.value, self.theme.muted, 2);
-        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + 24, item.bounds.y + 50, item.bounds.width - 48, item.detail, self.theme.muted, 2);
-        if (item.value.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + item.bounds.width - value_width, label_y, value_width - 16, item.value, color, 2);
+        const label_y = item.bounds.y + (if (item.detail.len == 0 and !stacked) geometry.row_text_y else 4);
+        self.drawTextBounded(item.bounds.x + geometry.row_padding, label_y, item.bounds.width - value_width - 2 * geometry.row_padding, item.label, color, font.body);
+        if (stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + geometry.row_detail_y, item.bounds.width - 2 * geometry.row_padding, item.value, item.style.detail, font.caption);
+        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + geometry.row_detail_y, item.bounds.width - 2 * geometry.row_padding, item.detail, item.style.detail, font.caption);
+        if (item.value.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + item.bounds.width - value_width, label_y, value_width - 16, item.value, color, font.caption);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
@@ -127,9 +137,9 @@ pub const Surface = struct {
                 var source: ui.Color = @bitCast(texture.pixels[source_y * texture.width + source_x]);
                 if (source.a == 0) continue;
                 if (dim != 0) {
-                    source.r = blend255(source.r, ui.palette.deep.r, dim);
-                    source.g = blend255(source.g, ui.palette.deep.g, dim);
-                    source.b = blend255(source.b, ui.palette.deep.b, dim);
+                    source.r = blend255(source.r, artwork_colors.deep.r, dim);
+                    source.g = blend255(source.g, artwork_colors.deep.g, dim);
+                    source.b = blend255(source.b, artwork_colors.deep.b, dim);
                 }
                 const index = @as(usize, fitted.y + y) * width + @as(usize, @intCast(screen_x));
                 if (source.a == 255) {
@@ -156,8 +166,8 @@ pub const Surface = struct {
             return;
         }
         if (cartridge.plain_fallback) {
-            self.fill(bounds, self.theme.surface);
-            self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", self.theme.muted, 2);
+            self.fill(bounds, cartridge.style.surface);
+            self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", cartridge.style.text, font.caption);
             return;
         }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
@@ -196,10 +206,10 @@ pub const Surface = struct {
             ui.Color{ .r = 0x38, .g = 0x3b, .b = 0x3d }
         else
             ui.Color{ .r = 0x24, .g = 0x27, .b = 0x29 };
-        self.fill(.{ .x = body.x + 8, .y = body.y + 10, .width = body.width, .height = body.height }, ui.palette.chrome_dark);
+        self.fill(.{ .x = body.x + 8, .y = body.y + 10, .width = body.width, .height = body.height }, cartridge.style.shadow);
         self.fill(body, shell);
         const edge: u16 = if (cartridge.selected) 5 else 2;
-        const edge_color = if (cartridge.selected) ui.palette.pine else ui.palette.chrome_dark;
+        const edge_color = cartridge.style.edge;
         self.fill(.{ .x = body.x, .y = body.y, .width = body.width, .height = edge }, edge_color);
         self.fill(.{ .x = body.x, .y = body.y + body.height - edge, .width = body.width, .height = edge }, edge_color);
         self.fill(.{ .x = body.x, .y = body.y, .width = edge, .height = body.height }, edge_color);
@@ -210,7 +220,7 @@ pub const Surface = struct {
             .width = body.width * 3 / 4,
             .height = body.height * 3 / 5,
         };
-        self.fill(label, ui.palette.surface);
+        self.fill(label, cartridge.style.surface);
         if (cartridge.texture) |texture| self.drawTexture(texture, label);
         if (platformIs(cartridge.platform, "gba")) {
             const lip = @max(@as(u16, 4), body.height / 14);
@@ -220,8 +230,8 @@ pub const Surface = struct {
 
     fn drawCover(self: Surface, cover: ui.Cover) void {
         const b = cover.bounds;
-        self.fill(.{ .x = b.x + 10, .y = b.y + 12, .width = b.width, .height = b.height }, ui.palette.chrome_dark);
-        self.fill(b, ui.palette.white);
+        self.fill(.{ .x = b.x + 10, .y = b.y + 12, .width = b.width, .height = b.height }, artwork_colors.chrome_dark);
+        self.fill(b, artwork_colors.white);
         const inset: u16 = @max(@as(u16, 6), b.width / 26);
         const inner = ui.Rect{
             .x = b.x + inset,
@@ -231,90 +241,90 @@ pub const Surface = struct {
         };
         switch (cover.kind) {
             .library => {
-                self.fill(inner, ui.palette.navy);
+                self.fill(inner, artwork_colors.navy);
                 const gap: u16 = @max(@as(u16, 5), inner.width / 30);
                 const tile: u16 = (inner.width - gap * 3) / 2;
-                self.fill(.{ .x = inner.x + gap, .y = inner.y + gap, .width = tile, .height = tile }, ui.palette.sky);
-                self.fill(.{ .x = inner.x + gap * 2 + tile, .y = inner.y + gap, .width = tile, .height = tile }, ui.palette.coral);
-                self.fill(.{ .x = inner.x + gap, .y = inner.y + gap * 2 + tile, .width = tile, .height = tile }, ui.palette.gold);
-                self.fill(.{ .x = inner.x + gap * 2 + tile, .y = inner.y + gap * 2 + tile, .width = tile, .height = tile }, ui.palette.green);
-                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 90));
-                self.drawText(inner.x + inner.width / 5, inner.y + inner.height / 2 - 12, "PLAY", ui.palette.white, word_scale);
+                self.fill(.{ .x = inner.x + gap, .y = inner.y + gap, .width = tile, .height = tile }, artwork_colors.sky);
+                self.fill(.{ .x = inner.x + gap * 2 + tile, .y = inner.y + gap, .width = tile, .height = tile }, artwork_colors.coral);
+                self.fill(.{ .x = inner.x + gap, .y = inner.y + gap * 2 + tile, .width = tile, .height = tile }, artwork_colors.gold);
+                self.fill(.{ .x = inner.x + gap * 2 + tile, .y = inner.y + gap * 2 + tile, .width = tile, .height = tile }, artwork_colors.green);
+                const word_font = artworkFont(b.width / 90);
+                self.drawText(inner.x + inner.width / 5, inner.y + inner.height / 2 - 12, "PLAY", artwork_colors.white, word_font);
             },
             .falling => {
-                self.fill(inner, ui.palette.sky);
-                self.fill(.{ .x = inner.x, .y = inner.y + inner.height * 3 / 4, .width = inner.width, .height = inner.height / 4 }, ui.palette.navy);
+                self.fill(inner, artwork_colors.sky);
+                self.fill(.{ .x = inner.x, .y = inner.y + inner.height * 3 / 4, .width = inner.width, .height = inner.height / 4 }, artwork_colors.navy);
                 const sun = @max(@as(u16, 18), inner.width / 8);
-                self.fill(.{ .x = inner.x + inner.width * 3 / 4, .y = inner.y + inner.height / 7, .width = sun, .height = sun }, ui.palette.gold);
+                self.fill(.{ .x = inner.x + inner.width * 3 / 4, .y = inner.y + inner.height / 7, .width = sun, .height = sun }, artwork_colors.gold);
                 const hero = @max(@as(u16, 36), inner.width / 4);
                 const hx = inner.x + inner.width / 3;
                 const hy = inner.y + inner.height / 2;
-                self.fill(.{ .x = hx, .y = hy, .width = hero, .height = hero }, ui.palette.coral);
+                self.fill(.{ .x = hx, .y = hy, .width = hero, .height = hero }, artwork_colors.coral);
                 const eye = @max(@as(u16, 3), hero / 10);
-                self.fill(.{ .x = hx + hero / 4, .y = hy + hero / 4, .width = eye, .height = eye }, ui.palette.white);
-                self.fill(.{ .x = hx + hero * 2 / 3, .y = hy + hero / 4, .width = eye, .height = eye }, ui.palette.white);
-                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 90));
-                self.drawText(inner.x + inner.width / 7, inner.y + inner.height / 8, "FALLING", ui.palette.navy, word_scale);
+                self.fill(.{ .x = hx + hero / 4, .y = hy + hero / 4, .width = eye, .height = eye }, artwork_colors.white);
+                self.fill(.{ .x = hx + hero * 2 / 3, .y = hy + hero / 4, .width = eye, .height = eye }, artwork_colors.white);
+                const word_font = artworkFont(b.width / 90);
+                self.drawText(inner.x + inner.width / 7, inner.y + inner.height / 8, "FALLING", artwork_colors.navy, word_font);
             },
             .minekart => {
-                self.fill(inner, ui.palette.navy);
+                self.fill(inner, artwork_colors.navy);
                 const rail = @max(@as(u16, 4), inner.width / 50);
-                self.fill(.{ .x = inner.x + inner.width / 4, .y = inner.y + inner.height / 2, .width = rail, .height = inner.height / 2 }, ui.palette.gold);
-                self.fill(.{ .x = inner.x + inner.width * 3 / 4, .y = inner.y + inner.height / 2, .width = rail, .height = inner.height / 2 }, ui.palette.gold);
+                self.fill(.{ .x = inner.x + inner.width / 4, .y = inner.y + inner.height / 2, .width = rail, .height = inner.height / 2 }, artwork_colors.gold);
+                self.fill(.{ .x = inner.x + inner.width * 3 / 4, .y = inner.y + inner.height / 2, .width = rail, .height = inner.height / 2 }, artwork_colors.gold);
                 var step: u16 = 0;
                 while (step < 5) : (step += 1) {
                     const y = inner.y + inner.height / 2 + step * inner.height / 10;
-                    self.fill(.{ .x = inner.x + inner.width / 5, .y = y, .width = inner.width * 3 / 5, .height = rail }, ui.palette.chrome_dark);
+                    self.fill(.{ .x = inner.x + inner.width / 5, .y = y, .width = inner.width * 3 / 5, .height = rail }, artwork_colors.chrome_dark);
                 }
                 const cart_w = inner.width / 3;
-                self.fill(.{ .x = inner.x + inner.width / 2 - cart_w / 2, .y = inner.y + inner.height / 2, .width = cart_w, .height = inner.height / 6 }, ui.palette.coral);
-                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 105));
-                self.drawText(inner.x + inner.width / 7, inner.y + inner.height / 8, "MINEKART", ui.palette.gold, word_scale);
+                self.fill(.{ .x = inner.x + inner.width / 2 - cart_w / 2, .y = inner.y + inner.height / 2, .width = cart_w, .height = inner.height / 6 }, artwork_colors.coral);
+                const word_font = artworkFont(b.width / 105);
+                self.drawText(inner.x + inner.width / 7, inner.y + inner.height / 8, "MINEKART", artwork_colors.gold, word_font);
             },
             .adjustris => {
-                self.fill(inner, ui.palette.ink);
+                self.fill(inner, artwork_colors.ink);
                 const block = inner.width / 7;
-                self.fill(.{ .x = inner.x + block, .y = inner.y + block, .width = block * 2, .height = block }, ui.palette.green);
-                self.fill(.{ .x = inner.x + block * 3, .y = inner.y + block * 2, .width = block, .height = block * 3 }, ui.palette.gold);
-                self.fill(.{ .x = inner.x + block * 4, .y = inner.y + block * 4, .width = block * 2, .height = block }, ui.palette.coral);
-                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 105));
-                self.drawText(inner.x + inner.width / 10, inner.y + inner.height * 3 / 4, "ADJUSTRIS", ui.palette.white, word_scale);
+                self.fill(.{ .x = inner.x + block, .y = inner.y + block, .width = block * 2, .height = block }, artwork_colors.green);
+                self.fill(.{ .x = inner.x + block * 3, .y = inner.y + block * 2, .width = block, .height = block * 3 }, artwork_colors.gold);
+                self.fill(.{ .x = inner.x + block * 4, .y = inner.y + block * 4, .width = block * 2, .height = block }, artwork_colors.coral);
+                const word_font = artworkFont(b.width / 105);
+                self.drawText(inner.x + inner.width / 10, inner.y + inner.height * 3 / 4, "ADJUSTRIS", artwork_colors.white, word_font);
             },
             .rkanoid => {
-                self.fill(inner, ui.palette.navy);
+                self.fill(inner, artwork_colors.navy);
                 const row_h = @max(@as(u16, 6), inner.height / 18);
-                const colors = [_]ui.Color{ ui.palette.coral, ui.palette.gold, ui.palette.green, ui.palette.sky };
+                const colors = [_]ui.Color{ artwork_colors.coral, artwork_colors.gold, artwork_colors.green, artwork_colors.sky };
                 for (colors, 0..) |color, row| {
                     self.fill(.{ .x = inner.x + inner.width / 8, .y = inner.y + inner.height / 6 + @as(u16, @intCast(row)) * (row_h + 4), .width = inner.width * 3 / 4, .height = row_h }, color);
                 }
-                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height * 4 / 5, .width = inner.width / 3, .height = row_h }, ui.palette.white);
-                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 105));
-                self.drawText(inner.x + inner.width / 4, inner.y + inner.height / 16, "RKANOID", ui.palette.white, word_scale);
+                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height * 4 / 5, .width = inner.width / 3, .height = row_h }, artwork_colors.white);
+                const word_font = artworkFont(b.width / 105);
+                self.drawText(inner.x + inner.width / 4, inner.y + inner.height / 16, "RKANOID", artwork_colors.white, word_font);
             },
             .willow => {
-                self.fill(inner, ui.palette.navy);
+                self.fill(inner, artwork_colors.navy);
                 const moon = inner.width / 5;
-                self.fill(.{ .x = inner.x + inner.width * 3 / 5, .y = inner.y + inner.height / 8, .width = moon, .height = moon }, ui.palette.gold);
-                self.fill(.{ .x = inner.x, .y = inner.y + inner.height * 2 / 3, .width = inner.width, .height = inner.height / 3 }, ui.palette.green);
+                self.fill(.{ .x = inner.x + inner.width * 3 / 5, .y = inner.y + inner.height / 8, .width = moon, .height = moon }, artwork_colors.gold);
+                self.fill(.{ .x = inner.x, .y = inner.y + inner.height * 2 / 3, .width = inner.width, .height = inner.height / 3 }, artwork_colors.green);
                 const trunk = @max(@as(u16, 6), inner.width / 24);
-                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height / 3, .width = trunk, .height = inner.height / 2 }, ui.palette.chrome_dark);
-                self.fill(.{ .x = inner.x + inner.width / 5, .y = inner.y + inner.height / 4, .width = inner.width / 3, .height = inner.height / 4 }, ui.palette.green);
-                const word_scale: u8 = @intCast(@max(@as(u16, 2), b.width / 115));
-                self.drawText(inner.x + inner.width / 10, inner.y + inner.height / 14, "WILLOWS DREAM", ui.palette.white, word_scale);
+                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height / 3, .width = trunk, .height = inner.height / 2 }, artwork_colors.chrome_dark);
+                self.fill(.{ .x = inner.x + inner.width / 5, .y = inner.y + inner.height / 4, .width = inner.width / 3, .height = inner.height / 4 }, artwork_colors.green);
+                const word_font = artworkFont(b.width / 115);
+                self.drawText(inner.x + inner.width / 10, inner.y + inner.height / 14, "WILLOWS DREAM", artwork_colors.white, word_font);
             },
         }
     }
 
     fn drawBattery(self: Surface, battery: ui.Battery) void {
         const body = battery.bounds;
-        self.fill(.{ .x = body.x, .y = body.y, .width = body.width - 8, .height = 3 }, self.theme.text);
-        self.fill(.{ .x = body.x, .y = body.y + body.height - 3, .width = body.width - 8, .height = 3 }, self.theme.text);
-        self.fill(.{ .x = body.x, .y = body.y, .width = 3, .height = body.height }, self.theme.text);
-        self.fill(.{ .x = body.x + body.width - 11, .y = body.y, .width = 3, .height = body.height }, self.theme.text);
-        self.fill(.{ .x = body.x + body.width - 8, .y = body.y + 7, .width = 8, .height = body.height - 14 }, self.theme.text);
+        self.fill(.{ .x = body.x, .y = body.y, .width = body.width - 8, .height = 3 }, battery.outline);
+        self.fill(.{ .x = body.x, .y = body.y + body.height - 3, .width = body.width - 8, .height = 3 }, battery.outline);
+        self.fill(.{ .x = body.x, .y = body.y, .width = 3, .height = body.height }, battery.outline);
+        self.fill(.{ .x = body.x + body.width - 11, .y = body.y, .width = 3, .height = body.height }, battery.outline);
+        self.fill(.{ .x = body.x + body.width - 8, .y = body.y + 7, .width = 8, .height = body.height - 14 }, battery.outline);
         const capacity: u16 = body.width - 17;
         const charge: u16 = @intCast((@as(u32, capacity) * battery.percent) / 100);
-        self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, self.theme.accent);
+        self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, battery.charge);
     }
 
     fn drawChevron(self: Surface, x: u16, y: u16, color: ui.Color) void {
@@ -325,18 +335,18 @@ pub const Surface = struct {
         }
     }
 
-    fn drawText(self: Surface, x: u16, y: u16, value: []const u8, color: ui.Color, scale: u8) void {
-        self.drawTextBounded(x, y, width, value, color, scale);
+    fn drawText(self: Surface, x: u16, y: u16, value: []const u8, color: ui.Color, text_font: design.Font) void {
+        self.drawTextBounded(x, y, width, value, color, text_font);
     }
 
-    fn drawTextBounded(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, scale: u8) void {
-        self.drawTextBoundedLanguage(x, y, max_width, value, color, scale, "");
+    fn drawTextBounded(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, text_font: design.Font) void {
+        self.drawTextBoundedLanguage(x, y, max_width, value, color, text_font, "");
     }
 
-    fn drawTextBoundedLanguage(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, scale: u8, language: []const u8) void {
-        if (x >= width or y >= height or scale == 0) return;
+    fn drawTextBoundedLanguage(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, text_font: design.Font, language: []const u8) void {
+        if (x >= width or y >= height or text_font.size == 0) return;
         const available = @min(max_width, width - x);
-        if (!text_pango.draw(self.pixels, width, x, y, available, value, pack(color), scale, language, 1, 96))
+        if (!text_pango.draw(self.pixels, width, x, y, available, value, pack(color), text_font, language, 1, 96))
             @panic("PangoFT2 text renderer or required fonts are unavailable");
     }
 };
@@ -346,9 +356,9 @@ test "long text stays within its bounds and offscreen rectangles are harmless" {
     defer std.testing.allocator.free(pixels);
     @memset(pixels, 0);
     const surface = Surface{ .pixels = pixels };
-    surface.fill(.{ .x = 2000, .y = 10, .width = 5, .height = 5 }, ui.palette.white);
+    surface.fill(.{ .x = 2000, .y = 10, .width = 5, .height = 5 }, artwork_colors.white);
     const long_text: [255]u8 = @splat('B');
-    surface.drawTextBounded(10, 10, 90, &long_text, ui.palette.white, 3);
+    surface.drawTextBounded(10, 10, 90, &long_text, artwork_colors.white, font.body);
     var written: usize = 0;
     for (pixels, 0..) |pixel, index| {
         if (pixel != 0) {
@@ -367,8 +377,8 @@ test "lowercase and uppercase preserve distinct letterforms" {
     defer std.testing.allocator.free(b);
     @memset(a, 0);
     @memset(b, 0);
-    (Surface{ .pixels = a }).drawText(10, 10, "hello pong", ui.palette.white, 3);
-    (Surface{ .pixels = b }).drawText(10, 10, "HELLO PONG", ui.palette.white, 3);
+    (Surface{ .pixels = a }).drawText(10, 10, "hello pong", artwork_colors.white, font.body);
+    (Surface{ .pixels = b }).drawText(10, 10, "HELLO PONG", artwork_colors.white, font.body);
     try std.testing.expect(!std.mem.eql(u32, a, b));
     try std.testing.expect(std.mem.count(u32, a, &.{0}) < a.len);
     try std.testing.expect(std.mem.count(u32, b, &.{0}) < b.len);
@@ -377,13 +387,13 @@ test "lowercase and uppercase preserve distinct letterforms" {
 test "multiline titles use their height and remain inside the text rectangle" {
     const pixels = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(pixels);
-    @memset(pixels, Surface.pack(ui.palette.paper));
-    var tree = ui.Tree{ .background = ui.palette.paper };
-    tree.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 40, .width = 400, .height = 120 }, .value = "A long game title that must occupy two lines", .color = ui.palette.ink, .scale = 3, .lines = 2 } });
+    @memset(pixels, Surface.pack(artwork_colors.paper));
+    var tree = ui.Tree{ .background = artwork_colors.paper };
+    tree.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 40, .width = 400, .height = 120 }, .value = "A long game title that must occupy two lines", .color = artwork_colors.ink, .font = font.body, .lines = 2 } });
     (Surface{ .pixels = pixels }).render(&tree);
     var second_line = false;
     for (pixels, 0..) |pixel, index| {
-        if (pixel == Surface.pack(ui.palette.paper)) continue;
+        if (pixel == Surface.pack(artwork_colors.paper)) continue;
         const x = index % width;
         const y = index / width;
         try std.testing.expect(x >= 40 and x < 440 and y >= 40 and y < 160);
@@ -412,4 +422,48 @@ test "theme changes interface surfaces but preserves artwork pixels" {
     (Surface{ .pixels = a }).render(&light);
     (Surface{ .pixels = b }).render(&dark);
     for (100..400) |y| try std.testing.expectEqualSlices(u32, a[y * width + 100 .. y * width + 300], b[y * width + 100 .. y * width + 300]);
+}
+
+test "resolved styles render identically to literal colours and ignore later theme changes" {
+    const a = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(a);
+    const b = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(b);
+    const themes = @import("theme.zig");
+    var configured = ui.Tree{ .theme = themes.dark, .background = themes.dark.background };
+    configured.add(.{ .menu_row = .{ .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 }, .label = "Selected game", .selected = true } });
+    var literal = ui.Tree{ .background = .{ .r = 0x14, .g = 0x1c, .b = 0x19 } };
+    literal.elements[0] = .{ .menu_row = .{
+        .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 },
+        .label = "Selected game",
+        .selected = true,
+        .style = .{
+            .background = .{ .r = 0x2b, .g = 0x47, .b = 0x38 },
+            .text = .{ .r = 0x9c, .g = 0xd3, .b = 0xb4 },
+            .detail = .{ .r = 0x9c, .g = 0xd3, .b = 0xb4 },
+            .border = .{ .r = 0x3c, .g = 0x4d, .b = 0x43 },
+            .accent = .{ .r = 0x9c, .g = 0xd3, .b = 0xb4 },
+        },
+    } };
+    literal.len = 1;
+    configured.theme = themes.light;
+    (Surface{ .pixels = a }).render(&configured);
+    (Surface{ .pixels = b }).render(&literal);
+    try std.testing.expectEqualSlices(u32, a, b);
+}
+
+test "font weight alignment and line height are independent of size" {
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var tree = ui.Tree{ .background = @import("theme.zig").light.background };
+    tree.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 40, .width = 400, .height = 120 }, .value = "Two lines\nof text", .color = @import("theme.zig").light.text, .font = .{ .size = 28, .weight = .semibold, .alignment = .end, .line_height = 48 }, .lines = 2 } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    var ink: usize = 0;
+    for (pixels, 0..) |pixel, index| if (pixel != Surface.pack(tree.background)) {
+        try std.testing.expect(index % width >= 40 and index % width < 440);
+        try std.testing.expect(index / width >= 40 and index / width < 136);
+        try std.testing.expect(index % width > 200);
+        ink += 1;
+    };
+    try std.testing.expect(ink > 100);
 }

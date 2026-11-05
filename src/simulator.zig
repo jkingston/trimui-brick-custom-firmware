@@ -158,6 +158,7 @@ fn actionForKey(key: i32) ?input.Action {
         sdl_key_return, 'z' => .select,
         sdl_key_escape, 'x' => .back,
         'h' => .menu,
+        'v' => .view,
         else => null,
     };
 }
@@ -294,7 +295,7 @@ pub fn main(init: std.process.Init) !void {
         const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
         const animating = !overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now);
         const repeat_timeout = repeat.timeout(now);
-        const timeout = if (animating) (if (repeat_timeout < 0) 16 else @min(16, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
+        const timeout = if (animating) (if (repeat_timeout < 0) @import("design.zig").motion.frame_ms else @min(@import("design.zig").motion.frame_ms, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
         // SAFETY: event is inspected only when SDL reports an initialized event.
         var event: Event = undefined;
         const received = sdl.waitEvent(&event, timeout) != 0;

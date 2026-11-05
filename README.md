@@ -30,12 +30,17 @@ hashes are recorded in `roms/`; the ROM binaries are ignored by Git.
 For desktop work, `mise run simulator` opens the same 1024x768 model, layout and
 software renderer used by the device, sized to the Brick's 3.2-inch 4:3 panel.
 Press P to switch between physical-size and 1:1 pixel views. Arrow keys navigate,
-Z/Enter confirms, X/Escape returns, H opens the menu and M previews the in-game
+Z/Enter confirms, X/Escape returns, V changes view, H opens the menu and M previews the in-game
 overlay. `mise run screenshots` renders the shell and overlay screens without
 opening a window.
 
-Games opens directly: A plays, F1 changes view, and Menu opens navigation.
+Games opens directly: A plays, the upper-left function button changes view,
+and the bottom-left Menu button opens navigation. Hints identify those button groups.
 B returns to the previous screen. Settings use left/right to adjust values.
+Light/dark appearance is saved in Settings. Shared typography, spacing, geometry
+and motion are compile-time values in `src/design.zig`; semantic colours live in
+`src/theme.zig`. Artwork colours are independent.
+
 View and selection are remembered on the SD card; Recent and Favorites are not
 yet exposed.
 
