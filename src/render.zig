@@ -21,6 +21,7 @@ pub const Surface = struct {
             .text => |text| {
                 if (!text_pango.draw(self.pixels, width, text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.font, text.language, text.lines, text.bounds.height)) @panic("Text renderer unavailable");
             },
+            .text_block => |block| self.textBlock(block),
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .cover => |cover| self.drawCover(cover),
@@ -90,29 +91,54 @@ pub const Surface = struct {
         return @intCast((@as(u32, source) * alpha + @as(u32, destination) * (255 - alpha) + 127) / 255);
     }
 
+    fn textBlock(self: Surface, block: ui.TextBlock) void {
+        const tail = block.detail_font.line_height * block.detail_lines + block.gap;
+        var measured: u16 = 0;
+        const lead: u16 = if (block.detail_above) tail else 0;
+        if (!text_pango.drawBlock(self.pixels, width, block.bounds.x, block.bounds.y + lead, block.bounds.width, block.title, pack(block.color), block.title_font, "", block.lines, block.bounds.height, &measured, block.centered, tail)) @panic("Text renderer unavailable");
+        const top = block.bounds.y + if (block.centered) (block.bounds.height -| (measured + tail)) / 2 else @as(u16, 0);
+        const detail_y = if (block.detail_above) top else top + measured + block.gap;
+        if (!text_pango.draw(self.pixels, width, block.bounds.x, detail_y, block.bounds.width, block.detail, pack(block.detail_color), block.detail_font, "", block.detail_lines, block.detail_font.line_height * block.detail_lines)) @panic("Text renderer unavailable");
+    }
+
     fn menuRow(self: Surface, row: ui.MenuRow) void {
         self.fillRounded(row.bounds, row.style.background, geometry.radius);
-        var title_font = font.body;
+        var title_font = row.label_font;
+        title_font.ink_centered = true;
+        var detail_font = font.caption;
+        detail_font.ink_centered = true;
         title_font.weight = if (row.selected) .medium else .regular;
         if (row.lines == 2) title_font.line_height = 44;
         const padding = geometry.row_padding;
-        const y = row.bounds.y + (if (row.lines == 2) @as(u16, 8) else if (row.detail.len != 0) @as(u16, 12) else geometry.row_text_y);
         const available = row.bounds.width - 2 * padding - (if (row.disclosure) @as(u16, 24) else 0);
-        if (!text_pango.draw(self.pixels, width, row.bounds.x + padding, y, available, row.label, pack(row.style.text), title_font, "", row.lines, row.bounds.height - (if (row.lines == 2) @as(u16, 16) else 24))) @panic("Text renderer unavailable");
-        if (row.detail.len != 0) self.drawTextBounded(row.bounds.x + padding, row.bounds.y + 56, available, row.detail, row.style.detail, font.caption);
-        if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, row.style.text);
+        const tail: u16 = if (row.detail.len != 0) font.caption.line_height + 6 else 0;
+        var measured_height: u16 = 0;
+        if (!text_pango.drawBlock(self.pixels, width, row.bounds.x + padding, row.bounds.y, available, row.label, pack(row.style.text), title_font, "", row.lines, row.bounds.height, &measured_height, true, tail)) @panic("Text renderer unavailable");
+        const text_y = row.bounds.y + (row.bounds.height -| (measured_height + tail)) / 2;
+        if (row.detail.len != 0) self.drawTextBounded(row.bounds.x + padding, text_y + measured_height + 6, available, row.detail, row.style.detail, detail_font);
+        if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + (row.bounds.height - 24) / 2, row.style.text);
     }
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
         self.fillRounded(item.bounds, item.style.background, geometry.radius);
-        const color = item.style.text;
-        const stacked = item.bounds.width < 600 and item.value.len != 0;
-        const value_width: u16 = if (item.value.len != 0 and !stacked) @min(320, item.bounds.width / 2) else 0;
-        const label_y = item.bounds.y + (if (item.detail.len == 0 and !stacked) geometry.row_text_y else 4);
-        self.drawTextBounded(item.bounds.x + geometry.row_padding, label_y, item.bounds.width - value_width - 2 * geometry.row_padding, item.label, color, font.body);
-        if (stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + geometry.row_detail_y, item.bounds.width - 2 * geometry.row_padding, item.value, item.style.detail, font.caption);
-        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + geometry.row_detail_y, item.bounds.width - 2 * geometry.row_padding, item.detail, item.style.detail, font.caption);
-        if (item.value.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + item.bounds.width - value_width, label_y, value_width - 16, item.value, color, font.caption);
+        var label_font = font.body;
+        label_font.ink_centered = true;
+        var detail_font = font.caption;
+        detail_font.ink_centered = true;
+        label_font.weight = if (item.selected) .medium else .regular;
+        const value_width: u16 = if (item.value.len != 0) 320 else 0;
+        const tail: u16 = if (item.detail.len != 0) font.caption.line_height + 6 else 0;
+        const label_y = item.bounds.y + (item.bounds.height -| (label_font.line_height + tail)) / 2;
+        self.drawTextBounded(item.bounds.x + geometry.row_padding, label_y, item.bounds.width - value_width - 2 * geometry.row_padding, item.label, item.style.text, label_font);
+        if (item.detail.len != 0) self.drawTextBounded(item.bounds.x + geometry.row_padding, label_y + label_font.line_height + 6, item.bounds.width - 2 * geometry.row_padding, item.detail, item.style.detail, detail_font);
+        if (item.value.len != 0) {
+            var value_font = font.caption;
+            value_font.ink_centered = true;
+            value_font.size = 34;
+            value_font.line_height = 41;
+            value_font.alignment = .end;
+            self.drawTextBounded(item.bounds.x + item.bounds.width - value_width - geometry.row_padding, item.bounds.y + (item.bounds.height - value_font.line_height) / 2, value_width, item.value, item.style.text, value_font);
+        }
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
@@ -439,17 +465,17 @@ test "resolved styles render identically to literal colours and ignore later the
     const themes = @import("theme.zig");
     var configured = ui.Tree{ .theme = themes.dark, .background = themes.dark.background };
     configured.add(.{ .menu_row = .{ .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 }, .label = "Selected game", .selected = true } });
-    var literal = ui.Tree{ .background = .{ .r = 0x15, .g = 0x15, .b = 0x18 } };
+    var literal = ui.Tree{ .background = themes.dark.background };
     literal.elements[0] = .{ .menu_row = .{
         .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 },
         .label = "Selected game",
         .selected = true,
         .style = .{
-            .background = .{ .r = 0x37, .g = 0x6f, .b = 0xce },
-            .text = .{ .r = 0xff, .g = 0xff, .b = 0xff },
-            .detail = .{ .r = 0xff, .g = 0xff, .b = 0xff },
-            .border = .{ .r = 0x48, .g = 0x48, .b = 0x50 },
-            .accent = .{ .r = 0x80, .g = 0xb1, .b = 0xff },
+            .background = themes.dark.selection,
+            .text = themes.dark.selection_text,
+            .detail = themes.dark.selection_text,
+            .border = themes.dark.border,
+            .accent = themes.dark.accent,
         },
     } };
     literal.len = 1;
@@ -473,4 +499,42 @@ test "font weight alignment and line height are independent of size" {
         ink += 1;
     };
     try std.testing.expect(ink > 100);
+}
+
+test "wrapped game titles and details stay inside their row" {
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .menu_row = .{ .bounds = .{ .x = 28, .y = 138, .width = 968, .height = 134 }, .label = "The Legend of Zelda: A Very Long Adventure Across Several Kingdoms", .detail = "Super Nintendo", .lines = 2, .selected = true, .disclosure = false } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    for (pixels, 0..) |pixel, index| {
+        if (pixel == Surface.pack(theme.background)) continue;
+        try std.testing.expect(index / width >= 138 and index / width < 272);
+        try std.testing.expect(index % width >= 28 and index % width < 996);
+    }
+}
+
+test "menu labels are visibly centred in their selection bar" {
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    const theme = @import("theme.zig").light;
+    for ([_][]const u8{ "Games", "Settings", "Play again", "Écran", "日本語" }) |label| {
+        var tree = ui.Tree{ .theme = theme, .background = theme.background };
+        tree.add(.{ .menu_row = .{ .bounds = .{ .x = 28, .y = 200, .width = 968, .height = 74 }, .label = label, .selected = true, .disclosure = false } });
+        (Surface{ .pixels = pixels }).render(&tree);
+        var top: usize = height;
+        var bottom: usize = 0;
+        for (200..274) |y| {
+            for (48..948) |x| {
+                if (pixels[y * width + x] == Surface.pack(theme.text)) continue;
+                top = @min(top, y);
+                bottom = @max(bottom, y);
+            }
+        }
+        try std.testing.expect(top < bottom);
+        const above = top - 200;
+        const below = 273 - bottom;
+        try std.testing.expect(@max(above, below) - @min(above, below) <= 2);
+    }
 }

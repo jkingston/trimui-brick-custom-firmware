@@ -9,6 +9,8 @@ const pango_scale = 1024;
 const pango_ellipsize_end = 3;
 const ft_pixel_mode_gray = 2;
 
+const Rectangle = extern struct { x: i32, y: i32, width: i32, height: i32 };
+
 const Bitmap = extern struct {
     rows: u32,
     width: u32,
@@ -43,6 +45,7 @@ const Engine = struct {
     layoutSetAutoDirection: *const fn (*Object, i32) callconv(.c) void,
     layoutSetFont: *const fn (*Object, *FontDescription) callconv(.c) void,
     layoutGetPixelSize: *const fn (*Object, *i32, *i32) callconv(.c) void,
+    layoutGetPixelExtents: *const fn (*Object, ?*Rectangle, ?*Rectangle) callconv(.c) void,
     descriptionFromString: *const fn ([*:0]const u8) callconv(.c) ?*FontDescription,
     descriptionSetAbsoluteSize: *const fn (*FontDescription, f64) callconv(.c) void,
     descriptionFree: *const fn (*FontDescription) callconv(.c) void,
@@ -89,6 +92,7 @@ const Engine = struct {
             .layoutSetAutoDirection = try symbol(&pango, @FieldType(Engine, "layoutSetAutoDirection"), "pango_layout_set_auto_dir"),
             .layoutSetFont = try symbol(&pango, @FieldType(Engine, "layoutSetFont"), "pango_layout_set_font_description"),
             .layoutGetPixelSize = try symbol(&pango, @FieldType(Engine, "layoutGetPixelSize"), "pango_layout_get_pixel_size"),
+            .layoutGetPixelExtents = try symbol(&pango, @FieldType(Engine, "layoutGetPixelExtents"), "pango_layout_get_pixel_extents"),
             .descriptionFromString = try symbol(&pango, @FieldType(Engine, "descriptionFromString"), "pango_font_description_from_string"),
             .descriptionSetAbsoluteSize = try symbol(&pango, @FieldType(Engine, "descriptionSetAbsoluteSize"), "pango_font_description_set_absolute_size"),
             .descriptionFree = try symbol(&pango, @FieldType(Engine, "descriptionFree"), "pango_font_description_free"),
@@ -114,6 +118,16 @@ fn current() ?*Engine {
 }
 
 pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, font: design.Font, language: []const u8, lines: u8, max_height: u16) bool {
+    return drawMeasured(pixels, stride, x, y, max_width, text, packed_color, font, language, lines, max_height, null);
+}
+
+pub fn drawMeasured(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, font: design.Font, language: []const u8, lines: u8, max_height: u16, measured_height: ?*u16) bool {
+    return drawBlock(pixels, stride, x, y, max_width, text, packed_color, font, language, lines, max_height, measured_height, false, 0);
+}
+
+// Centre the measured text and its optional following line as one block.
+pub fn drawBlock(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, font: design.Font, language: []const u8, lines: u8, max_height: u16, measured_height: ?*u16, centered: bool, tail: u16) bool {
+    if (measured_height) |out| out.* = 0;
     const state = current() orelse return false;
     if (text.len == 0 or max_width == 0 or x >= stride) return true;
     const context = state.createContext(state.font_map) orelse return false;
@@ -157,6 +171,7 @@ pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: 
     var text_width: i32 = 0;
     var text_height: i32 = 0;
     state.layoutGetPixelSize(layout, &text_width, &text_height);
+    if (measured_height) |out| out.* = @intCast(@min(@max(0, text_height), max_height));
     if (text_width <= 0 or text_height <= 0) return true;
     // Pango positions RTL runs against the requested layout width even when the
     // ink extents are narrower. Preserve that width or right-aligned text clips.
@@ -173,16 +188,24 @@ pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: 
         .palette_mode = 0,
         .palette = null,
     };
-    state.renderLayout(&bitmap, layout, 0, 0);
+    var ink_offset: i32 = 0;
+    if (font.ink_centered) {
+        // SAFETY: Pango initializes every field before the rectangle is read.
+        var ink: Rectangle = undefined;
+        state.layoutGetPixelExtents(layout, &ink, null);
+        ink_offset = @divFloor(text_height - ink.height, 2) - ink.y;
+    }
+    state.renderLayout(&bitmap, layout, 0, ink_offset);
 
+    const origin_y = y + if (centered) (max_height -| (@as(u16, @intCast(text_height)) + tail)) / 2 else @as(u16, 0);
     const source: PackedColor = @bitCast(packed_color);
     var row: usize = 0;
-    while (row < bitmap_height and @as(usize, y) + row < pixels.len / stride) : (row += 1) {
+    while (row < bitmap_height and @as(usize, origin_y) + row < pixels.len / stride) : (row += 1) {
         var column: usize = 0;
         while (column < bitmap_width and @as(usize, x) + column < stride) : (column += 1) {
             const alpha = bitmap_storage[row * bitmap_width + column];
             if (alpha == 0) continue;
-            const target = (@as(usize, y) + row) * stride + x + column;
+            const target = (@as(usize, origin_y) + row) * stride + x + column;
             var destination: PackedColor = @bitCast(pixels[target]);
             destination.r = blend(destination.r, source.r, alpha);
             destination.g = blend(destination.g, source.g, alpha);

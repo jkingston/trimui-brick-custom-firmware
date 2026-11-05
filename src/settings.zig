@@ -34,8 +34,8 @@ pub const Values = struct {
 
 pub const display_seconds = [_]u32{ 0, 30, 60, 180, 300, 600 };
 pub const suspend_seconds = [_]u32{ 0, 300, 900, 1800, 3600 };
-const brightness_labels = [_][]const u8{ "Minimum", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "Maximum" };
-const performance_labels = [_][]const u8{ "Battery", "Balanced", "Performance" };
+const brightness_labels = [_][]const u8{ "Minimum", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" };
+const performance_labels = [_][]const u8{ "Power saver", "Balanced", "Performance" };
 const display_labels = [_][]const u8{ "Never", "30 seconds", "1 minute", "3 minutes", "5 minutes", "10 minutes" };
 const suspend_labels = [_][]const u8{ "Never", "5 minutes", "15 minutes", "30 minutes", "1 hour" };
 
@@ -135,4 +135,24 @@ test "appearance saves atomically without affecting device settings" {
     try saveAppearance(std.testing.io, temporary.dir, values.appearance);
     try std.testing.expectEqualStrings("0\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
     try std.testing.expectEqual(@as(u8, 10), values.brightness);
+}
+
+pub fn labels(setting: Setting) []const []const u8 {
+    return switch (setting) {
+        .brightness => &brightness_labels,
+        .performance => &performance_labels,
+        .display_timeout => &display_labels,
+        .suspend_timeout => &suspend_labels,
+        .appearance => &.{ "Light", "Dark" },
+    };
+}
+
+pub fn title(setting: Setting) []const u8 {
+    return switch (setting) {
+        .brightness => "Brightness",
+        .performance => "Performance",
+        .display_timeout => "Screen off",
+        .suspend_timeout => "Suspend",
+        .appearance => "Appearance",
+    };
 }
