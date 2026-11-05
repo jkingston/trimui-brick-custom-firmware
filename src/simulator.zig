@@ -159,7 +159,6 @@ fn actionForKey(key: i32) ?input.Action {
         sdl_key_escape, 'x' => .back,
         'h' => .menu,
         'v' => .view,
-        'f' => .filter,
         else => null,
     };
 }
@@ -229,7 +228,6 @@ pub fn main(init: std.process.Init) !void {
     try drawTree(&sdl, renderer, texture, pixels, &tree);
 
     if (library_check) |directory| {
-        state.page = .games;
         try std.Io.Dir.cwd().createDirPath(init.io, directory);
         tree = state.tree();
         try drawTree(&sdl, renderer, texture, pixels, &tree);

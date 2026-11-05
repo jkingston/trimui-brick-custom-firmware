@@ -67,7 +67,7 @@ const System = struct {
     extensions: []const u8,
 };
 
-pub const systems = [_]System{
+const systems = [_]System{
     .{ .id = "nes", .aliases = "FC NES", .label = "NES", .core = "fceumm", .extensions = ".nes .unf .unif .zip .7z" },
     .{ .id = "gb", .aliases = "GB", .label = "Game Boy", .core = "mgba", .extensions = ".gb .zip .7z" },
     .{ .id = "gbc", .aliases = "GBC", .label = "Game Boy Color", .core = "mgba", .extensions = ".gb .gbc .zip .7z" },
@@ -291,50 +291,3 @@ test "discovery applies installed artwork metadata without changing launch paths
     try std.testing.expect(std.mem.endsWith(u8, library[0].assets.front.?, "/Assets/Brick/objects/aa/label.png"));
     try std.testing.expect(std.mem.endsWith(u8, library[0].rom_path, "/Roms/GB/Tetris.gb"));
 }
-
-// A filtered view retains source indices, so launching and save identity never
-// depend on the currently displayed order. No allocation is needed per frame.
-pub const Collection = struct {
-    games: []const Game,
-    system: ?usize = null,
-
-    pub fn matches(self: Collection, game: Game) bool {
-        return if (self.system) |index| std.mem.eql(u8, game.system, systems[index].label) else true;
-    }
-
-    pub fn len(self: Collection) usize {
-        var count: usize = 0;
-        for (self.games) |game| if (self.matches(game)) {
-            count += 1;
-        };
-        return count;
-    }
-
-    pub fn sourceIndex(self: Collection, position: usize) ?usize {
-        var visible: usize = 0;
-        for (self.games, 0..) |game, index| {
-            if (!self.matches(game)) continue;
-            if (visible == position) return index;
-            visible += 1;
-        }
-        return null;
-    }
-
-    pub fn positionOf(self: Collection, source: usize) ?usize {
-        var visible: usize = 0;
-        for (self.games, 0..) |game, index| {
-            if (!self.matches(game)) continue;
-            if (source == index) return visible;
-            visible += 1;
-        }
-        return null;
-    }
-
-    pub fn at(self: Collection, position: usize) Game {
-        return self.games[self.sourceIndex(position).?];
-    }
-
-    pub fn label(self: Collection) []const u8 {
-        return if (self.system) |index| systems[index].label else "All systems";
-    }
-};

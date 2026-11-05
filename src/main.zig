@@ -55,35 +55,8 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
     } else if (std.mem.eql(u8, screen, "settings")) {
         state.page = .settings;
     }
-    if (std.mem.eql(u8, screen, "home")) {
-        state.selected = 0;
-        if (games != null and state.games.len != 0) state.last_played = state.game_index;
-    }
-    if (std.mem.eql(u8, screen, "systems")) {
-        state.page = .systems;
-        state.selected = 0;
-    }
-    if (std.mem.eql(u8, screen, "views")) {
-        state.page = .views;
-        state.selected = 0;
-    }
-    if (std.mem.eql(u8, screen, "power")) {
-        state.page = .power;
-        state.selected = 0;
-    }
-    if (std.mem.eql(u8, screen, "shutdown")) {
-        state.page = .power_confirm;
-        state.selected = 0;
-    }
-    inline for (@typeInfo(@import("settings.zig").Setting).@"enum".field_names, 0..) |name, index| {
-        if (std.mem.eql(u8, screen, name)) {
-            state.page = .setting;
-            state.active_setting = @fromBackingInt(index);
-            state.selected = 0;
-        }
-    }
     var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash(state.settings.appearance.colors()) else if (std.mem.eql(u8, screen, "languages")) ui.languageProof(state.settings.appearance.colors()) else if (std.mem.eql(u8, screen, "overlay")) blk: {
-        const game_overlay = overlay.Model{ .appearance = appearance, .title = if (state.games.len != 0) state.games[state.game_index].title else "Game" };
+        const game_overlay = overlay.Model{ .appearance = appearance };
         break :blk game_overlay.tree();
     } else if (std.mem.eql(u8, screen, "overlay-states")) blk: {
         var game_overlay = overlay.Model{ .appearance = appearance };

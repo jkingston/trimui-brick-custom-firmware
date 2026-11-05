@@ -136,23 +136,3 @@ test "appearance saves atomically without affecting device settings" {
     try std.testing.expectEqualStrings("0\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
     try std.testing.expectEqual(@as(u8, 10), values.brightness);
 }
-
-pub fn labels(setting: Setting) []const []const u8 {
-    return switch (setting) {
-        .brightness => &brightness_labels,
-        .performance => &performance_labels,
-        .display_timeout => &display_labels,
-        .suspend_timeout => &suspend_labels,
-        .appearance => &.{ "Light", "Dark" },
-    };
-}
-
-pub fn title(setting: Setting) []const u8 {
-    return switch (setting) {
-        .brightness => "Brightness",
-        .performance => "Performance",
-        .display_timeout => "Screen off",
-        .suspend_timeout => "Suspend",
-        .appearance => "Appearance",
-    };
-}

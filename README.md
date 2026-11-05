@@ -1,7 +1,8 @@
 # Brick product shell
 
-Product layer for the TrimUI Brick base firmware. A small event-driven Zig shell with Games, device settings and a
-consistent game menu, built on the base firmware’s hardware services.
+Product layer for the TrimUI Brick base firmware. The current spike combines
+an iPod-inspired game library with a small event-driven Zig shell and an
+explicit RetroArch launch boundary.
 
 The Zig shell uses PangoFT2 for multilingual text. It builds a fixed-capacity
 declarative UI tree, renders directly to the Linux framebuffer, and waits in
@@ -33,20 +34,15 @@ Z/Enter confirms, X/Escape returns, V changes view, H opens the menu and M previ
 overlay. `mise run screenshots` renders the shell and overlay screens without
 opening a window.
 
-Home opens Games and Settings, or resumes the last game when an automatic state
-exists. A confirms; B goes back. In Games, the upper-left button opens View and
-the upper-right opens System (V/F in the simulator). Menu returns Home; from Home
-it opens Power. List, grid and cartridge flow preserve the selected game.
+Games opens directly: A plays, the upper-left function button changes view,
+and the bottom-left Menu button opens navigation. Hints identify those button groups.
+B returns to the previous screen. Settings use left/right to adjust values.
+Light/dark appearance is saved in Settings. Shared typography, spacing, geometry
+and motion are compile-time values in `src/design.zig`; semantic colours live in
+`src/theme.zig`. Artwork colours are independent.
 
-Settings open dedicated adjustment pages. Light/dark appearance, system filter,
-view, selection and last played game are saved on the SD card. Typography,
-geometry and motion are compile-time values in `src/design.zig`; semantic colours
-live in `src/theme.zig`. Artwork colours are independent.
-
-The game menu provides three manual state slots and the automatic resume state.
-Replacing or loading a state requires confirmation. Failed state writes preserve
-the previous save. Power uses the base firmware’s display and suspend services;
-sleep disconnects Bluetooth devices.
+View and selection are remembered on the SD card; Recent and Favorites are not
+yet exposed.
 
 ## SD card content
 

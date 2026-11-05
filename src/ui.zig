@@ -99,14 +99,18 @@ pub const Tree = struct {
 
 const menu = struct {
     fn overlayRow(index: usize) Rect {
-        return .{ .x = 28, .y = geometry.overlay_row_top + @as(u16, @intCast(index)) * geometry.overlay_row_step, .width = 968, .height = geometry.overlay_row_height };
+        return .{ .x = 192, .y = geometry.overlay_row_top + @as(u16, @intCast(index)) * geometry.overlay_row_step, .width = 640, .height = geometry.overlay_row_height };
     }
 };
 
 fn overlayFrame(result: *Tree, title: []const u8, context: []const u8, game_title: []const u8) void {
-    header(result, title);
-    textLabel(result, .{ .x = 48, .y = 106, .width = 928, .height = 42 }, game_title, result.theme.muted, font.caption);
-    _ = context;
+    const theme = result.theme;
+    result.preserve_background = true;
+    result.add(.{ .scrim = .{ .bounds = .{ .x = 0, .y = 0, .width = geometry.width, .height = geometry.height }, .color = theme.scrim, .alpha = 180 } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = geometry.overlay_x, .y = geometry.overlay_y, .width = geometry.overlay_width, .height = geometry.overlay_height }, .color = theme.background, .radius = geometry.radius } });
+    textLabel(result, .{ .x = 200, .y = 64, .width = 624, .height = 52 }, title, theme.text, font.title);
+    result.add(.{ .text = .{ .bounds = .{ .x = 200, .y = 120, .width = 624, .height = 80 }, .value = game_title, .color = theme.muted, .font = font.caption, .lines = 2 } });
+    if (context.len != 0) textLabel(result, .{ .x = 200, .y = 642, .width = 624, .height = 40 }, context, theme.accent, font.caption);
 }
 
 pub fn overlayPause(theme: Theme, game_title: []const u8, system: []const u8, selected: usize, state_slot: usize, saved: bool, performance: []const u8, notice: []const u8) Tree {
@@ -116,8 +120,7 @@ pub fn overlayPause(theme: Theme, game_title: []const u8, system: []const u8, se
     overlayFrame(&result, "Game menu", notice, game_title);
     _ = system;
     for (labels, 0..) |label, index| {
-        const resolved_detail = "";
-        _ = saved;
+        const resolved_detail = if (index == 1 and saved) "Saved" else "";
         result.add(.{ .overlay_row = .{
             .bounds = menu.overlayRow(index),
             .label = label,
@@ -127,8 +130,12 @@ pub fn overlayPause(theme: Theme, game_title: []const u8, system: []const u8, se
             .disclosure = index == 2,
         } });
     }
-    footer(&result, &.{ .{ .control = .confirm, .label = "Select" }, .{ .control = .back, .label = "Continue" } });
-    if (notice.len != 0) showNotice(&result, notice);
+    hints(&result, .{ .x = 200, .y = 680, .width = 624, .height = 40 }, if (selected == 1)
+        &.{ .{ .control = .horizontal, .label = "Slot" }, .{ .control = .confirm, .label = "Save" }, .{ .control = .back, .label = "Resume" } }
+    else if (selected == 3)
+        &.{ .{ .control = .horizontal, .label = "Change" }, .{ .control = .back, .label = "Resume" } }
+    else
+        &.{ .{ .control = .confirm, .label = "Select" }, .{ .control = .back, .label = "Resume" } });
     return result;
 }
 
@@ -136,15 +143,7 @@ pub fn overlayStates(theme: Theme, game_title: []const u8, selected: usize, noti
     const labels = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3", "Automatic save" };
     const details = [_][]const u8{ "Manual save", "Manual save", "Manual save", "Latest session" };
     var result = Tree{ .theme = theme, .background = theme.background };
-    var any = false;
-    for (available) |present| any = any or present;
-    if (!any) {
-        result = message(theme, "Load state", "No saved states", "Save a state from the game menu to return to this point later.");
-        footer(&result, &.{.{ .control = .back, .label = "Game menu" }});
-        if (notice.len != 0) showNotice(&result, notice);
-        return result;
-    }
-    overlayFrame(&result, "Load state", notice, game_title);
+    overlayFrame(&result, "Load a save", notice, game_title);
     for (labels, details, 0..) |label, detail, index| {
         result.add(.{ .overlay_row = .{
             .bounds = menu.overlayRow(index),
@@ -154,8 +153,7 @@ pub fn overlayStates(theme: Theme, game_title: []const u8, selected: usize, noti
             .disclosure = false,
         } });
     }
-    hints(&result, .{ .x = 48, .y = 704, .width = 928, .height = 40 }, &.{ .{ .control = .confirm, .label = "Load" }, .{ .control = .back, .label = "Back" }, .{ .control = .menu, .label = "Resume" } });
-    if (notice.len != 0) showNotice(&result, notice);
+    hints(&result, .{ .x = 200, .y = 680, .width = 624, .height = 40 }, &.{ .{ .control = .confirm, .label = "Load" }, .{ .control = .back, .label = "Back" }, .{ .control = .menu, .label = "Resume" } });
     return result;
 }
 
@@ -177,7 +175,7 @@ pub const Hint = struct { control: @import("input.zig").HintControl, label: []co
 
 fn hint(result: *Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
     const size: u16 = switch (item.control) {
-        .view, .filter, .menu => geometry.glyph_size,
+        .view, .menu => geometry.glyph_size,
         else => 40,
     };
     const colour = result.theme.muted;
@@ -196,9 +194,9 @@ fn hint(result: *Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
             glyph_font.alignment = .center;
             result.add(.{ .text = .{ .bounds = .{ .x = x, .y = y, .width = size, .height = size }, .value = symbol, .color = colour, .font = glyph_font } });
         },
-        .view, .filter, .menu => {
+        .view, .menu => {
             // The upper controls are narrow pills; the lower row has round keys.
-            const upper = item.control != .menu;
+            const upper = item.control == .view;
             const count: u16 = if (upper) 2 else 3;
             const key_width: u16 = if (upper) 28 else 18;
             const key_height: u16 = if (upper) 12 else 18;
@@ -206,7 +204,7 @@ fn hint(result: *Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
             for (0..count) |index| {
                 const bounds = Rect{ .x = x + @as(u16, @intCast(index)) * (key_width + gap), .y = y + (40 - key_height) / 2, .width = key_width, .height = key_height };
                 result.add(.{ .bar = .{ .bounds = bounds, .color = colour, .radius = key_height / 2 } });
-                if (index != (if (item.control == .filter) @as(usize, 1) else 0)) result.add(.{ .bar = .{
+                if (index != 0) result.add(.{ .bar = .{
                     .bounds = .{ .x = bounds.x + 2, .y = bounds.y + 2, .width = key_width - 4, .height = key_height - 4 },
                     .color = result.background,
                     .radius = key_height / 2 - 2,
@@ -219,7 +217,7 @@ fn hint(result: *Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
 
 fn hints(result: *Tree, bounds: Rect, items: []const Hint) void {
     if (items.len == 0) return;
-    const cell = bounds.width / @as(u16, @intCast(items.len));
+    const cell = @min(geometry.glyph_size + geometry.hint_gap + 128, bounds.width / @as(u16, @intCast(items.len)));
     for (items, 0..) |item, index| hint(result, bounds.x + @as(u16, @intCast(index)) * cell, bounds.y, cell - geometry.glyph_size - geometry.hint_gap, item);
 }
 
@@ -231,7 +229,7 @@ fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, dim: u8,
     const sprite = if (cart) game.assets.card orelse game.assets.sprite else game.assets.cover;
     if (sprite == null and game.assets.preview == null) {
         result.add(.{ .bar = .{ .bounds = bounds, .color = result.theme.surface, .radius = geometry.radius } });
-        result.add(.{ .text = .{ .bounds = .{ .x = bounds.x + 16, .y = bounds.y + bounds.height / 4, .width = bounds.width -| 32, .height = @min(120, bounds.height / 2) }, .value = game.system, .color = result.theme.muted, .font = font.caption, .lines = 2 } });
+        result.add(.{ .text = .{ .bounds = .{ .x = bounds.x + 16, .y = bounds.y + bounds.height / 4, .width = bounds.width -| 32, .height = @min(120, bounds.height / 2) }, .value = game.title, .color = result.theme.text, .font = font.body, .lines = 2 } });
         return;
     }
     result.add(.{ .cartridge = .{
@@ -250,11 +248,11 @@ fn caption(result: *Tree, game: catalog.Game) void {
     var title_font = font.body;
     title_font.weight = .medium;
     title_font.alignment = .center;
-    title_font.line_height = 48;
-    result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 532, .width = 880, .height = 104 }, .value = game.title, .color = result.theme.text, .font = title_font, .lines = 2 } });
+    title_font.line_height = 44;
+    result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 568, .width = 880, .height = 88 }, .value = game.title, .color = result.theme.text, .font = title_font, .lines = 2 } });
     var system_font = font.caption;
     system_font.alignment = .center;
-    textLabel(result, .{ .x = 72, .y = 646, .width = 880, .height = 42 }, game.system, result.theme.muted, system_font);
+    textLabel(result, .{ .x = 72, .y = 660, .width = 880, .height = 38 }, game.system, result.theme.muted, system_font);
 }
 
 fn selectedTitle(result: *Tree, game: catalog.Game, bounds: Rect) void {
@@ -263,74 +261,63 @@ fn selectedTitle(result: *Tree, game: catalog.Game, bounds: Rect) void {
 }
 
 pub fn home(theme: Theme, selected: usize) Tree {
-    return homeSession(theme, selected, null, false);
-}
-
-pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumable: bool) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Brick");
-    if (recent) |game| {
-        textLabel(&result, .{ .x = 48, .y = 174, .width = 580, .height = 42 }, if (resumable) "Ready to resume" else "Last played", theme.muted, font.caption);
-        var title_font = font.body;
-        title_font.size = 48;
-        title_font.weight = .medium;
-        result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 228, .width = 580, .height = 176 }, .value = game.title, .color = theme.text, .font = title_font, .lines = 3 } });
-        artwork(&result, game, .{ .x = 676, .y = 172, .width = 300, .height = 248 }, false, 0, 0);
-    }
-    const items: []const []const u8 = if (recent != null) &.{ if (resumable) "Resume" else "Play again", "Games", "Settings" } else &.{ "Games", "Settings" };
+    const items = [_][]const u8{ "Games", "Settings" };
     for (items, 0..) |item, index| result.add(.{ .menu_row = .{
-        .bounds = .{ .x = 28, .y = (if (recent != null) @as(u16, 452) else 248) + @as(u16, @intCast(index)) * 76, .width = 968, .height = 76 },
+        .bounds = .{ .x = layout.margin, .y = geometry.home_top + @as(u16, @intCast(index)) * geometry.home_step, .width = 944, .height = geometry.home_height },
         .label = item,
-        .selected = selected == index,
-        .disclosure = false,
+        .detail = if (index == 0) "Browse and play" else "Display, power and appearance",
+        .selected = index == selected,
     } });
-    footer(&result, &.{ .{ .control = .confirm, .label = "Open" }, .{ .control = .menu, .label = "Power" } });
+    footer(&result, &.{ .{ .control = .confirm, .label = "Open" }, .{ .control = .back, .label = "Games" } });
     return result;
 }
 
 pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
-    return libraryCollection(theme, .{ .games = games }, selected, view, shelf_offset);
-}
-
-pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Games");
-    var right_font = font.caption;
-    right_font.alignment = .end;
-    textLabel(&result, .{ .x = 480, .y = 32, .width = 496, .height = 44 }, collection.label(), theme.muted, right_font);
-    const count = collection.len();
-    if (count == 0) {
-        textLabel(&result, .{ .x = 48, .y = 224, .width = 928, .height = 64 }, "No games yet", theme.text, font.title);
-        result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 312, .width = 864, .height = 100 }, .value = "Add games to the Roms folder on your SD card.", .color = theme.muted, .font = font.body, .lines = 2 } });
-        footer(&result, &.{.{ .control = .back, .label = "Home" }});
+    if (games.len == 0) {
+        textLabel(&result, .{ .x = 40, .y = 180, .width = 900, .height = 58 }, "No games yet", theme.text, font.title);
+        textLabel(&result, .{ .x = 40, .y = 256, .width = 900, .height = 44 }, "Add games to the Roms folder on your SD card.", theme.muted, font.caption);
+        footer(&result, &.{.{ .control = .menu, .label = "Menu" }});
         return result;
     }
-    const game = collection.at(selected);
+    const game = games[selected];
+    var view_font = font.caption;
+    view_font.alignment = .end;
+    textLabel(&result, .{ .x = 704, .y = 32, .width = 280, .height = 40 }, switch (view) {
+        .list => "List",
+        .grid => "Grid",
+        .shelf => "Cartridge Flow",
+    }, theme.muted, view_font);
     switch (view) {
         .list => {
-            const visible = @min(count, 4);
-            const first = if (selected > 1) @min(selected - 1, count - visible) else 0;
-            for (first..first + visible) |index| {
-                const entry = collection.at(index);
-                result.add(.{ .menu_row = .{
-                    .bounds = .{ .x = 28, .y = 112 + @as(u16, @intCast(index - first)) * 144, .width = 968, .height = 144 },
-                    .label = entry.title,
-                    .detail = if (collection.system == null) entry.system else "",
-                    .selected = index == selected,
-                    .disclosure = false,
-                    .lines = if (index == selected) 2 else 1,
-                } });
-            }
+            const visible = @min(games.len, 5);
+            const first = if (selected > 1) @min(selected - 1, games.len - visible) else 0;
+            for (games[first .. first + visible], first..) |entry, index| result.add(.{ .menu_row = .{
+                .bounds = .{ .x = 32, .y = 112 + @as(u16, @intCast(index - first)) * 112, .width = 616, .height = 104 },
+                .label = entry.title,
+                .selected = index == selected,
+                .disclosure = false,
+                .lines = 2,
+            } });
+            artwork(&result, game, .{ .x = 688, .y = 128, .width = 296, .height = 408 }, false, 0, 0);
+            var system_font = font.caption;
+            system_font.alignment = .center;
+            textLabel(&result, .{ .x = 680, .y = 560, .width = 312, .height = 80 }, game.system, theme.muted, system_font);
         },
         .grid => {
-            const first = (selected / 6) * 6;
-            for (first..@min(first + 6, count)) |index| {
-                const x: u16 = 48 + @as(u16, @intCast((index - first) % 3)) * 316;
-                const y: u16 = 136 + @as(u16, @intCast((index - first) / 3)) * 184;
-                const active = index == selected;
-                result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = y, .width = 292, .height = 172 }, .color = if (active) theme.text else theme.background } });
-                result.add(.{ .bar = .{ .bounds = .{ .x = x + 3, .y = y + 3, .width = 286, .height = 166 }, .color = theme.background } });
-                artwork(&result, collection.at(index), .{ .x = x + 12, .y = y + 10, .width = 268, .height = 152 }, false, 0, 0);
+            const columns = geometry.grid_columns;
+            const count = columns * geometry.grid_rows;
+            const first = (selected / count) * count;
+            for (games[first..@min(first + count, games.len)], 0..) |entry, index| {
+                const x: u16 = 40 + @as(u16, @intCast(index % columns)) * 320;
+                const y: u16 = 104 + @as(u16, @intCast(index / columns)) * 232;
+                const active = first + index == selected;
+                result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = y, .width = 304, .height = 216 }, .color = if (active) theme.accent else theme.surface, .radius = geometry.radius } });
+                result.add(.{ .bar = .{ .bounds = .{ .x = x + 4, .y = y + 4, .width = 296, .height = 208 }, .color = theme.surface, .radius = geometry.radius - 4 } });
+                artwork(&result, entry, .{ .x = x + 20, .y = y + 12, .width = 264, .height = 192 }, false, 0, 0);
             }
             caption(&result, game);
         },
@@ -338,15 +325,16 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
             const order = [_]i8{ -4, 4, -3, 3, -2, 2, -1, 1, 0 };
             for (order) |relative| {
                 const index = @as(i64, @intCast(selected)) + relative;
-                if (index < 0 or index >= count) continue;
+                if (index < 0 or index >= games.len) continue;
                 const pose = shelfPose(relative, shelf_offset);
-                artwork(&result, collection.at(@intCast(index)), pose.bounds, true, pose.dim, pose.tilt);
-                if (result.elements[result.len - 1] == .cartridge) result.elements[result.len - 1].cartridge.clip_left = pose.clip_left;
+                artwork(&result, games[@intCast(index)], pose.bounds, true, pose.dim, pose.tilt);
+                if (result.elements[result.len - 1] == .cartridge)
+                    result.elements[result.len - 1].cartridge.clip_left = pose.clip_left;
             }
             caption(&result, game);
         },
     }
-    footer(&result, &.{ .{ .control = .back, .label = "Home" }, .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = "View" }, .{ .control = .confirm, .label = "Play" } });
+    footer(&result, &.{ .{ .control = .confirm, .label = "Play" }, .{ .control = .view, .label = "View" }, .{ .control = .menu, .label = "Menu" } });
     return result;
 }
 
@@ -369,64 +357,14 @@ fn shelfPose(relative: i8, offset: i16) ShelfPose {
 }
 
 pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) Tree {
-    var result = message(theme, if (launch_failed != null) "Unable to start" else "Starting game", game.title, launch_failed orelse "Opening emulator…");
-    if (launch_failed != null) footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Retry" } });
-    return result;
-}
-
-pub fn message(theme: Theme, title: []const u8, subject: []const u8, detail: []const u8) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, title);
-    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 220, .width = 928, .height = 164 }, .value = subject, .color = theme.text, .font = font.body, .lines = 3 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 396, .width = 928, .height = 100 }, .value = detail, .color = theme.muted, .font = font.caption, .lines = 2 } });
+    header(&result, if (launch_failed != null) "Unable to start" else "Game");
+    artwork(&result, game, .{ .x = 40, .y = 156, .width = 280, .height = 416 }, false, 0, 0);
+    textLabel(&result, .{ .x = 368, .y = 162, .width = 616, .height = 44 }, game.system, theme.muted, font.caption);
+    selectedTitle(&result, game, .{ .x = 368, .y = 222, .width = 616, .height = 144 });
+    if (launch_failed) |message| textLabel(&result, .{ .x = 368, .y = 410, .width = 616, .height = 80 }, message, theme.danger, font.caption);
+    footer(&result, &.{ .{ .control = .confirm, .label = if (launch_failed != null) "Retry" else "Play" }, .{ .control = .back, .label = "Games" } });
     return result;
-}
-
-pub fn confirmation(theme: Theme, title: []const u8, subject: []const u8, detail: []const u8, action: []const u8, selected: usize) Tree {
-    var result = message(theme, title, subject, detail);
-    for ([_][]const u8{ "Cancel", action }, 0..) |label, index| result.add(.{ .menu_row = .{ .bounds = .{ .x = 28, .y = 536 + @as(u16, @intCast(index)) * 72, .width = 968, .height = 72 }, .label = label, .selected = selected == index, .disclosure = false } });
-    footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = "Select" } });
-    return result;
-}
-
-pub fn choice(theme: Theme, title: []const u8, labels: []const []const u8, selected: usize, active: ?usize, note: []const u8, back: []const u8) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, title);
-    const visible = @min(labels.len, if (note.len != 0) @as(usize, 4) else 6);
-    const first = @min(selected -| 2, labels.len - visible);
-    for (first..first + visible) |index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = 144 + @as(u16, @intCast(index - first)) * 86, .width = 968, .height = 86 },
-        .label = labels[index],
-        .value = if (active == index) "✓" else "",
-        .detail = "",
-        .selected = selected == index,
-        .disclosure = false,
-    } });
-    if (note.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 550, .width = 928, .height = 104 }, .value = note, .color = theme.muted, .font = font.caption, .lines = 2 } });
-    footer(&result, &.{ .{ .control = .back, .label = back }, .{ .control = .confirm, .label = "Select" } });
-    return result;
-}
-
-pub fn setting(item: settings_model.Setting, selected: usize, active: usize, values: settings_model.Values) Tree {
-    const theme = values.appearance.colors();
-    if (item == .brightness) {
-        var result = Tree{ .theme = theme, .background = theme.background };
-        header(&result, "Brightness");
-        var large = font.brand;
-        large.alignment = .center;
-        textLabel(&result, .{ .x = 96, .y = 256, .width = 832, .height = 92 }, values.value(.brightness), theme.text, large);
-        result.add(.{ .bar = .{ .bounds = .{ .x = 96, .y = 410, .width = 832, .height = 8 }, .color = theme.surface } });
-        result.add(.{ .bar = .{ .bounds = .{ .x = 96, .y = 410, .width = @intCast(@as(u32, values.brightness) * 832 / 10), .height = 8 }, .color = theme.text } });
-        footer(&result, &.{ .{ .control = .back, .label = "Settings" }, .{ .control = .horizontal, .label = "Adjust" } });
-        return result;
-    }
-    const note: []const u8 = switch (item) {
-        .display_timeout => "Turn off the display after inactivity. The device remains awake.",
-        .suspend_timeout => "Enter low-power sleep after inactivity when available. Bluetooth disconnects.",
-        .performance => "Balances responsiveness and power use. Demanding games may need Performance.",
-        else => "",
-    };
-    return choice(theme, settings_model.title(item), settings_model.labels(item), selected, active, note, "Settings");
 }
 
 pub fn settings(selected: usize, values: settings_model.Values) Tree {
@@ -443,15 +381,16 @@ pub fn settings(selected: usize, values: settings_model.Values) Tree {
         .selected = index == selected,
         .disclosure = false,
     } });
-    footer(&result, &.{ .{ .control = .back, .label = "Home" }, .{ .control = .confirm, .label = "Open" } });
+    footer(&result, &.{ .{ .control = .horizontal, .label = "Change" }, .{ .control = .back, .label = "Back" } });
     return result;
 }
 
 pub fn splash(theme: Theme) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    var brand = font.brand;
-    brand.alignment = .center;
-    textLabel(&result, .{ .x = 48, .y = 338, .width = 928, .height = 92 }, "Brick", theme.text, brand);
+    var result = Tree{ .theme = theme, .background = theme.scrim };
+    result.add(.{ .bar = .{ .bounds = .{ .x = 438, .y = 246, .width = 68, .height = 68 }, .color = theme.accent } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 518, .y = 246, .width = 68, .height = 68 }, .color = theme.selection } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 438, .y = 326, .width = 148, .height = 68 }, .color = theme.on_scrim } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 424, .y = 442, .width = 240, .height = 72 }, .value = "Brick", .color = theme.on_scrim, .font = font.brand } });
     return result;
 }
 
@@ -488,9 +427,9 @@ pub fn languageProof(theme: Theme) Tree {
     return result;
 }
 
-pub fn showNotice(tree: *Tree, notice: []const u8) void {
+pub fn showNotice(tree: *Tree, message: []const u8) void {
     tree.add(.{ .bar = .{ .bounds = .{ .x = layout.margin, .y = layout.footer_y, .width = geometry.width - 2 * layout.margin, .height = 44 }, .color = tree.theme.background } });
-    textLabel(tree, .{ .x = layout.margin, .y = layout.footer_y, .width = geometry.width - 2 * layout.margin, .height = 44 }, notice, tree.theme.text, font.control);
+    textLabel(tree, .{ .x = layout.margin, .y = layout.footer_y, .width = geometry.width - 2 * layout.margin, .height = 44 }, message, tree.theme.danger, font.control);
 }
 
 test "light and dark appearances preserve component geometry and typography" {
@@ -508,18 +447,4 @@ test "light and dark appearances preserve component geometry and typography" {
             if (a == .text) try std.testing.expectEqualDeep(a.text.font, b.text.font);
         }
     }
-}
-
-pub fn saveSlots(theme: Theme, title: []const u8, selected: usize, available: [4]bool) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    overlayFrame(&result, "Save state", "", title);
-    for ([_][]const u8{ "Slot 1", "Slot 2", "Slot 3" }, 0..) |label, index| result.add(.{ .overlay_row = .{
-        .bounds = menu.overlayRow(index),
-        .label = label,
-        .detail = if (available[index]) "Saved state" else "Empty",
-        .selected = selected == index,
-        .disclosure = false,
-    } });
-    footer(&result, &.{ .{ .control = .back, .label = "Game menu" }, .{ .control = .confirm, .label = "Save" } });
-    return result;
 }
