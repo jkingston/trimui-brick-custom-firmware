@@ -1,5 +1,0 @@
-config BR2_PACKAGE_BRICK_CARTRIDGE_MODELS
-	bool "Brick cartridge models"
-	help
-	  Install the neutral runtime cartridge and optical-disc models used by
-	  the Brick game library. Per-game artwork remains on the data card.

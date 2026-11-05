@@ -68,6 +68,10 @@ buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
 buildroot="$base/output/buildroot-$buildroot_version"
 output="$(realpath -m "${O:-$root/output/build}")"
 make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" \
+    BR2_DL_DIR="$base/output/downloads" brick-shell-dirclean
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" \
+    BR2_DL_DIR="$base/output/downloads" brick-shell
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" \
     BR2_DL_DIR="$base/output/downloads"
 '''
 
