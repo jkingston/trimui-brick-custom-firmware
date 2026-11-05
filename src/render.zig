@@ -94,12 +94,14 @@ pub const Surface = struct {
         self.fillRounded(row.bounds, row.style.background, geometry.radius);
         var title_font = font.body;
         title_font.weight = if (row.selected) .medium else .regular;
-        if (row.lines == 2) title_font.line_height = 44;
+        if (row.lines == 2) title_font.line_height = 46;
         const padding = geometry.row_padding;
         const y = row.bounds.y + (if (row.lines == 2) @as(u16, 8) else if (row.detail.len != 0) @as(u16, 12) else geometry.row_text_y);
         const available = row.bounds.width - 2 * padding - (if (row.disclosure) @as(u16, 24) else 0);
-        if (!text_pango.draw(self.pixels, width, row.bounds.x + padding, y, available, row.label, pack(row.style.text), title_font, "", row.lines, row.bounds.height - (if (row.lines == 2) @as(u16, 16) else 24))) @panic("Text renderer unavailable");
-        if (row.detail.len != 0) self.drawTextBounded(row.bounds.x + padding, row.bounds.y + 56, available, row.detail, row.style.detail, font.caption);
+        var measured_height: u16 = 0;
+        const text_height = row.bounds.height -| (if (row.detail.len != 0) @as(u16, 48) else 24);
+        if (!text_pango.drawMeasured(self.pixels, width, row.bounds.x + padding, y, available, row.label, pack(row.style.text), title_font, "", row.lines, text_height, &measured_height)) @panic("Text renderer unavailable");
+        if (row.detail.len != 0) self.drawTextBounded(row.bounds.x + padding, y + measured_height + 2, available, row.detail, row.style.detail, font.caption);
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + 34, row.style.text);
     }
 
@@ -108,10 +110,10 @@ pub const Surface = struct {
         const color = item.style.text;
         const stacked = item.bounds.width < 600 and item.value.len != 0;
         const value_width: u16 = if (item.value.len != 0 and !stacked) @min(320, item.bounds.width / 2) else 0;
-        const label_y = item.bounds.y + (if (item.detail.len == 0 and !stacked) geometry.row_text_y else 4);
+        const label_y = item.bounds.y + (if (item.detail.len == 0 and !stacked) geometry.row_text_y else 0);
         self.drawTextBounded(item.bounds.x + geometry.row_padding, label_y, item.bounds.width - value_width - 2 * geometry.row_padding, item.label, color, font.body);
-        if (stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + geometry.row_detail_y, item.bounds.width - 2 * geometry.row_padding, item.value, item.style.detail, font.caption);
-        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + geometry.row_detail_y, item.bounds.width - 2 * geometry.row_padding, item.detail, item.style.detail, font.caption);
+        if (stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + 58, item.bounds.width - 2 * geometry.row_padding, item.value, item.style.detail, font.caption);
+        if (item.detail.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + geometry.row_padding, item.bounds.y + 58, item.bounds.width - 2 * geometry.row_padding, item.detail, item.style.detail, font.caption);
         if (item.value.len != 0 and !stacked) self.drawTextBounded(item.bounds.x + item.bounds.width - value_width, label_y, value_width - 16, item.value, color, font.caption);
     }
 
@@ -439,17 +441,17 @@ test "resolved styles render identically to literal colours and ignore later the
     const themes = @import("theme.zig");
     var configured = ui.Tree{ .theme = themes.dark, .background = themes.dark.background };
     configured.add(.{ .menu_row = .{ .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 }, .label = "Selected game", .selected = true } });
-    var literal = ui.Tree{ .background = .{ .r = 0x15, .g = 0x15, .b = 0x18 } };
+    var literal = ui.Tree{ .background = themes.dark.background };
     literal.elements[0] = .{ .menu_row = .{
         .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 },
         .label = "Selected game",
         .selected = true,
         .style = .{
-            .background = .{ .r = 0x37, .g = 0x6f, .b = 0xce },
-            .text = .{ .r = 0xff, .g = 0xff, .b = 0xff },
-            .detail = .{ .r = 0xff, .g = 0xff, .b = 0xff },
-            .border = .{ .r = 0x48, .g = 0x48, .b = 0x50 },
-            .accent = .{ .r = 0x80, .g = 0xb1, .b = 0xff },
+            .background = themes.dark.selection,
+            .text = themes.dark.selection_text,
+            .detail = themes.dark.selection_text,
+            .border = themes.dark.border,
+            .accent = themes.dark.accent,
         },
     } };
     literal.len = 1;

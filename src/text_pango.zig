@@ -114,6 +114,11 @@ fn current() ?*Engine {
 }
 
 pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, font: design.Font, language: []const u8, lines: u8, max_height: u16) bool {
+    return drawMeasured(pixels, stride, x, y, max_width, text, packed_color, font, language, lines, max_height, null);
+}
+
+pub fn drawMeasured(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: []const u8, packed_color: u32, font: design.Font, language: []const u8, lines: u8, max_height: u16, measured_height: ?*u16) bool {
+    if (measured_height) |out| out.* = 0;
     const state = current() orelse return false;
     if (text.len == 0 or max_width == 0 or x >= stride) return true;
     const context = state.createContext(state.font_map) orelse return false;
@@ -157,6 +162,7 @@ pub fn draw(pixels: []u32, stride: usize, x: u16, y: u16, max_width: u16, text: 
     var text_width: i32 = 0;
     var text_height: i32 = 0;
     state.layoutGetPixelSize(layout, &text_width, &text_height);
+    if (measured_height) |out| out.* = @intCast(@min(@max(0, text_height), max_height));
     if (text_width <= 0 or text_height <= 0) return true;
     // Pango positions RTL runs against the requested layout width even when the
     // ink extents are narrower. Preserve that width or right-aligned text clips.

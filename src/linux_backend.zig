@@ -262,6 +262,7 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
         btn_south => .back,
         btn_mode => .menu,
         btn_view => .view,
+        0x2c1 => .filter,
         else => null,
     };
 }
@@ -308,7 +309,7 @@ fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
         std.log.warn("Could not save library preferences: {s}", .{@errorName(err)});
 }
 
-fn applySessionAction(io: std.Io, state: *model.Model, action: model.Action) !SessionAction {
+fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, action: model.Action) !SessionAction {
     if (!state.apply(action)) return .{};
     state.notice = "";
     if (state.takeSetting()) |setting|
@@ -316,7 +317,24 @@ fn applySessionAction(io: std.Io, state: *model.Model, action: model.Action) !Se
             state.settings = settings.load(io);
             state.notice = "Could not apply setting";
         };
+    if (state.pending_power) |command| {
+        state.pending_power = null;
+        saveLibraryPreferences(io, state);
+        var status = ui.message(state.settings.appearance.colors(), "Power", switch (command) {
+            .screen_off => "",
+            .suspend_device => "Going to sleep…",
+            .shutdown => "Shutting down…",
+        }, "");
+        try framebuffer.show(&status);
+        performPower(io, command) catch {
+            state.notice = if (command == .suspend_device) "Unable to sleep. The device is still awake." else "Could not complete power action";
+        };
+        state.page = .home;
+        state.selected = 0;
+    }
     if (state.takeLaunch()) |index| {
+        var launching = ui.gameDetail(state.settings.appearance.colors(), state.games[index], null);
+        try framebuffer.show(&launching);
         saveLibraryPreferences(io, state);
         return .{ .launch = index };
     }
@@ -330,12 +348,8 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
     var framebuffer = try Framebuffer.open(io);
     defer framebuffer.close();
 
-    var splash_tree = ui.splash(state.settings.appearance.colors());
-    try framebuffer.show(&splash_tree);
-    // One short, deliberate beat makes boot progress visible without adding a
-    // quarter-second gate before the first interactive frame.
-    try std.Io.sleep(io, .fromMilliseconds(120), .awake);
-
+    state.battery_percent = batteryPercent(io);
+    var battery_deadline = nowMilliseconds(io) + 60000;
     var tree = state.tree();
     try framebuffer.show(&tree);
 
@@ -358,6 +372,8 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
             const remaining: i32 = @intCast(@max(0, deadline - now));
             timeout = if (timeout < 0) remaining else @min(timeout, remaining);
         }
+        const battery_wait: i32 = @intCast(@max(0, battery_deadline - now));
+        timeout = if (timeout < 0) battery_wait else @min(timeout, battery_wait);
         _ = try std.posix.poll(&poll_fds, timeout);
         if (save_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
             saveLibraryPreferences(io, state);
@@ -366,11 +382,17 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
         if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
             return error.GamepadDisconnected;
         var changed = animation or was_animating;
+        if (nowMilliseconds(io) >= battery_deadline) {
+            const percent = batteryPercent(io);
+            changed = changed or (state.page == .home and percent != state.battery_percent);
+            state.battery_percent = percent;
+            battery_deadline = nowMilliseconds(io) + 60000;
+        }
         was_animating = animation;
         {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
                 const previous = state.selected;
-                const result = try applySessionAction(io, state, action);
+                const result = try applySessionAction(io, state, &framebuffer, action);
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                 if (result.launch) |index| return index;
@@ -390,7 +412,7 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
                 observeRepeat(&repeat, event, nowMilliseconds(io));
                 if (actionForEvent(event, &dropped)) |action| {
                     const previous = state.selected;
-                    const result = try applySessionAction(io, state, action);
+                    const result = try applySessionAction(io, state, &framebuffer, action);
                     if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                         motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                     if (result.launch) |index| return index;
@@ -412,7 +434,6 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     defer console.close();
     var framebuffer = try Framebuffer.open(io);
     defer framebuffer.close();
-    try framebuffer.captureBackground();
 
     var tree = state.tree();
     try framebuffer.show(&tree);
@@ -445,7 +466,13 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                 observeRepeat(&repeat, event, nowMilliseconds(io));
                 if (actionForEvent(event, &dropped)) |action| {
                     if (state.apply(action)) changed = true;
-                    if (state.takeCommand()) |command| return command;
+                    if (state.takeCommand()) |command| {
+                        if (command == .save_state or command == .load_state) {
+                            var status = ui.message(state.appearance.colors(), if (command == .save_state) "Save state" else "Load state", if (command == .save_state) "Saving state…" else "Loading state…", "");
+                            try framebuffer.show(&status);
+                        }
+                        return command;
+                    }
                 }
             }
             if (bytes_read < buffer.len) break;
@@ -460,12 +487,22 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
 pub fn run(io: std.Io) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
+    const initial_settings = settings.load(io);
+    {
+        var console = try Console.open(io);
+        defer console.close();
+        var framebuffer = try Framebuffer.open(io);
+        defer framebuffer.close();
+        var splash = ui.splash(initial_settings.appearance.colors());
+        try framebuffer.show(&splash);
+    }
     const library = try catalog.discover(io, arena.allocator(), "/data");
-    var state = model.Model{ .games = library, .settings = settings.load(io) };
+    var state = model.Model{ .games = library, .settings = initial_settings };
     if (std.Io.Dir.cwd().openDir(io, "/data/settings", .{})) |dir| {
         defer dir.close(io);
         @import("library_preferences.zig").load(io, dir, &state);
     } else |_| {}
+    if (state.last_played) |index| state.resumable = retroarch.availableStates(io, &state.games[index])[3];
     while (true) {
         const game_index = (try runSession(io, &state)) orelse continue;
         const game = &state.games[game_index];
@@ -490,28 +527,51 @@ pub fn run(io: std.Io) !void {
                     break :game_session;
                 },
             }
+            state.last_played = game_index;
+            state.resumable = retroarch.availableStates(io, game)[3];
+            saveLibraryPreferences(io, &state);
             while (true) {
                 game_overlay.available = retroarch.availableStates(io, game);
                 switch (try runOverlay(io, &game_overlay)) {
-                    .resume_game => continue :game_session,
-                    .exit_game => break :game_session,
+                    .resume_game => {
+                        game_overlay.layer = .pause;
+                        game_overlay.selected = 0;
+                        continue :game_session;
+                    },
+                    .exit_game => {
+                        if (!game_overlay.available[3]) {
+                            game_overlay.layer = .failure;
+                            game_overlay.failed_command = .exit_game;
+                            game_overlay.notice = "No automatic state was saved. Return to the game and try again.";
+                            continue;
+                        }
+                        break :game_session;
+                    },
                     .save_state => {
                         retroarch.saveState(io, game, state.games, game_overlay.save_slot) catch |err| {
                             game_overlay.saved = false;
-                            game_overlay.notice = "Save failed";
+                            game_overlay.layer = .failure;
+                            game_overlay.confirmation = 0;
+                            game_overlay.failed_command = .save_state;
+                            game_overlay.notice = "Could not write the saved state. Check free space on the SD card.";
                             std.log.err("Failed to save state: {s}", .{@errorName(err)});
                             continue;
                         };
+                        game_overlay.layer = .pause;
+                        game_overlay.selected = 1;
                         game_overlay.saved = true;
                         game_overlay.notice = "State saved";
                     },
                     .load_state => {
                         retroarch.loadState(io, game, state.games, game_overlay.state_slot) catch |err| {
-                            game_overlay.notice = "No save in that slot";
+                            game_overlay.layer = .states;
+                            game_overlay.notice = "Could not load that saved state";
                             std.log.err("Failed to load state: {s}", .{@errorName(err)});
                             continue;
                         };
                         game_overlay.notice = "";
+                        game_overlay.layer = .pause;
+                        game_overlay.selected = 0;
                         continue :game_session;
                     },
                     .apply_performance => {
@@ -553,4 +613,24 @@ test "navigation presses and dropped streams resynchronise" {
     try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 1 }, &dropped) == null);
     _ = actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = 0, .value = 0 }, &dropped);
     try testing.expect(!dropped);
+}
+
+fn performPower(io: std.Io, command: model.Power) !void {
+    const argv: []const []const u8 = switch (command) {
+        .screen_off => &.{ "/usr/sbin/brick-brightness", "--off" },
+        .suspend_device => &.{ "/usr/sbin/brick-suspend", "--disconnect-bluetooth" },
+        .shutdown => &.{"/sbin/poweroff"},
+    };
+    var child = try std.process.spawn(io, .{ .argv = argv });
+    switch (try child.wait(io)) {
+        .exited => |status| if (status != 0) return error.PowerActionFailed,
+        else => return error.PowerActionFailed,
+    }
+}
+
+fn batteryPercent(io: std.Io) ?u8 {
+    var buffer: [16]u8 = undefined;
+    const bytes = std.Io.Dir.cwd().readFile(io, "/sys/class/power_supply/axp2202-battery/capacity", &buffer) catch return null;
+    const value = std.fmt.parseInt(u8, std.mem.trim(u8, bytes, " \r\n"), 10) catch return null;
+    return if (value <= 100) value else null;
 }

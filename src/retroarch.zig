@@ -246,7 +246,7 @@ pub fn saveState(io: std.Io, game: *const catalog.Game, library: []const catalog
     const session = try prepare(io, allocator, game, library, "/data", "/run/brick-shell");
     const automatic = try statePath(allocator, game, session, ".auto");
     const manual = try statePath(allocator, game, session, try std.fmt.allocPrint(allocator, ".brick-{d}", .{slot + 1}));
-    try std.Io.Dir.cwd().copyFile(automatic, std.Io.Dir.cwd(), manual, io, .{ .replace = true });
+    try replaceState(io, std.Io.Dir.cwd(), automatic, manual);
 }
 
 pub fn loadState(io: std.Io, game: *const catalog.Game, library: []const catalog.Game, slot: usize) !void {
@@ -261,7 +261,7 @@ pub fn loadState(io: std.Io, game: *const catalog.Game, library: []const catalog
     const session = try prepare(io, allocator, game, library, "/data", "/run/brick-shell");
     const automatic = try statePath(allocator, game, session, ".auto");
     const manual = try statePath(allocator, game, session, try std.fmt.allocPrint(allocator, ".brick-{d}", .{slot + 1}));
-    try std.Io.Dir.cwd().copyFile(manual, std.Io.Dir.cwd(), automatic, io, .{ .replace = true });
+    try replaceState(io, std.Io.Dir.cwd(), manual, automatic);
 }
 
 test "launch contract uses an explicit core, config and content path" {
@@ -349,4 +349,36 @@ test "Neo Geo missing BIOS is reported before emulator handoff" {
     // Presence alone is not a claim of a valid BIOS set.
     try tmp.dir.writeFile(io, .{ .sub_path = "BIOS/neogeo.zip", .data = "presence fixture" });
     _ = try prepare(io, allocator, &game, &.{game}, root, runtime);
+}
+
+// Commit only a complete, flushed state. A full card must not truncate the
+// previously saved destination before the replacement has been written.
+fn replaceState(io: std.Io, dir: std.Io.Dir, source: []const u8, destination: []const u8) !void {
+    const temporary = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.tmp", .{destination});
+    defer std.heap.page_allocator.free(temporary);
+    errdefer dir.deleteFile(io, temporary) catch |err| {
+        if (err != error.FileNotFound) std.log.warn("Could not remove incomplete state: {s}", .{@errorName(err)});
+    };
+    try dir.copyFile(source, dir, temporary, io, .{ .replace = true });
+    const file = try dir.openFile(io, temporary, .{});
+    defer file.close(io);
+    if ((try file.stat(io)).size == 0) return error.EmptyState;
+    try file.sync(io);
+    try dir.rename(temporary, dir, destination, io);
+}
+
+test "failed state replacement preserves the previous save" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const io = std.testing.io;
+    try temporary.dir.writeFile(io, .{ .sub_path = "saved", .data = "previous" });
+    try std.testing.expectError(error.FileNotFound, replaceState(io, temporary.dir, "missing", "saved"));
+    var buffer: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("previous", try temporary.dir.readFile(io, "saved", &buffer));
+    try temporary.dir.writeFile(io, .{ .sub_path = "source", .data = "" });
+    try std.testing.expectError(error.EmptyState, replaceState(io, temporary.dir, "source", "saved"));
+    try std.testing.expectEqualStrings("previous", try temporary.dir.readFile(io, "saved", &buffer));
+    try temporary.dir.writeFile(io, .{ .sub_path = "source", .data = "new state" });
+    try replaceState(io, temporary.dir, "source", "saved");
+    try std.testing.expectEqualStrings("new state", try temporary.dir.readFile(io, "saved", &buffer));
 }
