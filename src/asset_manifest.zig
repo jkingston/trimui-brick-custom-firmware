@@ -10,6 +10,8 @@ const Entry = struct {
     title: []const u8,
     game_id: ?[]const u8 = null,
     model: ?[]const u8 = null,
+    model_match: ?[]const u8 = null,
+    artwork_match: ?[]const u8 = null,
     surfaces: ?std.json.Value = null,
     textures: ?std.json.Value = null,
     note: ?[]const u8 = null,
@@ -153,7 +155,7 @@ test "manifest loads the decoder-free runtime preview" {
         "\x03\x02\x01\xff\x30\x20\x10\x80" });
     try temporary.dir.writeFile(io, .{ .sub_path = "Assets/Brick/library.json", .data =
         \\{"schema_version":1,"asset_index_version":"test","games":[
-        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx","sprite.hero":"textures/aa/label.brtx"}}
+        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","model_match":"exact","artwork_match":"curated","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx","sprite.hero":"textures/aa/label.brtx"}}
         \\],"attribution":{}}
     });
     var assets = try load(io, allocator, root);
