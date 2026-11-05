@@ -32,6 +32,8 @@ pub const Assets = struct {
     disc: ?[]const u8 = null,
     preview: ?Texture = null,
     sprite: ?Texture = null,
+    card: ?Texture = null,
+    cover: ?Texture = null,
 };
 
 pub const Texture = struct {
@@ -143,6 +145,8 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !st
             .disc = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.disc"),
             .preview = try loadTexture(io, allocator, asset_root, entry.textures, "artwork"),
             .sprite = try loadTexture(io, allocator, asset_root, entry.textures, "sprite.hero"),
+            .card = try loadTexture(io, allocator, asset_root, entry.textures, "artwork.card"),
+            .cover = try loadTexture(io, allocator, asset_root, entry.textures, "artwork.cover"),
         };
         try result.put(rom, assets);
     }
@@ -184,7 +188,7 @@ test "manifest loads the decoder-free runtime preview" {
         "\x03\x02\x01\xff\x30\x20\x10\x80" });
     try temporary.dir.writeFile(io, .{ .sub_path = "Assets/Brick/library.json", .data =
         \\{"schema_version":1,"asset_index_version":"test","games":[
-        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","model_match":"exact","artwork_match":"curated","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx","sprite.hero":"textures/aa/label.brtx"}}
+        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","model_match":"exact","artwork_match":"curated","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx","sprite.hero":"textures/aa/label.brtx","artwork.card":"textures/aa/label.brtx","artwork.cover":"textures/aa/label.brtx"}}
         \\],"attribution":{}}
     });
     var assets = try load(io, allocator, root);
@@ -196,6 +200,8 @@ test "manifest loads the decoder-free runtime preview" {
     try std.testing.expectEqual(@as(u32, 0xff010203), texture.pixels[0]);
     try std.testing.expectEqual(@as(u32, 0x80102030), texture.pixels[1]);
     try std.testing.expectEqual(@as(u16, 2), assets.get(rom).?.sprite.?.width);
+    try std.testing.expectEqual(@as(u16, 2), assets.get(rom).?.card.?.width);
+    try std.testing.expectEqual(@as(u16, 2), assets.get(rom).?.cover.?.width);
 }
 
 test "manifest rejects model path injection" {

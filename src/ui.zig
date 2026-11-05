@@ -214,7 +214,7 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
                 .bounds = shelfRect(relative, shelf_offset),
                 .platform = game.platform_id,
                 .texture = game.assets.preview,
-                .sprite = game.assets.sprite,
+                .sprite = game.assets.card orelse game.assets.sprite,
                 .selected = game_index == selected,
                 .dim = if (relative == 0) 0 else if (relative == -1 or relative == 1) 54 else 112,
             } });
@@ -234,10 +234,10 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
             const card = Rect{ .x = 32 + column * 326, .y = 132 + row * 298, .width = 304, .height = 280 };
             result.add(.{ .bar = .{ .bounds = card, .color = if (first + index == selected) palette.selected else palette.surface } });
             result.add(.{ .cartridge = .{
-                .bounds = .{ .x = card.x + 42, .y = card.y + 10, .width = 220, .height = 208 },
+                .bounds = .{ .x = card.x + 62, .y = card.y + 12, .width = 180, .height = 202 },
                 .platform = game.platform_id,
                 .texture = game.assets.preview,
-                .sprite = game.assets.sprite,
+                .sprite = game.assets.cover orelse game.assets.card orelse game.assets.sprite,
                 .selected = first + index == selected,
             } });
             result.add(.{ .text = .{
@@ -261,10 +261,10 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
     const game = games[selected];
     result.add(.{ .bar = .{ .bounds = .{ .x = 488, .y = 132, .width = 504, .height = 536 }, .color = palette.deep } });
     result.add(.{ .cartridge = .{
-        .bounds = .{ .x = 566, .y = 148, .width = 348, .height = 354 },
+        .bounds = .{ .x = 590, .y = 154, .width = 300, .height = 346 },
         .platform = game.platform_id,
         .texture = game.assets.preview,
-        .sprite = game.assets.sprite,
+        .sprite = game.assets.cover orelse game.assets.card orelse game.assets.sprite,
         .selected = true,
     } });
     result.add(.{ .text = .{ .bounds = .{ .x = 524, .y = 516, .width = 432, .height = 52 }, .value = game.title, .color = palette.white, .scale = 4 } });
@@ -276,13 +276,13 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
 
 fn shelfBase(relative: i8) Rect {
     return switch (relative) {
-        -3 => .{ .x = 0, .y = 230, .width = 116, .height = 202 },
-        -2 => .{ .x = 18, .y = 210, .width = 172, .height = 242 },
-        -1 => .{ .x = 100, .y = 178, .width = 252, .height = 322 },
-        0 => .{ .x = 337, .y = 146, .width = 350, .height = 390 },
-        1 => .{ .x = 672, .y = 178, .width = 252, .height = 322 },
-        2 => .{ .x = 834, .y = 210, .width = 172, .height = 242 },
-        else => .{ .x = 908, .y = 230, .width = 116, .height = 202 },
+        -3 => .{ .x = 0, .y = 230, .width = 90, .height = 190 },
+        -2 => .{ .x = 34, .y = 210, .width = 140, .height = 235 },
+        -1 => .{ .x = 104, .y = 180, .width = 210, .height = 310 },
+        0 => .{ .x = 332, .y = 150, .width = 360, .height = 380 },
+        1 => .{ .x = 710, .y = 180, .width = 210, .height = 310 },
+        2 => .{ .x = 850, .y = 210, .width = 140, .height = 235 },
+        else => .{ .x = 938, .y = 230, .width = 86, .height = 190 },
     };
 }
 
@@ -305,10 +305,10 @@ pub fn gameDetail(game: catalog.Game, launch_failed: ?[]const u8) Tree {
     header(&result, "Game");
     result.add(.{ .bar = .{ .bounds = .{ .x = 32, .y = 118, .width = 448, .height = 570 }, .color = palette.deep } });
     result.add(.{ .cartridge = .{
-        .bounds = .{ .x = 70, .y = 148, .width = 372, .height = 426 },
+        .bounds = .{ .x = 96, .y = 140, .width = 320, .height = 440 },
         .platform = game.platform_id,
         .texture = game.assets.preview,
-        .sprite = game.assets.sprite,
+        .sprite = game.assets.cover orelse game.assets.card orelse game.assets.sprite,
         .selected = true,
     } });
     result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 132, .width = 430, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
