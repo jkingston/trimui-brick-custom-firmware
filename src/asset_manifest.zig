@@ -29,6 +29,7 @@ pub const Assets = struct {
     rear: ?[]const u8 = null,
     disc: ?[]const u8 = null,
     preview: ?Texture = null,
+    sprite: ?Texture = null,
 };
 
 pub const Texture = struct { width: u16, height: u16, pixels: []const u32 };
@@ -64,10 +65,13 @@ fn modelPath(allocator: std.mem.Allocator, asset_root: []const u8, id: ?[]const 
     return try confinedPath(allocator, asset_root, relative);
 }
 
-fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8, textures: ?std.json.Value) !?Texture {
+fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8, textures: ?std.json.Value, name: []const u8) !?Texture {
     const value = textures orelse return null;
     if (value != .object) return error.InvalidAssetTextures;
-    const member = value.object.get("artwork.front") orelse value.object.get("artwork.disc") orelse return null;
+    const member = if (std.mem.eql(u8, name, "artwork"))
+        value.object.get("artwork.front") orelse value.object.get("artwork.disc") orelse return null
+    else
+        value.object.get(name) orelse return null;
     if (member != .string) return error.InvalidAssetTextures;
     const path = try confinedPath(allocator, asset_root, member.string);
     const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(4 * 1024 * 1024));
@@ -106,7 +110,8 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !st
             .top = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.top"),
             .rear = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.rear"),
             .disc = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.disc"),
-            .preview = try loadTexture(io, allocator, asset_root, entry.textures),
+            .preview = try loadTexture(io, allocator, asset_root, entry.textures, "artwork"),
+            .sprite = try loadTexture(io, allocator, asset_root, entry.textures, "sprite.hero"),
         };
         try result.put(rom, assets);
     }
@@ -148,7 +153,7 @@ test "manifest loads the decoder-free runtime preview" {
         "\x03\x02\x01\xff\x30\x20\x10\x80" });
     try temporary.dir.writeFile(io, .{ .sub_path = "Assets/Brick/library.json", .data =
         \\{"schema_version":1,"asset_index_version":"test","games":[
-        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx"}}
+        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx","sprite.hero":"textures/aa/label.brtx"}}
         \\],"attribution":{}}
     });
     var assets = try load(io, allocator, root);
@@ -159,6 +164,7 @@ test "manifest loads the decoder-free runtime preview" {
     try std.testing.expectEqual(@as(u16, 1), texture.height);
     try std.testing.expectEqual(@as(u32, 0xff010203), texture.pixels[0]);
     try std.testing.expectEqual(@as(u32, 0x80102030), texture.pixels[1]);
+    try std.testing.expectEqual(@as(u16, 2), assets.get(rom).?.sprite.?.width);
 }
 
 test "manifest rejects model path injection" {

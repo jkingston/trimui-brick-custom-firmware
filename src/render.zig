@@ -136,6 +136,18 @@ pub const Surface = struct {
 
     fn drawCartridge(self: Surface, cartridge: ui.Cartridge) void {
         const bounds = cartridge.bounds;
+        if (cartridge.sprite) |sprite| {
+            if (cartridge.selected) {
+                self.fill(bounds, ui.palette.pine);
+                const inset: u16 = 4;
+                const inner = ui.Rect{ .x = bounds.x + inset, .y = bounds.y + inset, .width = bounds.width - inset * 2, .height = bounds.height - inset * 2 };
+                self.fill(inner, ui.palette.paper);
+                self.drawTexture(sprite, inner);
+            } else {
+                self.drawTexture(sprite, bounds);
+            }
+            return;
+        }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
             .{ .width = 15, .height = 9 }
         else if (platformIs(cartridge.platform, "snes"))

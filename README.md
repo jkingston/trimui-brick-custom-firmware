@@ -88,12 +88,12 @@ the [asset repository](https://github.com/jkingston/trimui-brick-cartridge-asset
 then synchronize through the Brick's USB network interface:
 
 ```sh
-python3 tools/sync_ssh_assets.py --dry-run
-python3 tools/sync_ssh_assets.py
+uv run python tools/sync_ssh_assets.py --dry-run
+uv run python tools/sync_ssh_assets.py
 ```
 
-The first command reports unmatched games without writing. The second transfers
-only matched labels and atomically installs them under `/data/Assets/Brick`.
+The first command reports unmatched games without writing. The second renders
+the required models and labels, then atomically installs them under `/data/Assets/Brick`.
 ROM contents never leave the device; cartridge files are hashed on the Brick.
 The workflow does not require wireless networking.
 

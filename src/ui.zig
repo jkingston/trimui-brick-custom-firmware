@@ -27,6 +27,7 @@ pub const Cartridge = struct {
     bounds: Rect,
     platform: []const u8,
     texture: ?@import("asset_manifest.zig").Texture,
+    sprite: ?@import("asset_manifest.zig").Texture,
     selected: bool = false,
 };
 pub const OverlayRow = struct {
@@ -221,6 +222,7 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
                 },
                 .platform = game.platform_id,
                 .texture = game.assets.preview,
+                .sprite = game.assets.sprite,
                 .selected = game_index == selected,
             } });
         }
@@ -239,6 +241,7 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
                 .bounds = .{ .x = 64 + column * 242, .y = 138 + row * 286, .width = 154, .height = 190 },
                 .platform = game.platform_id,
                 .texture = game.assets.preview,
+                .sprite = game.assets.sprite,
                 .selected = first + index == selected,
             } });
             result.add(.{ .text = .{
@@ -264,6 +267,7 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
         .bounds = .{ .x = 590, .y = 118, .width = 336, .height = 336 },
         .platform = game.platform_id,
         .texture = game.assets.preview,
+        .sprite = game.assets.sprite,
         .selected = true,
     } });
     result.add(.{ .text = .{ .bounds = .{ .x = 520, .y = 494, .width = 454, .height = 52 }, .value = game.title, .color = palette.ink, .scale = 4 } });
@@ -280,6 +284,7 @@ pub fn gameDetail(game: catalog.Game, launch_failed: ?[]const u8) Tree {
         .bounds = .{ .x = 54, .y = 126, .width = 410, .height = 410 },
         .platform = game.platform_id,
         .texture = game.assets.preview,
+        .sprite = game.assets.sprite,
         .selected = true,
     } });
     result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 128, .width = 430, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
