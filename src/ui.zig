@@ -29,6 +29,7 @@ pub const Cartridge = struct {
     texture: ?@import("asset_manifest.zig").Texture,
     sprite: ?@import("asset_manifest.zig").Texture,
     selected: bool = false,
+    dim: u8 = 0,
 };
 pub const OverlayRow = struct {
     bounds: Rect,
@@ -194,58 +195,53 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
     var result = Tree{ .background = palette.paper };
     header(&result, "Games");
     result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 96, .width = 360, .height = 34 }, .value = "All systems", .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 846, .y = 96, .width = 140, .height = 34 }, .value = "F1  View", .color = palette.pine, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 844, .y = 96, .width = 142, .height = 34 }, .value = "F1  View", .color = palette.pine, .scale = 2 } });
     if (games.len == 0) {
         result.add(.{ .text = .{ .bounds = .{ .x = 40, .y = 176, .width = 460, .height = 48 }, .value = "No games found", .color = palette.ink, .scale = 3 } });
         result.add(.{ .text = .{ .bounds = .{ .x = 42, .y = 232, .width = 500, .height = 34 }, .value = "Copy games to the Roms folder", .color = palette.quiet, .scale = 2 } });
         return result;
     }
     if (view == .shelf) {
-        const positions = [_]Rect{
-            .{ .x = 38, .y = 174, .width = 190, .height = 300 },
-            .{ .x = 220, .y = 174, .width = 190, .height = 300 },
-            .{ .x = 402, .y = 174, .width = 190, .height = 300 },
-            .{ .x = 584, .y = 174, .width = 190, .height = 300 },
-            .{ .x = 766, .y = 174, .width = 190, .height = 300 },
-        };
-        for (positions, 0..) |position, index| {
-            if (index < 2 and selected < 2 - index) continue;
-            const game_index = if (index < 2) selected - (2 - index) else selected + (index - 2);
+        result.add(.{ .bar = .{ .bounds = .{ .x = 24, .y = 132, .width = 976, .height = 430 }, .color = palette.deep } });
+        result.add(.{ .bar = .{ .bounds = .{ .x = 24, .y = 560, .width = 976, .height = 2 }, .color = palette.pine } });
+        const order = [_]i8{ -3, 3, -2, 2, -1, 1, 0 };
+        for (order) |relative| {
+            if (relative < 0 and selected < @as(usize, @intCast(-relative))) continue;
+            const game_index = if (relative < 0) selected - @as(usize, @intCast(-relative)) else selected + @as(usize, @intCast(relative));
             if (game_index >= games.len) continue;
             const game = games[game_index];
             result.add(.{ .cartridge = .{
-                .bounds = .{
-                    .x = @intCast(@max(0, @as(i32, position.x) + shelf_offset)),
-                    .y = position.y,
-                    .width = position.width,
-                    .height = position.height,
-                },
+                .bounds = shelfRect(relative, shelf_offset),
                 .platform = game.platform_id,
                 .texture = game.assets.preview,
                 .sprite = game.assets.sprite,
                 .selected = game_index == selected,
+                .dim = if (relative == 0) 0 else if (relative == -1 or relative == 1) 54 else 112,
             } });
         }
         const game = games[selected];
-        result.add(.{ .text = .{ .bounds = .{ .x = 170, .y = 550, .width = 684, .height = 56 }, .value = game.title, .color = palette.ink, .scale = 4 } });
-        result.add(.{ .text = .{ .bounds = .{ .x = 280, .y = 614, .width = 464, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
-        result.add(.{ .text = .{ .bounds = .{ .x = 374, .y = 690, .width = 300, .height = 34 }, .value = "A  Open", .color = palette.pine, .scale = 2 } });
+        result.add(.{ .text = .{ .bounds = .{ .x = 64, .y = 586, .width = 896, .height = 54 }, .value = game.title, .color = palette.ink, .scale = 4 } });
+        result.add(.{ .text = .{ .bounds = .{ .x = 66, .y = 646, .width = 680, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
+        result.add(.{ .text = .{ .bounds = .{ .x = 66, .y = 704, .width = 300, .height = 34 }, .value = "LEFT / RIGHT", .color = palette.quiet, .scale = 2 } });
+        result.add(.{ .text = .{ .bounds = .{ .x = 842, .y = 704, .width = 140, .height = 34 }, .value = "A  Open", .color = palette.pine, .scale = 2 } });
         return result;
     }
     if (view == .grid) {
-        const first = (selected / 8) * 8;
-        for (games[first..@min(first + 8, games.len)], 0..) |game, index| {
-            const column: u16 = @intCast(index % 4);
-            const row: u16 = @intCast(index / 4);
+        const first = (selected / 6) * 6;
+        for (games[first..@min(first + 6, games.len)], 0..) |game, index| {
+            const column: u16 = @intCast(index % 3);
+            const row: u16 = @intCast(index / 3);
+            const card = Rect{ .x = 32 + column * 326, .y = 132 + row * 298, .width = 304, .height = 280 };
+            result.add(.{ .bar = .{ .bounds = card, .color = if (first + index == selected) palette.selected else palette.surface } });
             result.add(.{ .cartridge = .{
-                .bounds = .{ .x = 64 + column * 242, .y = 138 + row * 286, .width = 154, .height = 190 },
+                .bounds = .{ .x = card.x + 42, .y = card.y + 10, .width = 220, .height = 208 },
                 .platform = game.platform_id,
                 .texture = game.assets.preview,
                 .sprite = game.assets.sprite,
                 .selected = first + index == selected,
             } });
             result.add(.{ .text = .{
-                .bounds = .{ .x = 40 + column * 242, .y = 340 + row * 286, .width = 210, .height = 34 },
+                .bounds = .{ .x = card.x + 18, .y = card.y + 228, .width = card.width - 36, .height = 38 },
                 .value = game.title,
                 .color = if (first + index == selected) palette.pine else palette.ink,
                 .scale = 2,
@@ -256,47 +252,73 @@ pub fn library(games: []const catalog.Game, selected: usize, view: LibraryView, 
     const first = if (selected >= 5) selected - 4 else 0;
     for (games[first..@min(first + 5, games.len)], first..) |game, index| {
         result.add(.{ .menu_row = .{
-            .bounds = menu.row(index - first),
+            .bounds = .{ .x = 32, .y = 140 + @as(u16, @intCast(index - first)) * 112, .width = 424, .height = 96 },
             .label = game.title,
             .detail = game.system,
             .selected = index == selected,
         } });
     }
     const game = games[selected];
+    result.add(.{ .bar = .{ .bounds = .{ .x = 488, .y = 132, .width = 504, .height = 536 }, .color = palette.deep } });
     result.add(.{ .cartridge = .{
-        .bounds = .{ .x = 590, .y = 118, .width = 336, .height = 336 },
+        .bounds = .{ .x = 566, .y = 148, .width = 348, .height = 354 },
         .platform = game.platform_id,
         .texture = game.assets.preview,
         .sprite = game.assets.sprite,
         .selected = true,
     } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 520, .y = 494, .width = 454, .height = 52 }, .value = game.title, .color = palette.ink, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 522, .y = 554, .width = 430, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 522, .y = 596, .width = 430, .height = 34 }, .value = game.summary, .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 522, .y = 682, .width = 340, .height = 34 }, .value = "A  Open", .color = palette.pine, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 524, .y = 516, .width = 432, .height = 52 }, .value = game.title, .color = palette.white, .scale = 4 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 580, .width = 420, .height = 34 }, .value = game.system, .color = palette.chrome, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 624, .width = 320, .height = 34 }, .value = "A  Open", .color = palette.white, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 34, .y = 710, .width = 300, .height = 34 }, .value = "Hold to browse", .color = palette.quiet, .scale = 2 } });
     return result;
+}
+
+fn shelfBase(relative: i8) Rect {
+    return switch (relative) {
+        -3 => .{ .x = 0, .y = 230, .width = 116, .height = 202 },
+        -2 => .{ .x = 18, .y = 210, .width = 172, .height = 242 },
+        -1 => .{ .x = 100, .y = 178, .width = 252, .height = 322 },
+        0 => .{ .x = 337, .y = 146, .width = 350, .height = 390 },
+        1 => .{ .x = 672, .y = 178, .width = 252, .height = 322 },
+        2 => .{ .x = 834, .y = 210, .width = 172, .height = 242 },
+        else => .{ .x = 908, .y = 230, .width = 116, .height = 202 },
+    };
+}
+
+fn shelfRect(relative: i8, offset: i16) Rect {
+    const target = shelfBase(relative);
+    if (offset == 0) return target;
+    const prior_relative = relative + (if (offset > 0) @as(i8, 1) else -1);
+    const prior = shelfBase(prior_relative);
+    const amount: i32 = @min(@as(i32, 1000), @abs(@as(i32, offset)));
+    return .{
+        .x = @intCast(@divTrunc(@as(i32, target.x) * (1000 - amount) + @as(i32, prior.x) * amount, 1000)),
+        .y = @intCast(@divTrunc(@as(i32, target.y) * (1000 - amount) + @as(i32, prior.y) * amount, 1000)),
+        .width = @intCast(@divTrunc(@as(i32, target.width) * (1000 - amount) + @as(i32, prior.width) * amount, 1000)),
+        .height = @intCast(@divTrunc(@as(i32, target.height) * (1000 - amount) + @as(i32, prior.height) * amount, 1000)),
+    };
 }
 
 pub fn gameDetail(game: catalog.Game, launch_failed: ?[]const u8) Tree {
     var result = Tree{ .background = palette.paper };
     header(&result, "Game");
+    result.add(.{ .bar = .{ .bounds = .{ .x = 32, .y = 118, .width = 448, .height = 570 }, .color = palette.deep } });
     result.add(.{ .cartridge = .{
-        .bounds = .{ .x = 54, .y = 126, .width = 410, .height = 410 },
+        .bounds = .{ .x = 70, .y = 148, .width = 372, .height = 426 },
         .platform = game.platform_id,
         .texture = game.assets.preview,
         .sprite = game.assets.sprite,
         .selected = true,
     } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 128, .width = 430, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 500, .y = 174, .width = 492, .height = 60 }, .value = game.title, .color = palette.ink, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 244, .width = 420, .height = 34 }, .value = game.summary, .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .bar = .{ .bounds = .{ .x = 528, .y = 320, .width = 424, .height = 92 }, .color = palette.pine } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 566, .y = 342, .width = 220, .height = 52 }, .value = "Play", .color = palette.white, .scale = 4 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 892, .y = 346, .width = 42, .height = 44 }, .value = "A", .color = palette.white, .scale = 3 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 470, .width = 300, .height = 34 }, .value = "Last played", .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 510, .width = 300, .height = 44 }, .value = "Yesterday", .color = palette.ink, .scale = 3 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 580, .width = 300, .height = 34 }, .value = "Latest save", .color = palette.quiet, .scale = 2 } });
-    result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 620, .width = 360, .height = 44 }, .value = "Auto save available", .color = palette.ink, .scale = 3 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 132, .width = 430, .height = 34 }, .value = game.system, .color = palette.pine, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 524, .y = 184, .width = 456, .height = 114 }, .value = game.title, .color = palette.ink, .scale = 4 } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 524, .y = 330, .width = 436, .height = 92 }, .color = palette.pine } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 560, .y = 352, .width = 220, .height = 52 }, .value = "Play", .color = palette.white, .scale = 4 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 900, .y = 356, .width = 42, .height = 44 }, .value = "A", .color = palette.white, .scale = 3 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 466, .width = 410, .height = 34 }, .value = "Progress saves automatically", .color = palette.quiet, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 516, .width = 410, .height = 34 }, .value = "Menu opens the game overlay", .color = palette.quiet, .scale = 2 } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 526, .y = 636, .width = 240, .height = 34 }, .value = "B  Back", .color = palette.pine, .scale = 2 } });
     if (launch_failed) |message|
         result.add(.{ .text = .{ .bounds = .{ .x = 530, .y = 690, .width = 440, .height = 34 }, .value = message, .color = palette.coral, .scale = 2 } });
     return result;

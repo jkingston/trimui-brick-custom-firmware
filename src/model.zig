@@ -38,8 +38,8 @@ pub const Model = struct {
                         self.selected = if (self.selected == 0) self.itemCount() - 1 else self.selected - 1;
                     },
                     .shelf => {},
-                    .grid => if (self.selected >= 4) {
-                        self.selected -= 4;
+                    .grid => if (self.selected >= 3) {
+                        self.selected -= 3;
                     },
                 } else if (self.page != .game and self.itemCount() > 0)
                     self.selected = if (self.selected == 0) self.itemCount() - 1 else self.selected - 1;
@@ -50,14 +50,14 @@ pub const Model = struct {
                         self.selected = (self.selected + 1) % self.itemCount();
                     },
                     .shelf => {},
-                    .grid => if (self.selected + 4 < self.itemCount()) {
-                        self.selected += 4;
+                    .grid => if (self.selected + 3 < self.itemCount()) {
+                        self.selected += 3;
                     },
                 } else if (self.page != .game and self.itemCount() > 0)
                     self.selected = (self.selected + 1) % self.itemCount();
             },
             .left => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
-                if (self.selected % 4 != 0) self.selected -= 1;
+                if (self.selected % 3 != 0) self.selected -= 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected != 0) self.selected -= 1;
             } else if (self.page == .settings and self.selected < 4) {
@@ -66,7 +66,7 @@ pub const Model = struct {
                 self.pending_setting = setting;
             },
             .right => if (self.page == .games and self.library_view == .grid and self.games.len > 0) {
-                if (self.selected % 4 != 3 and self.selected + 1 < self.games.len) self.selected += 1;
+                if (self.selected % 3 != 2 and self.selected + 1 < self.games.len) self.selected += 1;
             } else if (self.page == .games and self.library_view == .shelf and self.games.len > 0) {
                 if (self.selected + 1 < self.games.len) self.selected += 1;
             } else if (self.page == .settings and self.selected < 4) {
@@ -229,7 +229,7 @@ test "F1 cycles library views and shelf navigation stops at the ends" {
     try std.testing.expectEqual(ui.LibraryView.grid, state.library_view);
     state.selected = 0;
     try std.testing.expect(state.apply(.down));
-    try std.testing.expectEqual(@as(usize, 4), state.selected);
+    try std.testing.expectEqual(@as(usize, 3), state.selected);
     try std.testing.expect(!state.apply(.left));
     try std.testing.expect(state.apply(.up));
     try std.testing.expectEqual(@as(usize, 0), state.selected);

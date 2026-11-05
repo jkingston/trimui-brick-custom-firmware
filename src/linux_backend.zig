@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const catalog = @import("catalog.zig");
+const input_repeat = @import("input_repeat.zig");
 const model = @import("model.zig");
 const overlay = @import("overlay.zig");
 const render = @import("render.zig");
@@ -251,18 +252,72 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
         if (event.event_type == ev_syn and event.code == syn_report) dropped.* = false;
         return null;
     }
-    if (event.event_type != ev_key or (event.value != 1 and event.value != 2)) return null;
+    if (event.event_type != ev_key or event.value != 1) return null;
     return switch (event.code) {
         btn_dpad_up => .up,
         btn_dpad_down => .down,
         btn_dpad_left => .left,
         btn_dpad_right => .right,
-        btn_east => if (event.value == 1) .select else null,
-        btn_south => if (event.value == 1) .back else null,
-        btn_mode => if (event.value == 1) .menu else null,
-        btn_view => if (event.value == 1) .view else null,
+        btn_east => .select,
+        btn_south => .back,
+        btn_mode => .menu,
+        btn_view => .view,
         else => null,
     };
+}
+
+fn directionForCode(code: u16) ?model.Action {
+    return switch (code) {
+        btn_dpad_up => .up,
+        btn_dpad_down => .down,
+        btn_dpad_left => .left,
+        btn_dpad_right => .right,
+        else => null,
+    };
+}
+
+fn nowMilliseconds(io: std.Io) i64 {
+    return std.Io.Timestamp.now(io, .awake).toMilliseconds();
+}
+
+fn observeRepeat(repeat: *input_repeat.Controller, event: InputEvent, now_ms: i64) void {
+    if (event.event_type == ev_syn and event.code == syn_dropped) {
+        repeat.reset();
+        return;
+    }
+    if (event.event_type != ev_key) return;
+    const action = directionForCode(event.code) orelse return;
+    switch (event.value) {
+        0 => repeat.release(action),
+        1 => repeat.press(action, now_ms),
+        else => {},
+    }
+}
+
+fn repeatAllowed(state: *const model.Model, action: model.Action) bool {
+    return action == .up or action == .down or
+        (state.page == .games and (action == .left or action == .right));
+}
+
+const SessionAction = struct { changed: bool = false, launch: ?usize = null };
+
+fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, tree: *ui.Tree, action: model.Action, animate: bool) !SessionAction {
+    const previous_selected = state.selected;
+    if (!state.apply(action)) return .{};
+    if (state.takeSetting()) |setting|
+        settings.apply(io, state.settings, setting) catch {
+            state.settings = settings.load(io);
+        };
+    if (state.takeLaunch()) |index| return .{ .launch = index };
+    if (animate and state.page == .games and state.library_view == .shelf and previous_selected != state.selected) {
+        const initial: i16 = if (state.selected > previous_selected) 1000 else -1000;
+        var frame: i16 = 4;
+        while (frame > 0) : (frame -= 1) {
+            tree.* = state.treeWithShelfOffset(@divTrunc(initial * frame, 5));
+            try framebuffer.show(tree);
+        }
+    }
+    return .{ .changed = true };
 }
 
 fn runSession(io: std.Io, state: *model.Model) !?usize {
@@ -285,16 +340,22 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
     defer closeFd(io, input_fd, true);
     var poll_fds = [_]std.posix.pollfd{.{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 }};
     var dropped = false;
+    var repeat: input_repeat.Controller = .{};
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
-        // A static screen has no timer. The process blocks until real input arrives.
-        _ = try std.posix.poll(&poll_fds, -1);
+        const ready = try std.posix.poll(&poll_fds, repeat.timeout(nowMilliseconds(io)));
         if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
             return error.GamepadDisconnected;
-        if ((poll_fds[0].revents & std.posix.POLL.IN) == 0) continue;
         var changed = false;
-        while (true) {
+        if (ready == 0) {
+            if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
+                const result = try applySessionAction(io, state, &framebuffer, &tree, action, false);
+                if (result.launch) |index| return index;
+                changed = result.changed;
+            };
+        }
+        while ((poll_fds[0].revents & std.posix.POLL.IN) != 0) {
             const bytes_read = std.posix.read(input_fd, &buffer) catch |err| switch (err) {
                 error.WouldBlock => break,
                 else => return err,
@@ -303,24 +364,11 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
             if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
             const events = std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read]);
             for (events) |event| {
+                observeRepeat(&repeat, event, nowMilliseconds(io));
                 if (actionForEvent(event, &dropped)) |action| {
-                    const previous_selected = state.selected;
-                    if (state.apply(action)) {
-                        if (state.takeSetting()) |setting|
-                            settings.apply(io, state.settings, setting) catch {
-                                state.settings = settings.load(io);
-                            };
-                        if (state.takeLaunch()) |index| return index;
-                        if (state.page == .games and state.library_view == .shelf and previous_selected != state.selected) {
-                            const initial: i16 = if (state.selected > previous_selected) 182 else -182;
-                            var frame: i16 = 7;
-                            while (frame > 0) : (frame -= 1) {
-                                tree = state.treeWithShelfOffset(@divTrunc(initial * frame, 8));
-                                try framebuffer.show(&tree);
-                            }
-                        }
-                        changed = true;
-                    }
+                    const result = try applySessionAction(io, state, &framebuffer, &tree, action, true);
+                    if (result.launch) |index| return index;
+                    changed = changed or result.changed;
                 }
             }
             if (bytes_read < buffer.len) break;
@@ -345,15 +393,21 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     defer closeFd(io, input_fd, true);
     var poll_fds = [_]std.posix.pollfd{.{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 }};
     var dropped = false;
+    var repeat: input_repeat.Controller = .{};
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
-        _ = try std.posix.poll(&poll_fds, -1);
+        const ready = try std.posix.poll(&poll_fds, repeat.timeout(nowMilliseconds(io)));
         if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
             return error.GamepadDisconnected;
-        if ((poll_fds[0].revents & std.posix.POLL.IN) == 0) continue;
         var changed = false;
-        while (true) {
+        if (ready == 0) {
+            if (repeat.due(nowMilliseconds(io))) |action| {
+                if (action == .up or action == .down)
+                    changed = state.apply(action) or changed;
+            }
+        }
+        while ((poll_fds[0].revents & std.posix.POLL.IN) != 0) {
             const bytes_read = std.posix.read(input_fd, &buffer) catch |err| switch (err) {
                 error.WouldBlock => break,
                 else => return err,
@@ -361,6 +415,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
             if (bytes_read == 0) return error.GamepadDisconnected;
             if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
             for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
+                observeRepeat(&repeat, event, nowMilliseconds(io));
                 if (actionForEvent(event, &dropped)) |action| {
                     if (state.apply(action)) changed = true;
                     if (state.takeCommand()) |command| return command;
@@ -446,12 +501,12 @@ pub fn probe(io: std.Io) !void {
     try framebuffer.show(&tree);
 }
 
-test "navigation repeats and dropped streams resynchronise" {
+test "navigation presses and dropped streams resynchronise" {
     const testing = std.testing;
     var dropped = false;
     try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 1 }, &dropped).?);
     try testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_left, .value = 1 }, &dropped).?);
-    try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 2 }, &dropped).?);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 2 }, &dropped) == null);
     try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 2 }, &dropped) == null);
     try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = syn_dropped, .value = 0 }, &dropped) == null);
     try testing.expect(dropped);

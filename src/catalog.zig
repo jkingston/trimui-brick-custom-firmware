@@ -113,6 +113,30 @@ fn lessThan(_: void, a: Game, b: Game) bool {
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
 
+fn displayTitle(allocator: std.mem.Allocator, file_name: []const u8) ![]const u8 {
+    const stem = std.Io.Dir.path.stem(file_name);
+    const known = [_]struct { name: []const u8, title: []const u8 }{
+        .{ .name = "turfmast", .title = "Neo Turf Masters" },
+        .{ .name = "pbobblen", .title = "Puzzle Bobble" },
+        .{ .name = "mslugx", .title = "Metal Slug X" },
+    };
+    for (known) |entry|
+        if (std.ascii.eqlIgnoreCase(stem, entry.name)) return allocator.dupe(u8, entry.title);
+
+    var end = stem.len;
+    while (end > 0 and stem[end - 1] == ')') {
+        const open = std.mem.findScalarLast(u8, stem[0..end], '(') orelse break;
+        end = std.mem.trimEnd(u8, stem[0..open], " ").len;
+    }
+    const clean = stem[0..end];
+    if (std.mem.indexOf(u8, clean, ", The")) |article| {
+        const remainder = clean[article + ", The".len ..];
+        if (remainder.len == 0 or std.mem.startsWith(u8, remainder, " - "))
+            return std.fmt.allocPrint(allocator, "The {s}{s}", .{ clean[0..article], remainder });
+    }
+    return allocator.dupe(u8, clean);
+}
+
 /// Strings and the returned slice belong to allocator (normally a session arena).
 /// Enumerate actual root entries once: FAT's case folding must not duplicate ROMs.
 pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]const Game {
@@ -143,7 +167,7 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
                 if (!contains(system.extensions, std.Io.Dir.path.extension(file.basename))) continue;
                 const path = try std.Io.Dir.path.join(allocator, &.{ folder_path, file.path });
                 var game = Game{
-                    .title = try allocator.dupe(u8, std.Io.Dir.path.stem(file.basename)),
+                    .title = try displayTitle(allocator, file.basename),
                     .system = system.label,
                     .platform_id = system.id,
                     .summary = system.label,
@@ -209,6 +233,19 @@ test "system aliases include existing and MinUI folder names" {
     try std.testing.expect(systemFor("BIOS") == null);
 }
 
+test "display titles omit ROM tags and expand arcade short names" {
+    const allocator = std.testing.allocator;
+    const pokemon = try displayTitle(allocator, "Pokemon - Red Version (USA, Europe) (Rev 1).gb");
+    defer allocator.free(pokemon);
+    try std.testing.expectEqualStrings("Pokemon - Red Version", pokemon);
+    const golf = try displayTitle(allocator, "turfmast.zip");
+    defer allocator.free(golf);
+    try std.testing.expectEqualStrings("Neo Turf Masters", golf);
+    const zelda = try displayTitle(allocator, "Legend of Zelda, The - A Link to the Past (USA).sfc");
+    defer allocator.free(zelda);
+    try std.testing.expectEqualStrings("The Legend of Zelda - A Link to the Past", zelda);
+}
+
 test "discovery reads mixed layouts and hides BIOS, tracks and playlist members" {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -228,7 +265,7 @@ test "discovery reads mixed layouts and hides BIOS, tracks and playlist members"
     try std.testing.expectEqualStrings("Beta", library[1].title);
     try std.testing.expectEqualStrings("Collection", library[2].title);
     try std.testing.expectEqualStrings("Golf", library[3].title);
-    try std.testing.expectEqualStrings("turfmast", library[4].title);
+    try std.testing.expectEqualStrings("Neo Turf Masters", library[4].title);
     try std.testing.expect(std.mem.endsWith(u8, library[1].rom_path, "/roms/snes/Hacks/Beta.sfc"));
 }
 

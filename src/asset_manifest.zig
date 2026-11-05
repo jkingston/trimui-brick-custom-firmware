@@ -34,7 +34,15 @@ pub const Assets = struct {
     sprite: ?Texture = null,
 };
 
-pub const Texture = struct { width: u16, height: u16, pixels: []const u32 };
+pub const Texture = struct {
+    width: u16,
+    height: u16,
+    pixels: []const u32,
+    content_x: u16,
+    content_y: u16,
+    content_width: u16,
+    content_height: u16,
+};
 
 fn confinedPath(allocator: std.mem.Allocator, root: []const u8, relative: []const u8) ![]const u8 {
     if (std.Io.Dir.path.isAbsolute(relative)) return error.AssetPathEscapesRoot;
@@ -83,14 +91,35 @@ fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8,
     const count = @as(usize, width) * height;
     if (width == 0 or height == 0 or contents.len != 8 + count * 4) return error.InvalidAssetTexture;
     const pixels = try allocator.alloc(u32, count);
+    var min_x = width;
+    var min_y = height;
+    var max_x: u16 = 0;
+    var max_y: u16 = 0;
     for (pixels, 0..) |*pixel, index| {
         const offset = 8 + index * 4;
         pixel.* = @as(u32, contents[offset]) |
             (@as(u32, contents[offset + 1]) << 8) |
             (@as(u32, contents[offset + 2]) << 16) |
             (@as(u32, contents[offset + 3]) << 24);
+        if (contents[offset + 3] != 0) {
+            const x: u16 = @intCast(index % width);
+            const y: u16 = @intCast(index / width);
+            min_x = @min(min_x, x);
+            min_y = @min(min_y, y);
+            max_x = @max(max_x, x);
+            max_y = @max(max_y, y);
+        }
     }
-    return .{ .width = width, .height = height, .pixels = pixels };
+    const empty = min_x == width;
+    return .{
+        .width = width,
+        .height = height,
+        .pixels = pixels,
+        .content_x = if (empty) 0 else min_x,
+        .content_y = if (empty) 0 else min_y,
+        .content_width = if (empty) width else max_x - min_x + 1,
+        .content_height = if (empty) height else max_y - min_y + 1,
+    };
 }
 
 pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {

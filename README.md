@@ -92,8 +92,9 @@ uv run python tools/sync_ssh_assets.py --dry-run
 uv run python tools/sync_ssh_assets.py
 ```
 
-The first command reports unmatched games without writing. The second renders
-the required models and labels, then atomically installs them under `/data/Assets/Brick`.
+The first command reports unmatched games without writing. The second downloads
+available curated labels, generates clearly neutral labels for unmatched games,
+renders the required models, then atomically installs them under `/data/Assets/Brick`.
 ROM contents never leave the device; cartridge files are hashed on the Brick.
 The workflow does not require wireless networking.
 

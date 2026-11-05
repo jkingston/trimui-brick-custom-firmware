@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brick Linux <brick-linux@localhost>
+Date: Thu, 5 Nov 2026 00:00:00 +0000
+Subject: [PATCH] plain_drm: handle duplicate frames
+
+Libretro cores may pass a null frame pointer to request duplication of the
+previous video frame. PCSX-ReARMed and FinalBurn Neo both do this during
+startup. The plain DRM backend dereferences the pointer unconditionally and
+crashes. Keep the current scanout buffer for duplicate frames.
+---
+ gfx/drivers/drm_gfx.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/gfx/drivers/drm_gfx.c
++++ b/gfx/drivers/drm_gfx.c
+@@ -787,6 +787,10 @@ static bool drm_frame(void *data, const void *frame, unsigned width,
+    menu_driver_frame(menu_is_alive, video_info);
+ #endif
+ 
++   /* A null frame is libretro's request to duplicate the last frame. */
++   if (!frame)
++      return true;
++
+    /* Update main surface: locate free page, blit and flip. */
+    drm_surface_update(_drmvars, frame, _drmvars->main_surface);
+    /* The menu owns the single plane until it closes. */
+-- 
+2.51.0

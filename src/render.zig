@@ -107,16 +107,34 @@ pub const Surface = struct {
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
+        self.drawTextureDimmed(texture, bounds, 0);
+    }
+
+    fn drawTextureDimmed(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect, dim: u8) void {
         if (bounds.width == 0 or bounds.height == 0) return;
+        var fitted = bounds;
+        const fitted_width = @as(u32, bounds.height) * texture.content_width / texture.content_height;
+        if (fitted_width <= bounds.width) {
+            fitted.width = @intCast(fitted_width);
+            fitted.x += (bounds.width - fitted.width) / 2;
+        } else {
+            fitted.height = @intCast(@as(u32, bounds.width) * texture.content_height / texture.content_width);
+            fitted.y += (bounds.height - fitted.height) / 2;
+        }
         var y: u16 = 0;
-        while (y < bounds.height and bounds.y + y < height) : (y += 1) {
-            const source_y = @as(usize, y) * texture.height / bounds.height;
+        while (y < fitted.height and fitted.y + y < height) : (y += 1) {
+            const source_y = texture.content_y + @as(usize, y) * texture.content_height / fitted.height;
             var x: u16 = 0;
-            while (x < bounds.width and bounds.x + x < width) : (x += 1) {
-                const source_x = @as(usize, x) * texture.width / bounds.width;
-                const source: ui.Color = @bitCast(texture.pixels[source_y * texture.width + source_x]);
+            while (x < fitted.width and fitted.x + x < width) : (x += 1) {
+                const source_x = texture.content_x + @as(usize, x) * texture.content_width / fitted.width;
+                var source: ui.Color = @bitCast(texture.pixels[source_y * texture.width + source_x]);
                 if (source.a == 0) continue;
-                const index = @as(usize, bounds.y + y) * width + bounds.x + x;
+                if (dim != 0) {
+                    source.r = blend255(source.r, ui.palette.deep.r, dim);
+                    source.g = blend255(source.g, ui.palette.deep.g, dim);
+                    source.b = blend255(source.b, ui.palette.deep.b, dim);
+                }
+                const index = @as(usize, fitted.y + y) * width + fitted.x + x;
                 if (source.a == 255) {
                     self.pixels[index] = @bitCast(source);
                 } else {
@@ -137,15 +155,7 @@ pub const Surface = struct {
     fn drawCartridge(self: Surface, cartridge: ui.Cartridge) void {
         const bounds = cartridge.bounds;
         if (cartridge.sprite) |sprite| {
-            if (cartridge.selected) {
-                self.fill(bounds, ui.palette.pine);
-                const inset: u16 = 4;
-                const inner = ui.Rect{ .x = bounds.x + inset, .y = bounds.y + inset, .width = bounds.width - inset * 2, .height = bounds.height - inset * 2 };
-                self.fill(inner, ui.palette.paper);
-                self.drawTexture(sprite, inner);
-            } else {
-                self.drawTexture(sprite, bounds);
-            }
+            self.drawTextureDimmed(sprite, bounds, cartridge.dim);
             return;
         }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))

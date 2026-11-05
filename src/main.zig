@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const catalog = @import("catalog.zig");
 const linux_backend = @import("linux_backend.zig");
 const library_scan = @import("library_scan.zig");
 const model = @import("model.zig");
@@ -29,19 +30,26 @@ pub fn writePpm(io: std.Io, path: []const u8, pixels: []const u32) !void {
     try writer.interface.flush();
 }
 
-fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: []const u8) !void {
+fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: []const u8, games: ?[]const catalog.Game, selected: usize) !void {
     const pixels = try allocator.alloc(u32, render.width * render.height);
     defer allocator.free(pixels);
     @memset(pixels, 0xff13253c);
     const surface = render.Surface{ .pixels = pixels };
     var state = model.Model{};
+    if (games) |library| {
+        state.games = library;
+        if (library.len > 0) {
+            state.selected = @min(selected, library.len - 1);
+            state.game_index = state.selected;
+        }
+    }
     if (std.mem.eql(u8, screen, "games") or std.mem.eql(u8, screen, "games-shelf") or std.mem.eql(u8, screen, "games-grid")) {
         state.page = .games;
         if (std.mem.eql(u8, screen, "games-shelf")) state.library_view = .shelf;
         if (std.mem.eql(u8, screen, "games-grid")) state.library_view = .grid;
     } else if (std.mem.eql(u8, screen, "game")) {
         state.page = .game;
-        state.game_index = 1;
+        if (games == null) state.game_index = 1;
     } else if (std.mem.eql(u8, screen, "settings")) {
         state.page = .settings;
     }
@@ -62,13 +70,24 @@ pub fn main(init: std.process.Init) !void {
     var arguments = std.process.Args.Iterator.init(init.minimal.args);
     _ = arguments.next();
     const command = arguments.next() orelse {
-        try snapshot(init.io, init.gpa, "brick-home.ppm", "home");
+        try snapshot(init.io, init.gpa, "brick-home.ppm", "home", null, 0);
         return;
     };
     if (std.mem.eql(u8, command, "--snapshot")) {
         const path = arguments.next() orelse return error.MissingPath;
         const screen = arguments.next() orelse "home";
-        try snapshot(init.io, init.gpa, path, screen);
+        try snapshot(init.io, init.gpa, path, screen, null, 0);
+        return;
+    }
+    if (std.mem.eql(u8, command, "--snapshot-library")) {
+        const path = arguments.next() orelse return error.MissingPath;
+        const screen = arguments.next() orelse "games";
+        const root = arguments.next() orelse "/data";
+        const selected = if (arguments.next()) |value| try std.fmt.parseInt(usize, value, 10) else 0;
+        var arena = std.heap.ArenaAllocator.init(init.gpa);
+        defer arena.deinit();
+        const library = try catalog.discover(init.io, arena.allocator(), root);
+        try snapshot(init.io, arena.allocator(), path, screen, library, selected);
         return;
     }
     if (std.mem.eql(u8, command, "--idle-proof")) {
@@ -104,5 +123,6 @@ test {
     _ = scheduler;
     _ = @import("settings.zig");
     _ = @import("asset_manifest.zig");
+    _ = @import("input_repeat.zig");
     _ = library_scan;
 }
