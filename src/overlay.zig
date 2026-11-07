@@ -4,9 +4,9 @@ const input = @import("input.zig");
 const ui = @import("ui.zig");
 
 pub const Layer = enum { pause, states, save_slots, replace_confirm, load_confirm, performance, failure };
-pub const Command = enum { resume_game, save_state, load_state, apply_performance, exit_game };
+pub const Command = enum { resume_game, save_state, load_state, apply_performance, network_settings, exit_game };
 
-const pause_count = 5;
+const pause_count = 6;
 const state_count = 4;
 const save_slot_count = 3;
 
@@ -25,6 +25,7 @@ pub const Model = struct {
     pending: ?Command = null,
     confirmation: usize = 0,
     failed_command: ?Command = null,
+    network_status: []const u8 = "Off",
     revision: u64 = 1,
 
     pub fn apply(self: *Model, action: input.Action) bool {
@@ -103,7 +104,7 @@ pub const Model = struct {
     pub fn tree(self: *const Model) ui.Tree {
         const performance_values = [_][]const u8{ "Power saver", "Balanced", "Performance" };
         return switch (self.layer) {
-            .pause => ui.overlayPause(self.appearance.colors(), self.title, self.selected, self.save_slot, performance_values[self.performance_profile], self.notice),
+            .pause => ui.overlayPauseWithNetwork(self.appearance.colors(), self.title, self.selected, self.save_slot, performance_values[self.performance_profile], self.network_status, self.notice),
             .states => ui.overlayStates(self.appearance.colors(), self.title, self.state_slot, self.notice, self.available),
             .save_slots => ui.saveSlots(self.appearance.colors(), self.title, self.save_slot, self.available),
             .replace_confirm => ui.confirmation(self.appearance.colors(), "Replace saved state", "Replace this saved state?", "The existing state in this slot will be replaced.", "Replace state", self.confirmation),
@@ -152,7 +153,8 @@ pub const Model = struct {
                     self.layer = .performance;
                     self.selected = self.performance_profile;
                 },
-                4 => self.pending = .exit_game,
+                4 => self.pending = .network_settings,
+                5 => self.pending = .exit_game,
                 else => unreachable,
             },
         }

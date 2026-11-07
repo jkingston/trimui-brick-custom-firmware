@@ -82,7 +82,38 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
             state.selected = 0;
         }
     }
-    var tree = if (std.mem.eql(u8, screen, "splash")) ui.splash(state.settings.appearance.colors()) else if (std.mem.eql(u8, screen, "languages")) ui.languageProof(state.settings.appearance.colors()) else if (std.mem.startsWith(u8, screen, "overlay")) blk: {
+    var tree = if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
+        const wifi = @import("wifi.zig");
+        var wifi_state = wifi.Model{};
+        var wifi_snapshot = try wifi.parse(
+            "snapshot generation=4 revision=12 radio=ready connectivity=captive can_scan=1\n" ++
+                "network id=alder-secure name_hex=416c64657220486f757365 address_hex=3139322e3136382e312e3233 security=wpa2_personal signal=strong state=sign_in saved=1 current=1 in_range=1 auto=1 private=1\n" ++
+                "network id=studio name_hex=53747564696f security=wpa2_personal signal=good state=saved saved=1 current=0 in_range=1 auto=1 private=1\n" ++
+                "network id=train-open name_hex=547261696e2057694669 security=open signal=fair state=available saved=0 current=0 in_range=1 auto=0 private=1\n" ++
+                "end\n",
+        );
+        if (std.mem.eql(u8, screen, "wifi-picker-off")) {
+            wifi_snapshot.radio = .off;
+            wifi_snapshot.connectivity = .none;
+            wifi_snapshot.can_scan = false;
+            wifi_snapshot.network_count = 0;
+        }
+        if (std.mem.eql(u8, screen, "wifi-picker-error")) {
+            wifi_snapshot.radio = .failed;
+            wifi_snapshot.connectivity = .none;
+            wifi_snapshot.can_scan = false;
+            wifi_snapshot.network_count = 0;
+        }
+        _ = wifi_state.update(wifi_snapshot);
+        if (std.mem.eql(u8, screen, "wifi-details")) break :blk ui.wifiNetworkDetails(state.settings.appearance.colors(), &wifi_state.snapshot.networks[0], 0);
+        if (std.mem.eql(u8, screen, "wifi-password")) break :blk ui.wifiPassword(state.settings.appearance.colors(), "Studio", 13, "password", false);
+        if (std.mem.eql(u8, screen, "wifi-hidden-name")) break :blk ui.wifiHiddenName(state.settings.appearance.colors(), 39, "Cafe network");
+        if (std.mem.eql(u8, screen, "wifi-hidden-security")) break :blk ui.wifiHiddenSecurity(state.settings.appearance.colors(), 1);
+        if (std.mem.eql(u8, screen, "wifi-info")) break :blk ui.wifiConnectionInfo(state.settings.appearance.colors(), &wifi_state.snapshot.networks[0]);
+        if (std.mem.eql(u8, screen, "wifi-open-confirm")) break :blk ui.confirmation(state.settings.appearance.colors(), "Open network", "Traffic may be visible to others.", "Connect only if you trust this network.", "Connect", 1);
+        if (std.mem.eql(u8, screen, "wifi-forget-confirm")) break :blk ui.confirmation(state.settings.appearance.colors(), "Forget network", "Forget Alder House?", "This disconnects and removes its password and private address.", "Forget", 0);
+        break :blk ui.wifiPicker(state.settings.appearance.colors(), &wifi_state);
+    } else if (std.mem.eql(u8, screen, "splash")) ui.splash(state.settings.appearance.colors()) else if (std.mem.eql(u8, screen, "languages")) ui.languageProof(state.settings.appearance.colors()) else if (std.mem.eql(u8, screen, "overlay-network")) ui.overlayPauseWithNetwork(state.settings.appearance.colors(), "Advance Wars", 4, 0, "Balanced", "Connected", "") else if (std.mem.eql(u8, screen, "overlay-network-captive")) ui.overlayPauseWithNetwork(state.settings.appearance.colors(), "Advance Wars", 4, 0, "Balanced", "Sign-in required", "") else if (std.mem.eql(u8, screen, "network-request-off")) ui.networkPrompt(state.settings.appearance.colors(), .wifi_off, 1) else if (std.mem.eql(u8, screen, "network-request-captive")) ui.networkPrompt(state.settings.appearance.colors(), .captive, 2) else if (std.mem.eql(u8, screen, "network-request-limited")) ui.networkPrompt(state.settings.appearance.colors(), .limited, 2) else if (std.mem.startsWith(u8, screen, "overlay")) blk: {
         var game_overlay = overlay.Model{ .appearance = appearance, .title = if (state.games.len != 0) state.games[state.game_index].title else "Game" };
         inline for (@typeInfo(overlay.Layer).@"enum".field_names, 0..) |name, index| {
             if (std.mem.eql(u8, screen, "overlay-" ++ name)) game_overlay.layer = @fromBackingInt(index);
@@ -156,6 +187,10 @@ test {
     _ = library_scan;
     _ = @import("shelf_motion.zig");
     _ = @import("library_preferences.zig");
+    _ = @import("captive.zig");
+    _ = @import("wifi.zig");
+    _ = @import("wifi_flow.zig");
+    _ = @import("wifi_ipc.zig");
 }
 
 fn parseAppearance(value: ?[]const u8) !@import("theme.zig").Mode {

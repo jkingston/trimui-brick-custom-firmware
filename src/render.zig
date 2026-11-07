@@ -24,6 +24,8 @@ pub const Surface = struct {
             .text_block => |block| self.textBlock(block),
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
+            .qr_code => |qr| self.drawQr(qr),
+            .keyboard => |keyboard| self.drawKeyboard(keyboard, tree.theme),
             .cover => |cover| self.drawCover(cover),
             .cartridge => |cartridge| self.drawCartridge(cartridge),
             .overlay_row => |item| self.drawOverlayRow(item),
@@ -360,6 +362,54 @@ pub const Surface = struct {
         self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, battery.charge);
     }
 
+    fn drawQr(self: Surface, qr: ui.QrCode) void {
+        if (qr.width == 0) return;
+        self.fill(qr.bounds, qr.background);
+        const scale = @min(qr.bounds.width / qr.width, qr.bounds.height / qr.width);
+        if (scale == 0) return;
+        const size = scale * qr.width;
+        const left = qr.bounds.x + (qr.bounds.width - size) / 2;
+        const top = qr.bounds.y + (qr.bounds.height - size) / 2;
+        for (0..qr.width) |y| for (0..qr.width) |x| {
+            if (qr.cells[y * qr.width + x] != 0) self.fill(.{
+                .x = left + @as(u16, @intCast(x)) * scale,
+                .y = top + @as(u16, @intCast(y)) * scale,
+                .width = scale,
+                .height = scale,
+            }, qr.foreground);
+        };
+    }
+
+    fn drawKeyboard(self: Surface, keyboard: ui.Keyboard, theme: ui.Theme) void {
+        const lower = "1234567890qwertyuiopasdfghjklzxcvbnm";
+        const upper = "1234567890QWERTYUIOPASDFGHJKLZXCVBNM";
+        const symbols = "1234567890!@#$%^&*()[]{}<>?+-=_/:;,.~`";
+        const keys = if (keyboard.symbols) symbols else if (keyboard.uppercase) upper else lower;
+        const columns: u16 = 10;
+        const rows: u16 = 4;
+        const gap: u16 = 8;
+        const key_width = (keyboard.bounds.width - gap * (columns - 1)) / columns;
+        const key_height = (keyboard.bounds.height - gap * (rows - 1)) / rows;
+        var key_font = font.body;
+        key_font.alignment = .center;
+        key_font.ink_centered = true;
+        for (0..40) |index| {
+            const x = keyboard.bounds.x + @as(u16, @intCast(index % columns)) * (key_width + gap);
+            const y = keyboard.bounds.y + @as(u16, @intCast(index / columns)) * (key_height + gap);
+            const selected = index == keyboard.selected;
+            const background = if (selected) theme.selection else theme.surface;
+            const foreground = if (selected) theme.selection_text else theme.text;
+            self.fillRounded(.{ .x = x, .y = y, .width = key_width, .height = key_height }, background, geometry.radius);
+            const value = if (index < 36) keys[index .. index + 1] else switch (index) {
+                36 => "Aa",
+                37 => "#+",
+                38 => "\xe2\x8c\xab",
+                else => "Go",
+            };
+            if (!text_pango.draw(self.pixels, width, x, y, key_width, value, pack(foreground), key_font, "", 1, key_height)) @panic("Text renderer unavailable");
+        }
+    }
+
     fn drawChevron(self: Surface, x: u16, y: u16, color: ui.Color) void {
         var step: u16 = 0;
         while (step < 11) : (step += 1) {
@@ -498,6 +548,7 @@ test "font weight alignment and line height are independent of size" {
         try std.testing.expect(index % width > 200);
         ink += 1;
     };
+
     try std.testing.expect(ink > 100);
 }
 

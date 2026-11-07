@@ -19,6 +19,12 @@ mise run build
 The build composes two Buildroot external trees: the base first and this product
 tree second. Set `BASE=/path/to/base` when they are not siblings.
 
+Repository ownership is intentionally strict: the kernel repository owns
+drivers and device trees, the base firmware owns board services and the
+Wi-Fi/captive runtime, and this repository owns only the shell and product UX.
+Kernel changes enter a product build only through the checksum-pinned archive
+selected by the base firmware; this tree does not carry or override drivers.
+
 `mise run release` produces and verifies a clean complete image under
 `output/release/images`.
 
@@ -42,6 +48,18 @@ Settings open dedicated adjustment pages. Light/dark appearance, system filter,
 view, selection and last played game are saved on the SD card. Typography,
 geometry and motion are compile-time values in `src/design.zig`; semantic colours
 live in `src/theme.zig`. Artwork colours are independent.
+
+Wi-Fi is available from Settings and the in-game pause menu. One supervised
+firmware authority owns radio on/off, scanning, open and WPA2-Personal joins,
+saved-network reconnect, per-network private addresses, Forget, connectivity
+classification and captive sign-in. The shell exchanges generation-safe
+snapshots and commands with that authority; it never handles supplicant state
+or launches the browser chain directly. Incompatible portals expose the
+validated manual URL and a locally rendered QR code.
+
+The production image is the composed base-and-shell build (`mise run release`
+in this repository). A base-firmware-only release intentionally omits the
+product shell and is not a complete Wi-Fi sign-in image.
 
 The game menu provides three manual state slots and the automatic resume state.
 Replacing or loading a state requires confirmation. Failed state writes preserve

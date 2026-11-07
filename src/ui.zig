@@ -4,6 +4,7 @@ const font = design.typeface;
 const geometry = design.geometry;
 const catalog = @import("catalog.zig");
 const settings_model = @import("settings.zig");
+const wifi_model = @import("wifi.zig");
 
 pub const Color = @import("color.zig").Color;
 pub const Theme = @import("theme.zig").Theme;
@@ -45,6 +46,8 @@ pub const MenuRow = struct {
     disclosure: bool = true,
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = @import("std").mem.zeroes(Color), charge: Color = @import("std").mem.zeroes(Color) };
+pub const QrCode = struct { bounds: Rect, cells: []const u8, width: u16, foreground: Color, background: Color };
+pub const Keyboard = struct { bounds: Rect, selected: u8, uppercase: bool = false, symbols: bool = false };
 pub const Cover = struct { bounds: Rect, kind: catalog.Cover };
 pub const LibraryView = enum { list, shelf, grid };
 pub const Cartridge = struct {
@@ -75,6 +78,8 @@ pub const Element = union(enum) {
     text_block: TextBlock,
     menu_row: MenuRow,
     battery: Battery,
+    qr_code: QrCode,
+    keyboard: Keyboard,
     cover: Cover,
     cartridge: Cartridge,
     overlay_row: OverlayRow,
@@ -141,6 +146,85 @@ pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state
     }
     footer(&result, &.{ .{ .control = .back, .label = "Continue" }, .{ .control = .confirm, .label = "Select" } });
     if (notice.len != 0) showNotice(&result, notice);
+    return result;
+}
+
+/// UX mock for the system-owned network route from a paused game. The actual
+/// Wi-Fi picker remains the same shell surface used from Settings.
+pub fn overlayPauseWithNetwork(theme: Theme, game_title: []const u8, selected: usize, state_slot: usize, performance: []const u8, network_status: []const u8, notice: []const u8) Tree {
+    const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Network", "Save and exit" };
+    const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
+    const values = [_][]const u8{ "", slots[state_slot], "", performance, network_status, "" };
+    var result = Tree{ .theme = theme, .background = theme.background };
+    overlayFrame(&result, "Game menu", game_title);
+    for (labels, values, 0..) |label, value, index| {
+        result.add(.{ .overlay_row = .{
+            .bounds = .{ .x = 28, .y = 154 + @as(u16, @intCast(index)) * 82, .width = 968, .height = 82 },
+            .label = label,
+            .detail = "",
+            .value = value,
+            .selected = index == selected,
+            .disclosure = index == 2 or index == 4,
+        } });
+    }
+    footer(&result, &.{ .{ .control = .back, .label = "Continue" }, .{ .control = .confirm, .label = "Open" } });
+    if (notice.len != 0) showNotice(&result, notice);
+    return result;
+}
+
+pub const NetworkPrompt = enum { wifi_off, captive, limited };
+
+/// A foreground app asks for a capability and the shell supplies the recovery
+/// choices. Background traffic never opens this surface.
+pub fn networkPrompt(theme: Theme, kind: NetworkPrompt, selected: usize) Tree {
+    const title: []const u8 = switch (kind) {
+        .wifi_off => "Connect to internet?",
+        .captive => "Sign in to Wi-Fi",
+        .limited => "No internet",
+    };
+    const subject: []const u8 = switch (kind) {
+        .wifi_off => "RetroAchievements needs a connection",
+        .captive => "Alder House needs you to sign in",
+        .limited => "RetroAchievements could not connect",
+    };
+    const detail: []const u8 = switch (kind) {
+        .wifi_off => "Turn on Wi-Fi and return here when connected. The game will stay paused.",
+        .captive => "Open the contained sign-in page, or choose another network. The game will stay paused.",
+        .limited => "Wi-Fi is connected without internet. Retry the check or choose another network.",
+    };
+    const off_actions = [_][]const u8{ "Not now", "Connect" };
+    const captive_actions = [_][]const u8{ "Not now", "Choose network", "Sign in" };
+    const limited_actions = [_][]const u8{ "Not now", "Choose network", "Retry" };
+    const actions: []const []const u8 = switch (kind) {
+        .wifi_off => &off_actions,
+        .captive => &captive_actions,
+        .limited => &limited_actions,
+    };
+
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, title);
+    var subject_font = font.body;
+    subject_font.size = 47;
+    subject_font.line_height = 57;
+    result.add(.{ .text_block = .{
+        .bounds = .{ .x = 48, .y = 154, .width = 900, .height = 230 },
+        .title = subject,
+        .detail = detail,
+        .color = theme.text,
+        .detail_color = theme.muted,
+        .title_font = subject_font,
+        .detail_font = font.caption,
+        .detail_lines = 2,
+        .gap = 22,
+    } });
+    const top: u16 = if (actions.len == 2) 492 else 410;
+    for (actions, 0..) |label, index| result.add(.{ .menu_row = .{
+        .bounds = .{ .x = 28, .y = top + @as(u16, @intCast(index)) * 88, .width = 968, .height = 88 },
+        .label = label,
+        .selected = selected == index,
+        .disclosure = false,
+    } });
+    footer(&result, &.{ .{ .control = .back, .label = "Not now" }, .{ .control = .confirm, .label = "Select" } });
     return result;
 }
 
@@ -464,14 +548,16 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
     return choice(theme, settings_model.title(item), settings_model.labels(item), selected, active, note, "Settings");
 }
 
-pub fn settings(selected: usize, values: settings_model.Values) Tree {
+pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []const u8) Tree {
     const theme = values.appearance.colors();
-    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance" };
-    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance) };
+    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Wi-Fi" };
+    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), wifi_summary };
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Settings");
-    for (items, details, 0..) |item, value, index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = geometry.settings_top + @as(u16, @intCast(index)) * geometry.settings_step, .width = 968, .height = geometry.settings_height },
+    const visible: usize = 5;
+    const first = @min(selected -| 2, items.len - visible);
+    for (items[first .. first + visible], details[first .. first + visible], first..) |item, value, index| result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 28, .y = geometry.settings_top + @as(u16, @intCast(index - first)) * geometry.settings_step, .width = 968, .height = geometry.settings_height },
         .label = item,
         .detail = "",
         .value = value,
@@ -480,6 +566,202 @@ pub fn settings(selected: usize, values: settings_model.Values) Tree {
     } });
     footer(&result, &.{ .{ .control = .back, .label = "Home" }, .{ .control = .confirm, .label = "Open" } });
     return result;
+}
+
+pub fn wifi(theme: Theme, selected: usize, status: []const u8, primary: []const u8, has_url: bool) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, "Wi-Fi sign in");
+    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 116, .width = 928, .height = 52 }, .value = status, .color = theme.muted, .font = font.caption } });
+    const labels = [_][]const u8{ primary, "Manual URL and QR" };
+    const details = [_][]const u8{ "", if (has_url) "Open on another device" else "Portal URL unavailable" };
+    for (labels, details, 0..) |label, detail, index| result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 28, .y = 210 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 },
+        .label = label,
+        .detail = detail,
+        .selected = selected == index,
+        .disclosure = index == 1 and has_url,
+    } });
+    footer(&result, &.{ .{ .control = .back, .label = "Settings" }, .{ .control = .confirm, .label = "Select" } });
+    return result;
+}
+
+pub fn wifiFallback(theme: Theme, url: []const u8, qr: *const @import("captive.zig").Qr) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, "Open on your phone");
+    if (qr.width != 0) result.add(.{ .qr_code = .{
+        .bounds = .{ .x = 334, .y = 126, .width = 356, .height = 356 },
+        .cells = qr.cells[0 .. @as(usize, qr.width) * qr.width],
+        .width = qr.width,
+        .foreground = .{ .r = 0, .g = 0, .b = 0 },
+        .background = .{ .r = 255, .g = 255, .b = 255 },
+    } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 64, .y = 512, .width = 896, .height = 96 }, .value = url, .color = theme.text, .font = font.caption, .lines = 2 } });
+    footer(&result, &.{.{ .control = .back, .label = "Wi-Fi" }});
+    return result;
+}
+
+fn wifiSecurity(security: wifi_model.Security) []const u8 {
+    return switch (security) {
+        .open => "Open network",
+        .wpa2_personal => "Secured",
+        .unsupported => "Unsupported",
+    };
+}
+
+fn wifiValue(network: *const wifi_model.Network) []const u8 {
+    return switch (network.security) {
+        .open => switch (network.signal) {
+            .weak => "Weak · Open",
+            .fair => "Fair · Open",
+            .good => "Good · Open",
+            .strong => "Strong · Open",
+        },
+        .wpa2_personal => switch (network.signal) {
+            .weak => "Weak · Secured",
+            .fair => "Fair · Secured",
+            .good => "Good · Secured",
+            .strong => "Strong · Secured",
+        },
+        .unsupported => "Unsupported",
+    };
+}
+
+pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 28, .y = 32, .width = 968, .height = 88 },
+        .label = "Wi-Fi",
+        .detail = "",
+        .value = switch (state.snapshot.radio) {
+            .off, .stopping => "Off",
+            .starting => "Starting…",
+            .ready => "On",
+            .unavailable, .failed => "Unavailable",
+        },
+        .selected = state.selected == 0,
+        .disclosure = false,
+    } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 130, .width = 928, .height = 46 }, .value = state.snapshot.status(), .color = theme.muted, .font = font.caption } });
+
+    const visible: usize = 4;
+    const total = state.itemCount() - 1;
+    const logical = state.selected -| 1;
+    const first: usize = @min(logical -| 2, total -| visible);
+    for (0..@min(visible, total - first)) |row_index| {
+        const item = first + row_index;
+        const y: u16 = 184 + @as(u16, @intCast(row_index)) * 96;
+        if (item < state.snapshot.network_count) {
+            const network = &state.snapshot.networks[item];
+            result.add(.{ .overlay_row = .{
+                .bounds = .{ .x = 28, .y = y, .width = 968, .height = 88 },
+                .label = network.name.slice(),
+                .detail = wifi_model.stateDetail(network.state),
+                .value = wifiValue(network),
+                .selected = state.selected == item + 1,
+            } });
+        } else if (item == state.snapshot.network_count) {
+            result.add(.{ .overlay_row = .{
+                .bounds = .{ .x = 28, .y = y, .width = 968, .height = 88 },
+                .label = "Add hidden network",
+                .detail = "",
+                .selected = state.selected == item + 1,
+            } });
+        } else {
+            result.add(.{ .overlay_row = .{
+                .bounds = .{ .x = 28, .y = y, .width = 968, .height = 88 },
+                .label = "Saved networks",
+                .detail = "Out of range",
+                .selected = state.selected == item + 1,
+            } });
+        }
+    }
+    var controls = [_]Hint{ .{ .control = .back, .label = "Settings" }, .{ .control = .confirm, .label = if (state.selected == 0) switch (state.snapshot.radio) {
+        .off, .failed => "Turn on",
+        else => "Turn off",
+    } else "Open" }, .{ .control = .filter, .label = "Refresh" } };
+    const actionable = state.snapshot.radio != .unavailable and state.snapshot.radio != .stopping;
+    footer(&result, controls[0..if (state.snapshot.can_scan) 3 else if (actionable) 2 else 1]);
+    return result;
+}
+
+pub fn wifiNetworkDetails(theme: Theme, network: *const wifi_model.Network, selected: usize) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, network.name.slice());
+    const primary = switch (network.state) {
+        .sign_in => "Sign in",
+        .limited => "Retry connection check",
+        .connected => "Disconnect",
+        .connecting, .validating, .reconnecting => "Cancel",
+        .auth_failed => "Edit password",
+        else => "Connect",
+    };
+    const labels = [_][]const u8{ primary, "Auto-connect", "Private address", "Connection info", "Forget network" };
+    const values = [_][]const u8{ "", if (network.auto_connect) "On" else "Off", if (network.private_address) "On" else "Off", wifiSecurity(network.security), "" };
+    const first: usize = @min(selected -| 2, labels.len - 4);
+    for (labels[first .. first + 4], values[first .. first + 4], first..) |label, value, index| result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 28, .y = 144 + @as(u16, @intCast(index - first)) * 112, .width = 968, .height = 104 },
+        .label = label,
+        .detail = if (index == 0) wifi_model.stateDetail(network.state) else if (index == 2) "Recommended" else "",
+        .value = value,
+        .selected = index == selected,
+        .disclosure = index == 0 or index == 3 or index == 4,
+    } });
+    if (network.state == .sign_in)
+        footer(&result, &.{ .{ .control = .back, .label = "Wi-Fi" }, .{ .control = .view, .label = "Sign-in address" }, .{ .control = .confirm, .label = "Select" } })
+    else
+        footer(&result, &.{ .{ .control = .back, .label = "Wi-Fi" }, .{ .control = .confirm, .label = "Select" } });
+    return result;
+}
+
+pub fn wifiPassword(theme: Theme, network_name: []const u8, selected_key: u8, password: []const u8, show: bool) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, network_name);
+    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 112, .width = 928, .height = 42 }, .value = "Enter the Wi-Fi password", .color = theme.muted, .font = font.caption } });
+    const mask = "************************************************************************************************";
+    const count = @min(password.len, mask.len);
+    result.add(.{ .bar = .{ .bounds = .{ .x = 48, .y = 166, .width = 928, .height = 72 }, .color = theme.surface, .radius = geometry.radius } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 178, .width = 880, .height = 48 }, .value = if (show) password[0..count] else mask[0..count], .color = theme.text, .font = font.body } });
+    result.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = selected_key } });
+    footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .view, .label = if (show) "Hide" else "Show" }, .{ .control = .confirm, .label = if (selected_key == 39) "Connect" else "Type" } });
+    return result;
+}
+
+pub fn wifiHiddenName(theme: Theme, selected_key: u8, name: []const u8) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, "Hidden network");
+    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 112, .width = 928, .height = 42 }, .value = "Enter the exact network name", .color = theme.muted, .font = font.caption } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = 48, .y = 166, .width = 928, .height = 72 }, .color = theme.surface, .radius = geometry.radius } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 178, .width = 880, .height = 48 }, .value = name, .color = theme.text, .font = font.body } });
+    result.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = selected_key } });
+    footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = if (selected_key == 39) "Continue" else "Type" } });
+    return result;
+}
+
+pub fn wifiConnectionInfo(theme: Theme, network: *const wifi_model.Network) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, "Connection info");
+    const signal = switch (network.signal) {
+        .weak => "Weak",
+        .fair => "Fair",
+        .good => "Good",
+        .strong => "Strong",
+    };
+    const labels = [_][]const u8{ "Network", "Security", "Signal", "IP address" };
+    const values = [_][]const u8{ network.name.slice(), wifiSecurity(network.security), signal, if (network.address.len == 0) "Not assigned" else network.address.slice() };
+    for (labels, values, 0..) |label, value, index| result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 28, .y = 144 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 },
+        .label = label,
+        .detail = "",
+        .value = value,
+        .selected = false,
+        .disclosure = false,
+    } });
+    footer(&result, &.{.{ .control = .back, .label = "Network" }});
+    return result;
+}
+
+pub fn wifiHiddenSecurity(theme: Theme, selected: usize) Tree {
+    return choice(theme, "Security", &.{ "Open", "WPA2 Personal" }, selected, null, "Choose the security used by the hidden network.", "Wi-Fi");
 }
 
 pub fn splash(theme: Theme) Tree {
@@ -531,8 +813,8 @@ pub fn showNotice(tree: *Tree, notice: []const u8) void {
 test "light and dark appearances preserve component geometry and typography" {
     const std = @import("std");
     const themes = @import("theme.zig");
-    const light_screens = [_]Tree{ home(themes.light, 0), library(themes.light, &catalog.games, 0, .list, 0), library(themes.light, &catalog.games, 0, .shelf, 0), library(themes.light, &catalog.games, 0, .grid, 0), settings(0, .{}), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
-    const dark_screens = [_]Tree{ home(themes.dark, 0), library(themes.dark, &catalog.games, 0, .list, 0), library(themes.dark, &catalog.games, 0, .shelf, 0), library(themes.dark, &catalog.games, 0, .grid, 0), settings(0, .{ .appearance = .dark }), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
+    const light_screens = [_]Tree{ home(themes.light, 0), library(themes.light, &catalog.games, 0, .list, 0), library(themes.light, &catalog.games, 0, .shelf, 0), library(themes.light, &catalog.games, 0, .grid, 0), settings(0, .{}, "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
+    const dark_screens = [_]Tree{ home(themes.dark, 0), library(themes.dark, &catalog.games, 0, .list, 0), library(themes.dark, &catalog.games, 0, .shelf, 0), library(themes.dark, &catalog.games, 0, .grid, 0), settings(0, .{ .appearance = .dark }, "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
     for (&light_screens, &dark_screens) |*light_screen, *dark_screen| {
         try std.testing.expectEqual(light_screen.len, dark_screen.len);
         for (light_screen.slice(), dark_screen.slice()) |a, b| {

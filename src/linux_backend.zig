@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const catalog = @import("catalog.zig");
+const captive = @import("captive.zig");
 const input_repeat = @import("input_repeat.zig");
 const model = @import("model.zig");
 const overlay = @import("overlay.zig");
@@ -8,6 +9,7 @@ const render = @import("render.zig");
 const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
 const settings = @import("settings.zig");
+const wifi_ipc = @import("wifi_ipc.zig");
 
 const framebuffer_path = "/dev/fb0";
 const blank_path = "/sys/class/graphics/fb0/blank";
@@ -310,7 +312,7 @@ fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
         std.log.warn("Could not save library preferences: {s}", .{@errorName(err)});
 }
 
-fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, action: model.Action) !SessionAction {
+fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, wifi_client: ?*wifi_ipc.Client, action: model.Action) !SessionAction {
     if (!state.apply(action)) return .{};
     state.notice = "";
     if (state.takeSetting()) |setting|
@@ -318,6 +320,15 @@ fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer
             state.settings = settings.load(io);
             state.notice = "Could not apply setting";
         };
+    if (state.takeWifiRequest()) |pending| {
+        var request = pending;
+        if (wifi_client) |client| client.send(&request) catch {
+            state.notice = "Wi-Fi service is unavailable";
+        } else {
+            request.wipe();
+            state.notice = "Wi-Fi service is unavailable";
+        }
+    }
     if (state.pending_power) |command| {
         state.pending_power = null;
         saveLibraryPreferences(io, state);
@@ -342,7 +353,18 @@ fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer
     return .{ .changed = true };
 }
 
-fn runSession(io: std.Io, state: *model.Model) !?usize {
+fn refreshCaptive(io: std.Io, state: *model.Model) bool {
+    var next = captive.status(io);
+    if (next.url_len != 0) captive.ensureQr(io, &next);
+    const changed = next.generation != state.wifi_fallback.generation or
+        next.state != state.wifi_fallback.state or
+        !std.mem.eql(u8, next.url(), state.wifi_fallback.url()) or
+        next.qr.width != state.wifi_fallback.qr.width;
+    if (changed) state.wifi_fallback = next;
+    return changed;
+}
+
+fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     // Stop fbcon from drawing its text cursor over the product surface.
     var console = try Console.open(io);
     defer console.close();
@@ -354,9 +376,17 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
     var tree = state.tree();
     try framebuffer.show(&tree);
 
+    var wifi_client: ?wifi_ipc.Client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
+    defer if (wifi_client) |client| client.close();
+    var wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
+    var captive_deadline = nowMilliseconds(io);
+
     const input_fd = try discoverGamepad(io);
     defer closeFd(io, input_fd, true);
-    var poll_fds = [_]std.posix.pollfd{.{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 }};
+    var poll_fds = [_]std.posix.pollfd{
+        .{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 },
+        .{ .fd = if (wifi_client) |client| client.fd else -1, .events = std.posix.POLL.IN, .revents = 0 },
+    };
     var dropped = false;
     var repeat: input_repeat.Controller = .{};
     var motion: @import("shelf_motion.zig").Motion = .{};
@@ -375,6 +405,16 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
         }
         const battery_wait: i32 = @intCast(@max(0, battery_deadline - now));
         timeout = if (timeout < 0) battery_wait else @min(timeout, battery_wait);
+        if (wifi_client == null) {
+            const reconnect_wait: i32 = @intCast(@max(0, wifi_reconnect_deadline - now));
+            timeout = if (timeout < 0) reconnect_wait else @min(timeout, reconnect_wait);
+        }
+        if (state.page == .wifi or state.page == .wifi_fallback) {
+            const captive_wait: i32 = @intCast(@max(0, captive_deadline - now));
+            timeout = if (timeout < 0) captive_wait else @min(timeout, captive_wait);
+        }
+        poll_fds[1].fd = if (wifi_client) |client| client.fd else -1;
+        poll_fds[1].revents = 0;
         _ = try std.posix.poll(&poll_fds, timeout);
         if (save_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
             saveLibraryPreferences(io, state);
@@ -383,17 +423,55 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
         if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
             return error.GamepadDisconnected;
         var changed = animation or was_animating;
+        if ((state.page == .wifi or state.page == .wifi_fallback) and
+            nowMilliseconds(io) >= captive_deadline)
+        {
+            changed = refreshCaptive(io, state) or changed;
+            captive_deadline = nowMilliseconds(io) + 5000;
+        }
         if (nowMilliseconds(io) >= battery_deadline) {
             const percent = batteryPercent(io);
             changed = changed or (state.page == .home and percent != state.battery_percent);
             state.battery_percent = percent;
             battery_deadline = nowMilliseconds(io) + 60000;
         }
+        if (wifi_client == null and nowMilliseconds(io) >= wifi_reconnect_deadline) {
+            wifi_client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
+            wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
+        }
+        if (wifi_client) |client| {
+            if ((poll_fds[1].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) {
+                client.close();
+                wifi_client = null;
+                wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
+                state.notice = "Wi-Fi service is restarting";
+                changed = true;
+            } else if ((poll_fds[1].revents & std.posix.POLL.IN) != 0) {
+                var packet: [wifi_ipc.max_packet]u8 = undefined;
+                const event = client.receive(&packet) catch {
+                    client.close();
+                    wifi_client = null;
+                    wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
+                    state.notice = "Wi-Fi service is restarting";
+                    changed = true;
+                    continue;
+                };
+                switch (event) {
+                    .snapshot => |snapshot| changed = state.updateWifi(snapshot) or changed,
+                    .result => |result| switch (result.status) {
+                        .accepted => {},
+                        .stale => state.notice = "Wi-Fi changed. Try again.",
+                        .rejected => state.notice = "Could not complete Wi-Fi action",
+                    },
+                }
+            }
+        }
         was_animating = animation;
         {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
                 const previous = state.selected;
-                const result = try applySessionAction(io, state, &framebuffer, action);
+                const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, action);
+                if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                 if (result.launch) |index| return index;
@@ -413,7 +491,8 @@ fn runSession(io: std.Io, state: *model.Model) !?usize {
                 observeRepeat(&repeat, event, nowMilliseconds(io));
                 if (actionForEvent(event, &dropped)) |action| {
                     const previous = state.selected;
-                    const result = try applySessionAction(io, state, &framebuffer, action);
+                    const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, action);
+                    if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                     if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                         motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                     if (result.launch) |index| return index;
@@ -485,6 +564,20 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     }
 }
 
+fn refreshWifi(state: *model.Model) void {
+    const client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch return;
+    defer client.close();
+    var descriptor = [_]std.posix.pollfd{.{ .fd = client.fd, .events = std.posix.POLL.IN, .revents = 0 }};
+    if ((std.posix.poll(&descriptor, 250) catch return) != 1 or
+        (descriptor[0].revents & std.posix.POLL.IN) == 0) return;
+    var packet: [wifi_ipc.max_packet]u8 = undefined;
+    const event = client.receive(&packet) catch return;
+    switch (event) {
+        .snapshot => |snapshot| _ = state.updateWifi(snapshot),
+        .result => {},
+    }
+}
+
 pub fn run(io: std.Io) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -505,7 +598,7 @@ pub fn run(io: std.Io) !void {
     } else |_| {}
     if (state.last_played) |index| state.resumable = retroarch.availableStates(io, &state.games[index])[3];
     while (true) {
-        const game_index = (try runSession(io, &state)) orelse continue;
+        const game_index = (try runSession(io, &state, false)) orelse continue;
         const game = &state.games[game_index];
         var game_overlay = overlay.Model{
             .appearance = state.settings.appearance,
@@ -532,6 +625,8 @@ pub fn run(io: std.Io) !void {
             state.resumable = retroarch.availableStates(io, game)[3];
             saveLibraryPreferences(io, &state);
             while (true) {
+                refreshWifi(&state);
+                game_overlay.network_status = state.wifi.wifi_state.snapshot.settingsSummary();
                 game_overlay.available = retroarch.availableStates(io, game);
                 switch (try runOverlay(io, &game_overlay)) {
                     .resume_game => {
@@ -583,6 +678,15 @@ pub fn run(io: std.Io) !void {
                             game_overlay.notice = "Could not apply performance profile";
                             std.log.err("Failed to apply performance profile: {s}", .{@errorName(err)});
                         };
+                    },
+                    .network_settings => {
+                        state.page = .wifi;
+                        state.selected = 0;
+                        state.wifi.page = .list;
+                        _ = try runSession(io, &state, true);
+                        state.page = .home;
+                        state.selected = 0;
+                        continue;
                     },
                 }
             }

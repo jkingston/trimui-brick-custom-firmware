@@ -5,9 +5,12 @@ const catalog = @import("catalog.zig");
 const input = @import("input.zig");
 const settings_model = @import("settings.zig");
 const ui = @import("ui.zig");
+const captive = @import("captive.zig");
+const wifi = @import("wifi.zig");
+const wifi_flow = @import("wifi_flow.zig");
 
 pub const Action = input.Action;
-pub const Page = enum { home, games, game, settings, setting, systems, views, power, power_confirm };
+pub const Page = enum { home, games, game, settings, setting, wifi, wifi_fallback, systems, views, power, power_confirm };
 pub const Power = enum { screen_off, suspend_device, shutdown };
 const columns = @import("design.zig").geometry.grid_columns;
 const settings_count = @typeInfo(settings_model.Setting).@"enum".field_names.len;
@@ -33,6 +36,8 @@ pub const Model = struct {
     pending_power: ?Power = null,
     revision: u64 = 1,
     battery_percent: ?u8 = null,
+    wifi: wifi_flow.Model = .{},
+    wifi_fallback: captive.Snapshot = .{},
 
     pub fn collection(self: *const Model) catalog.Collection {
         return .{ .games = self.games, .system = self.system };
@@ -74,6 +79,32 @@ pub const Model = struct {
     }
 
     pub fn apply(self: *Model, action: Action) bool {
+        if (self.page == .wifi_fallback) {
+            if (action != .back) return false;
+            self.page = .wifi;
+            self.revision += 1;
+            return true;
+        }
+        if (self.page == .wifi) {
+            if (action == .back and self.wifi.page == .list) {
+                self.page = .settings;
+                self.selected = settings_count;
+                self.wifi.wifi_state.releaseOrder();
+                self.revision += 1;
+                return true;
+            }
+            if (action == .view and self.wifi_fallback.url_len != 0 and
+                self.wifi.activeNetwork() != null and
+                self.wifi.activeNetwork().?.state == .sign_in)
+            {
+                self.page = .wifi_fallback;
+                self.revision += 1;
+                return true;
+            }
+            const changed = self.wifi.apply(action);
+            if (changed) self.revision += 1;
+            return changed;
+        }
         const before_page = self.page;
         const before_selected = self.selected;
         const before_view = self.library_view;
@@ -99,7 +130,7 @@ pub const Model = struct {
                 } else if (self.page == .setting and self.active_setting == .brightness) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, 10);
                     if (self.selected != before_selected) self.chooseSetting();
-                } else if (self.page == .settings) {
+                } else if (self.page == .settings and self.selected < settings_count) {
                     const setting: settings_model.Setting = @fromBackingInt(@intCast(self.selected));
                     self.settings.adjust(setting, if (left) -1 else 1);
                     self.pending_setting = setting;
@@ -127,11 +158,20 @@ pub const Model = struct {
                     self.launch_failed = null;
                 },
                 .settings => {
-                    self.active_setting = @fromBackingInt(@intCast(self.selected));
-                    self.page = .setting;
-                    self.selected = self.settingIndex();
+                    if (self.selected == settings_count) {
+                        self.page = .wifi;
+                        self.selected = 0;
+                        self.wifi.page = .list;
+                        self.wifi.wifi_state.releaseOrder();
+                    } else {
+                        self.active_setting = @fromBackingInt(@intCast(self.selected));
+                        self.page = .setting;
+                        self.selected = self.settingIndex();
+                    }
                 },
                 .setting => self.chooseSetting(),
+                .wifi => unreachable,
+                .wifi_fallback => unreachable,
                 .systems => {
                     self.system = if (self.selected == 0) null else self.systemAt(self.selected - 1);
                     self.library_selection = self.filter_positions[if (self.system) |i| i + 1 else 0];
@@ -173,6 +213,8 @@ pub const Model = struct {
                     self.page = .settings;
                     self.selected = @backingInt(self.active_setting);
                 },
+                .wifi => unreachable,
+                .wifi_fallback => unreachable,
                 .systems, .views => self.browse(),
                 .power => {
                     self.page = .home;
@@ -224,6 +266,16 @@ pub const Model = struct {
         return pending;
     }
 
+    pub fn takeWifiRequest(self: *Model) ?wifi_flow.Request {
+        return self.wifi.takeRequest();
+    }
+
+    pub fn updateWifi(self: *Model, next: wifi.Snapshot) bool {
+        const changed = self.wifi.update(next);
+        if (changed) self.revision += 1;
+        return changed;
+    }
+
     pub fn launchFailed(self: *Model, failure: retroarch.Failure) void {
         self.launch_failed = failure;
         self.page = .game;
@@ -249,8 +301,10 @@ pub const Model = struct {
             .home => if (self.last_played != null) 3 else 2,
             .games => self.collection().len(),
             .game => 1,
-            .settings => settings_count,
+            .settings => settings_count + 1,
             .setting => settings_model.labels(self.active_setting).len,
+            .wifi => 1,
+            .wifi_fallback => 1,
             .views, .power => 3,
             .power_confirm => 2,
             .systems => blk: {
@@ -273,8 +327,10 @@ pub const Model = struct {
             .home => ui.homeSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
             .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_view, shelf_offset),
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
-            .settings => ui.settings(self.selected, self.settings),
+            .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.snapshot.settingsSummary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
+            .wifi => self.wifiTree(theme),
+            .wifi_fallback => ui.wifiFallback(theme, self.wifi_fallback.url(), &self.wifi_fallback.qr),
             .views => ui.choice(theme, "View", &.{ "List", "Cartridge flow", "Grid" }, self.selected, @backingInt(self.library_view), "", "Games"),
             .systems => blk: {
                 var labels: [catalog.systems.len + 1][]const u8 = undefined;
@@ -296,6 +352,26 @@ pub const Model = struct {
         }
         if (self.notice.len != 0) ui.showNotice(&result, self.notice);
         return result;
+    }
+
+    fn wifiTree(self: *const Model, theme: @import("theme.zig").Theme) ui.Tree {
+        const flow = &self.wifi;
+        return switch (flow.page) {
+            .list => ui.wifiPicker(theme, &flow.wifi_state),
+            .details => if (flow.activeNetwork()) |network|
+                ui.wifiNetworkDetails(theme, network, flow.detail_selected)
+            else
+                ui.wifiPicker(theme, &flow.wifi_state),
+            .password => ui.wifiPassword(theme, if (flow.activeNetwork()) |network| network.name.slice() else "Hidden network", flow.field.selected, flow.field.slice(), flow.show_password),
+            .hidden_name => ui.wifiHiddenName(theme, flow.field.selected, flow.field.slice()),
+            .hidden_security => ui.wifiHiddenSecurity(theme, @backingInt(flow.hidden_security)),
+            .info => if (flow.activeNetwork()) |network|
+                ui.wifiConnectionInfo(theme, network)
+            else
+                ui.wifiPicker(theme, &flow.wifi_state),
+            .open_confirm => ui.confirmation(theme, "Open network", "Traffic may be visible to others.", "Connect only if you trust this network.", "Connect", flow.confirm_selected),
+            .forget_confirm => ui.confirmation(theme, "Forget network", if (flow.activeNetwork()) |network| network.name.slice() else "Forget this network?", "This removes its password, private address and sign-in data.", "Forget", flow.confirm_selected),
+        };
     }
 };
 
@@ -412,4 +488,48 @@ test "brightness shortcut cannot wrap maximum to minimum" {
         _ = state.takeSetting();
     }
     try std.testing.expectEqual(@as(u8, 0), state.settings.brightness);
+}
+
+test "Wi-Fi picker commands retain the authority generation" {
+    var state = Model{ .page = .settings, .selected = settings_count };
+    _ = state.updateWifi(try wifi.parse(
+        "snapshot generation=19 revision=2 radio=ready connectivity=captive can_scan=1\n" ++
+            "network id=home name_hex=486f6d65 security=wpa2_personal signal=strong state=sign_in saved=1 current=1 in_range=1 auto=1 private=1 address_hex=\n" ++
+            "end\n",
+    ));
+    _ = state.apply(.select);
+    try std.testing.expectEqual(Page.wifi, state.page);
+    _ = state.apply(.down);
+    _ = state.apply(.select);
+    try std.testing.expectEqual(wifi_flow.Page.details, state.wifi.page);
+    _ = state.apply(.select);
+    const request = state.takeWifiRequest().?;
+    try std.testing.expectEqual(wifi.CommandKind.open_captive, request.command.kind);
+    try std.testing.expectEqual(@as(u32, 19), request.command.generation);
+}
+
+test "Wi-Fi settings row ignores setting adjustment shortcuts" {
+    var state = Model{ .page = .settings, .selected = settings_count };
+    const before = state.settings;
+    try std.testing.expect(!state.apply(.left));
+    try std.testing.expect(!state.apply(.right));
+    try std.testing.expectEqualDeep(before, state.settings);
+    try std.testing.expectEqual(@as(?settings_model.Setting, null), state.takeSetting());
+}
+
+test "captive network exposes bounded manual fallback and returns to Wi-Fi" {
+    var state = Model{ .page = .wifi };
+    _ = state.updateWifi(try wifi.parse(
+        "snapshot generation=7 revision=2 radio=ready connectivity=captive can_scan=1\n" ++
+            "network id=portal name_hex=506f7274616c security=open signal=good state=sign_in saved=1 current=1 in_range=1 auto=1 private=1 address_hex=3139322e302e322e32\n" ++
+            "end\n",
+    ));
+    state.wifi.wifi_state.selected = 1;
+    _ = state.apply(.select);
+    state.wifi_fallback = captive.parse("generation=7\nux_state=sign-in-required\nportal_url=http://portal.test/\n");
+    try std.testing.expect(state.apply(.view));
+    try std.testing.expectEqual(Page.wifi_fallback, state.page);
+    try std.testing.expectEqualStrings("http://portal.test/", state.wifi_fallback.url());
+    try std.testing.expect(state.apply(.back));
+    try std.testing.expectEqual(Page.wifi, state.page);
 }

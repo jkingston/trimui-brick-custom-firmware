@@ -28,7 +28,9 @@ run = '''
 rm -rf output/check
 zig build -Dtarget=aarch64-linux-gnu -Dcpu=cortex_a53 -Doptimize=ReleaseSmall \
     --prefix output/check --summary all
-test "$(stat -c %s output/check/bin/brick-shell)" -le 524288
+# The contained captive fallback includes bounded URL parsing and an offline QR
+# renderer. Keep the complete stripped shell below a deliberate 640 KiB cap.
+test "$(stat -c %s output/check/bin/brick-shell)" -le 655360
 '''
 
 [tasks.check]
@@ -122,7 +124,7 @@ description = "Render deterministic UI screenshots"
 run = '''
 mkdir -p output/screenshots
 zig build -Doptimize=ReleaseSafe --prefix output/host-shell --summary all
-for screen in splash home games games-shelf games-grid game settings overlay overlay-states languages; do
+for screen in splash home games games-shelf games-grid game settings wifi wifi-picker wifi-picker-off wifi-picker-error wifi-details wifi-password wifi-hidden-name wifi-hidden-security wifi-info wifi-open-confirm wifi-forget-confirm overlay overlay-states overlay-network overlay-network-captive network-request-off network-request-captive network-request-limited languages; do
     output/host-shell/bin/brick-shell --snapshot "output/screenshots/$screen.ppm" "$screen"
     magick "output/screenshots/$screen.ppm" "output/screenshots/$screen.png"
 done
