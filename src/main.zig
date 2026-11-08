@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const linux_backend = @import("linux_backend.zig");
 const library_scan = @import("library_scan.zig");
@@ -82,7 +83,18 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
             state.selected = 0;
         }
     }
-    var tree = if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
+    const bluetooth_devices = [_]bluetooth.Device{
+        .{ .name = "Living room headphones", .address = "00:11:22:33:44:55", .kind = .audio, .state = if (std.mem.eql(u8, screen, "bluetooth-pairing")) .pairing else .ready },
+        .{ .name = "Wireless controller", .address = "AA:BB:CC:DD:EE:FF", .kind = .controller, .state = .saved },
+        .{ .name = "", .address = "12:34:56:78:9A:BC", .kind = .other, .state = .nearby },
+    };
+    var tree = if (std.mem.startsWith(u8, screen, "bluetooth")) ui.bluetooth(
+        state.settings.appearance.colors(),
+        if (std.mem.eql(u8, screen, "bluetooth-off")) .off else if (std.mem.eql(u8, screen, "bluetooth-failed")) .failed else .ready,
+        if (std.mem.eql(u8, screen, "bluetooth") or std.mem.eql(u8, screen, "bluetooth-pairing")) .scanning_classic else .idle,
+        if (std.mem.eql(u8, screen, "bluetooth-off") or std.mem.eql(u8, screen, "bluetooth-failed")) &.{} else &bluetooth_devices,
+        if (std.mem.eql(u8, screen, "bluetooth-pairing")) 1 else 0,
+    ) else if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
         const wifi = @import("wifi.zig");
         var wifi_state = wifi.Model{};
         var wifi_snapshot = try wifi.parse(
@@ -175,6 +187,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 test {
+    _ = @import("battery_trials.zig");
+    _ = @import("bluetooth.zig");
     _ = render;
     _ = linux_backend;
     _ = model;

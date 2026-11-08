@@ -124,7 +124,7 @@ description = "Render deterministic UI screenshots"
 run = '''
 mkdir -p output/screenshots
 zig build -Doptimize=ReleaseSafe --prefix output/host-shell --summary all
-for screen in splash home games games-shelf games-grid game settings wifi wifi-picker wifi-picker-off wifi-picker-error wifi-details wifi-password wifi-hidden-name wifi-hidden-security wifi-info wifi-open-confirm wifi-forget-confirm overlay overlay-states overlay-network overlay-network-captive network-request-off network-request-captive network-request-limited languages; do
+for screen in splash home games games-shelf games-grid game settings bluetooth bluetooth-off bluetooth-pairing bluetooth-failed wifi wifi-picker wifi-picker-off wifi-picker-error wifi-details wifi-password wifi-hidden-name wifi-hidden-security wifi-info wifi-open-confirm wifi-forget-confirm overlay overlay-states overlay-network overlay-network-captive network-request-off network-request-captive network-request-limited languages; do
     output/host-shell/bin/brick-shell --snapshot "output/screenshots/$screen.ppm" "$screen"
     magick "output/screenshots/$screen.ppm" "output/screenshots/$screen.png"
 done

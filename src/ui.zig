@@ -5,6 +5,7 @@ const geometry = design.geometry;
 const catalog = @import("catalog.zig");
 const settings_model = @import("settings.zig");
 const wifi_model = @import("wifi.zig");
+const bluetooth_model = @import("bluetooth.zig");
 
 pub const Color = @import("color.zig").Color;
 pub const Theme = @import("theme.zig").Theme;
@@ -762,6 +763,43 @@ pub fn wifiConnectionInfo(theme: Theme, network: *const wifi_model.Network) Tree
 
 pub fn wifiHiddenSecurity(theme: Theme, selected: usize) Tree {
     return choice(theme, "Security", &.{ "Open", "WPA2 Personal" }, selected, null, "Choose the security used by the hidden network.", "Wi-Fi");
+}
+
+/// Host-renderable interaction prototype. It is intentionally not reachable
+/// from product navigation until the BlueZ adapter is implemented and qualified
+/// on the device.
+pub fn bluetooth(theme: Theme, radio: bluetooth_model.RadioState, discovery: bluetooth_model.DiscoveryState, devices: []const bluetooth_model.Device, selected: usize) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, "Bluetooth");
+    result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 28, .y = 116, .width = 968, .height = 92 },
+        .label = "Bluetooth",
+        .detail = "",
+        .value = switch (radio) {
+            .off, .stopping => "Off",
+            .unavailable, .failed => "Unavailable",
+            .starting, .ready => "On",
+        },
+        .selected = selected == 0,
+        .disclosure = false,
+    } });
+    textLabel(&result, .{ .x = 48, .y = 228, .width = 928, .height = 40 }, bluetooth_model.radioSummary(radio, discovery), if (radio == .failed or discovery == .failed) theme.text else theme.muted, font.caption);
+
+    if (radio == .ready) {
+        for (devices[0..@min(devices.len, 4)], 0..) |device, index| result.add(.{ .overlay_row = .{
+            .bounds = .{ .x = 28, .y = 282 + @as(u16, @intCast(index)) * 102, .width = 968, .height = 96 },
+            .label = device.label(),
+            .detail = device.detail(),
+            .selected = selected == index + 1,
+            .disclosure = false,
+        } });
+    } else if (radio == .off) {
+        textLabel(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Turn Bluetooth on to connect devices.", theme.text, font.body);
+    } else if (radio == .unavailable or radio == .failed) {
+        textLabel(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Restart the device and try again.", theme.text, font.body);
+    }
+    footer(&result, &.{ .{ .control = .back, .label = "Settings" }, .{ .control = .confirm, .label = if (selected == 0) "Change" else "Select" } });
+    return result;
 }
 
 pub fn splash(theme: Theme) Tree {
