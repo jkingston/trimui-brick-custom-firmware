@@ -1,0 +1,4 @@
+config BR2_PACKAGE_RETROARCH_JOYPAD_AUTOCONFIG
+	bool "RetroArch joypad autoconfiguration profiles"
+	help
+	  Official udev controller profiles used for hotplugged gamepads.

@@ -29,8 +29,10 @@ rm -rf output/check
 zig build -Dtarget=aarch64-linux-gnu -Dcpu=cortex_a53 -Doptimize=ReleaseSmall \
     --prefix output/check --summary all
 # The contained captive fallback includes bounded URL parsing and an offline QR
-# renderer. Keep the complete stripped shell below a deliberate 640 KiB cap.
-test "$(stat -c %s output/check/bin/brick-shell)" -le 655360
+# renderer. Bluetooth device management, controller hotplug and audio routing add
+# the production integration layer; keep the complete stripped shell below a
+# deliberate 672 KiB cap.
+test "$(stat -c %s output/check/bin/brick-shell)" -le 688128
 '''
 
 [tasks.check]

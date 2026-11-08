@@ -8,9 +8,10 @@ const ui = @import("ui.zig");
 const captive = @import("captive.zig");
 const wifi = @import("wifi.zig");
 const wifi_flow = @import("wifi_flow.zig");
+const bluetooth_model = @import("bluetooth.zig");
 
 pub const Action = input.Action;
-pub const Page = enum { home, games, game, settings, setting, wifi, wifi_fallback, systems, views, power, power_confirm };
+pub const Page = enum { home, games, game, settings, setting, wifi, wifi_fallback, bluetooth, systems, views, power, power_confirm };
 pub const Power = enum { screen_off, suspend_device, shutdown };
 const columns = @import("design.zig").geometry.grid_columns;
 const settings_count = @typeInfo(settings_model.Setting).@"enum".field_names.len;
@@ -38,6 +39,7 @@ pub const Model = struct {
     battery_percent: ?u8 = null,
     wifi: wifi_flow.Model = .{},
     wifi_fallback: captive.Snapshot = .{},
+    bluetooth: bluetooth_model.Model = .{},
 
     pub fn collection(self: *const Model) catalog.Collection {
         return .{ .games = self.games, .system = self.system };
@@ -105,6 +107,19 @@ pub const Model = struct {
             if (changed) self.revision += 1;
             return changed;
         }
+        if (self.page == .bluetooth) {
+            if (action == .back and self.bluetooth.page == .list) {
+                if (self.bluetooth.snapshot.discovery != .idle)
+                    _ = self.bluetooth.apply(.filter);
+                self.page = .settings;
+                self.selected = settings_count + 1;
+                self.revision += 1;
+                return true;
+            }
+            const changed = self.bluetooth.apply(action);
+            if (changed) self.revision += 1;
+            return changed;
+        }
         const before_page = self.page;
         const before_selected = self.selected;
         const before_view = self.library_view;
@@ -163,6 +178,10 @@ pub const Model = struct {
                         self.selected = 0;
                         self.wifi.page = .list;
                         self.wifi.wifi_state.releaseOrder();
+                    } else if (self.selected == settings_count + 1) {
+                        self.page = .bluetooth;
+                        self.selected = 0;
+                        self.bluetooth.page = .list;
                     } else {
                         self.active_setting = @fromBackingInt(@intCast(self.selected));
                         self.page = .setting;
@@ -172,6 +191,7 @@ pub const Model = struct {
                 .setting => self.chooseSetting(),
                 .wifi => unreachable,
                 .wifi_fallback => unreachable,
+                .bluetooth => unreachable,
                 .systems => {
                     self.system = if (self.selected == 0) null else self.systemAt(self.selected - 1);
                     self.library_selection = self.filter_positions[if (self.system) |i| i + 1 else 0];
@@ -215,6 +235,7 @@ pub const Model = struct {
                 },
                 .wifi => unreachable,
                 .wifi_fallback => unreachable,
+                .bluetooth => unreachable,
                 .systems, .views => self.browse(),
                 .power => {
                     self.page = .home;
@@ -276,6 +297,16 @@ pub const Model = struct {
         return changed;
     }
 
+    pub fn takeBluetoothCommand(self: *Model) ?bluetooth_model.Command {
+        return self.bluetooth.takeCommand();
+    }
+
+    pub fn updateBluetooth(self: *Model, next: bluetooth_model.Snapshot) bool {
+        const changed = self.bluetooth.update(next);
+        if (changed) self.revision += 1;
+        return changed;
+    }
+
     pub fn launchFailed(self: *Model, failure: retroarch.Failure) void {
         self.launch_failed = failure;
         self.page = .game;
@@ -301,10 +332,11 @@ pub const Model = struct {
             .home => if (self.last_played != null) 3 else 2,
             .games => self.collection().len(),
             .game => 1,
-            .settings => settings_count + 1,
+            .settings => settings_count + 2,
             .setting => settings_model.labels(self.active_setting).len,
             .wifi => 1,
             .wifi_fallback => 1,
+            .bluetooth => 1,
             .views, .power => 3,
             .power_confirm => 2,
             .systems => blk: {
@@ -327,10 +359,11 @@ pub const Model = struct {
             .home => ui.homeSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
             .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_view, shelf_offset),
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
-            .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.snapshot.settingsSummary()),
+            .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.snapshot.settingsSummary(), self.bluetooth.snapshot.summary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
             .wifi => self.wifiTree(theme),
             .wifi_fallback => ui.wifiFallback(theme, self.wifi_fallback.url(), &self.wifi_fallback.qr),
+            .bluetooth => ui.bluetooth(theme, &self.bluetooth),
             .views => ui.choice(theme, "View", &.{ "List", "Cartridge flow", "Grid" }, self.selected, @backingInt(self.library_view), "", "Games"),
             .systems => blk: {
                 var labels: [catalog.systems.len + 1][]const u8 = undefined;

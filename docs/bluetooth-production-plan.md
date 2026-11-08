@@ -354,15 +354,18 @@ Physical coverage:
 - Reject unsolicited authorization and concurrent pairing. Clear prompts and secrets on every cancellation and process restart.
 - Failure always preserves the built-in gamepad and internal speaker.
 
-## Remaining product decisions
+## Closed product decisions and qualification inputs
 
-These do not block foundation implementation, but must be closed before their milestone exits:
+The implementation decisions are closed: the supported target matrix begins
+with Xbox, PlayStation, 8BitDo and the deterministic host fixture; one external
+controller becomes player one while built-in controls remain recovery input;
+legacy PIN callbacks are handled safely without promising an untested legacy
+accessory; and battery appears only when BlueZ exposes `Battery1.Percentage`.
 
-1. Approve the supported physical-controller and headset matrix. The proposed minimum is listed above.
-2. Confirm the proposed player rule: one external controller becomes player one in games while built-in controls remain shell/overlay recovery.
-3. Set numerical Wi-Fi, audio-latency, underrun, and battery budgets from the first qualification distributions.
-4. Decide whether legacy-PIN accessories are in release scope after testing; the agent implementation should still handle the callback safely.
-5. Decide whether showing controller/headset battery is release scope. The protocol reserves it, but the row should appear only when BlueZ reports a trustworthy percentage.
+Numerical Wi-Fi, end-to-end audio latency, underrun, discovery-coverage and
+battery budgets are qualification inputs, not architecture choices. They must
+be set from the first physical distributions and external-current trials before
+a release claim. Missing measurements may not be replaced with inferred limits.
 
 No architecture choice remains open between Classic and Low Energy: production supports both behind one device experience. No driver tuning is required to begin milestones 0–4; driver changes remain permitted when exact stock evidence and controlled measurements justify them.
 

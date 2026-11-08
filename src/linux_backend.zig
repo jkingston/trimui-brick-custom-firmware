@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
 const input_repeat = @import("input_repeat.zig");
@@ -9,6 +10,7 @@ const render = @import("render.zig");
 const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
 const settings = @import("settings.zig");
+const bluetooth_ipc = @import("bluetooth_ipc.zig");
 const wifi_ipc = @import("wifi_ipc.zig");
 
 const framebuffer_path = "/dev/fb0";
@@ -26,6 +28,7 @@ const fb_activate_vertical_blank: u32 = 16;
 
 const ev_syn: u16 = 0x00;
 const ev_key: u16 = 0x01;
+const ev_abs: u16 = 0x03;
 const syn_report: u16 = 0x00;
 const syn_dropped: u16 = 0x03;
 const btn_south: u16 = 0x130;
@@ -37,6 +40,8 @@ const btn_dpad_up: u16 = 0x220;
 const btn_dpad_down: u16 = 0x221;
 const btn_dpad_left: u16 = 0x222;
 const btn_dpad_right: u16 = 0x223;
+const abs_hat0_x: u16 = 0x10;
+const abs_hat0_y: u16 = 0x11;
 
 const InputEvent = extern struct {
     seconds: isize,
@@ -228,25 +233,110 @@ const Console = struct {
     }
 };
 
-fn discoverGamepad(io: std.Io) !std.posix.fd_t {
-    var index: usize = 0;
-    while (index < 32) : (index += 1) {
-        var path_buffer: [96]u8 = undefined;
-        const name_path = try std.fmt.bufPrint(&path_buffer, "/sys/class/input/event{d}/device/name", .{index});
-        var name_buffer: [128]u8 = undefined;
-        const name = readAttribute(io, name_path, &name_buffer) catch continue;
-        if (!std.mem.eql(u8, name, "TrimUI Brick Gamepad")) continue;
-        const event_path = try std.fmt.bufPrint(&path_buffer, "/dev/input/event{d}", .{index});
-        return std.posix.openat(std.posix.AT.FDCWD, event_path, .{
-            .ACCMODE = .RDONLY,
-            .CLOEXEC = true,
-            .NONBLOCK = true,
-        }, 0);
+const max_gamepads = 8;
+const input_directory = "/dev/input";
+const Gamepad = struct {
+    fd: std.posix.fd_t = -1,
+    event_index: u8 = 255,
+    builtin: bool = false,
+    dropped: bool = false,
+};
+
+/// Linux exposes input capability bitmaps most-significant word first. Reading
+/// from the final hex digit makes this independent of the target word size.
+fn capabilityHas(bitmap: []const u8, bit: usize) bool {
+    const nibble = bit / 4;
+    const shift: u3 = @intCast(bit % 4);
+    var seen: usize = 0;
+    var cursor = bitmap.len;
+    while (cursor != 0) {
+        cursor -= 1;
+        const byte = bitmap[cursor];
+        if (std.ascii.isWhitespace(byte)) continue;
+        const value = std.fmt.charToDigit(byte, 16) catch return false;
+        if (seen == nibble) return (value & (@as(u8, 1) << shift)) != 0;
+        seen += 1;
     }
-    return error.GamepadNotFound;
+    return false;
 }
 
-fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
+const Gamepads = struct {
+    slots: [max_gamepads]Gamepad = @splat(.{}),
+
+    fn close(self: *Gamepads, io: std.Io) void {
+        for (&self.slots) |*slot| if (slot.fd >= 0) {
+            closeFd(io, slot.fd, true);
+            slot.* = .{};
+        };
+    }
+
+    fn hasIndex(self: *const Gamepads, index: u8) bool {
+        for (self.slots) |slot| if (slot.fd >= 0 and slot.event_index == index) return true;
+        return false;
+    }
+
+    fn rescan(self: *Gamepads, io: std.Io) !bool {
+        var present: [64]bool = @splat(false);
+        var changed = false;
+        for (0..64) |raw_index| {
+            var path_buffer: [128]u8 = undefined;
+            const name_path = try std.fmt.bufPrint(&path_buffer, "/sys/class/input/event{d}/device/name", .{raw_index});
+            var name_buffer: [128]u8 = undefined;
+            const name = readAttribute(io, name_path, &name_buffer) catch continue;
+            var capability_buffer: [1024]u8 = undefined;
+            const capability_path = try std.fmt.bufPrint(&path_buffer, "/sys/class/input/event{d}/device/capabilities/key", .{raw_index});
+            const capabilities = readAttribute(io, capability_path, &capability_buffer) catch continue;
+            const builtin = std.mem.eql(u8, name, "TrimUI Brick Gamepad");
+            if (!builtin and !capabilityHas(capabilities, btn_south)) continue;
+            present[raw_index] = true;
+            const index: u8 = @intCast(raw_index);
+            if (self.hasIndex(index)) continue;
+            for (&self.slots) |*slot| if (slot.fd < 0) {
+                const event_path = try std.fmt.bufPrint(&path_buffer, "/dev/input/event{d}", .{raw_index});
+                const fd = std.posix.openat(std.posix.AT.FDCWD, event_path, .{
+                    .ACCMODE = .RDONLY,
+                    .CLOEXEC = true,
+                    .NONBLOCK = true,
+                }, 0) catch break;
+                slot.* = .{ .fd = fd, .event_index = index, .builtin = builtin };
+                changed = true;
+                break;
+            };
+        }
+        for (&self.slots) |*slot| if (slot.fd >= 0 and !present[slot.event_index]) {
+            closeFd(io, slot.fd, true);
+            slot.* = .{};
+            changed = true;
+        };
+        return changed;
+    }
+
+    fn hasBuiltin(self: *const Gamepads) bool {
+        for (self.slots) |slot| if (slot.fd >= 0 and slot.builtin) return true;
+        return false;
+    }
+};
+
+fn openInputMonitor() !std.posix.fd_t {
+    const raw = std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC | std.os.linux.IN.NONBLOCK);
+    if (std.posix.errno(raw) != .SUCCESS) return error.InputMonitorUnavailable;
+    const fd: std.posix.fd_t = @intCast(raw);
+    errdefer _ = std.os.linux.close(fd);
+    const watch = std.os.linux.inotify_add_watch(fd, input_directory, std.os.linux.IN.CREATE | std.os.linux.IN.DELETE | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MOVED_FROM | std.os.linux.IN.ATTRIB);
+    if (std.posix.errno(watch) != .SUCCESS) return error.InputMonitorUnavailable;
+    return fd;
+}
+
+fn drainInputMonitor(fd: std.posix.fd_t) void {
+    var events: [1024]u8 = undefined;
+    while (true) {
+        const result = std.os.linux.read(fd, &events, events.len);
+        if (std.posix.errno(result) != .SUCCESS or result == 0) return;
+        if (result < events.len) return;
+    }
+}
+
+fn actionForEvent(event: InputEvent, builtin: bool, dropped: *bool) ?model.Action {
     if (event.event_type == ev_syn and event.code == syn_dropped) {
         dropped.* = true;
         return null;
@@ -255,14 +345,19 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
         if (event.event_type == ev_syn and event.code == syn_report) dropped.* = false;
         return null;
     }
+    if (event.event_type == ev_abs and event.value != 0) return switch (event.code) {
+        abs_hat0_x => if (event.value < 0) .left else .right,
+        abs_hat0_y => if (event.value < 0) .up else .down,
+        else => null,
+    };
     if (event.event_type != ev_key or event.value != 1) return null;
     return switch (event.code) {
         btn_dpad_up => .up,
         btn_dpad_down => .down,
         btn_dpad_left => .left,
         btn_dpad_right => .right,
-        btn_east => .select,
-        btn_south => .back,
+        btn_east => if (builtin) .select else .back,
+        btn_south => if (builtin) .back else .select,
         btn_mode => .menu,
         btn_view => .view,
         btn_filter => .filter,
@@ -270,7 +365,14 @@ fn actionForEvent(event: InputEvent, dropped: *bool) ?model.Action {
     };
 }
 
-fn directionForCode(code: u16) ?model.Action {
+fn directionForEvent(event: InputEvent) ?model.Action {
+    if (event.event_type == ev_abs) return switch (event.code) {
+        abs_hat0_x => if (event.value < 0) .left else .right,
+        abs_hat0_y => if (event.value < 0) .up else .down,
+        else => null,
+    };
+    if (event.event_type != ev_key) return null;
+    const code = event.code;
     return switch (code) {
         btn_dpad_up => .up,
         btn_dpad_down => .down,
@@ -289,8 +391,7 @@ fn observeRepeat(repeat: *input_repeat.Controller, event: InputEvent, now_ms: i6
         repeat.reset();
         return;
     }
-    if (event.event_type != ev_key) return;
-    const action = directionForCode(event.code) orelse return;
+    const action = directionForEvent(event) orelse return;
     switch (event.value) {
         0 => repeat.release(action),
         1 => repeat.press(action, now_ms),
@@ -312,7 +413,27 @@ fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
         std.log.warn("Could not save library preferences: {s}", .{@errorName(err)});
 }
 
-fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, wifi_client: ?*wifi_ipc.Client, action: model.Action) !SessionAction {
+fn sendBluetooth(client: ?*bluetooth_ipc.Client, next_request: *u32, command: *bluetooth.Command) bool {
+    command.request_id = next_request.*;
+    next_request.* +%= 1;
+    if (next_request.* == 0) next_request.* = 1;
+    if (client) |connected| {
+        connected.send(command) catch return false;
+        return true;
+    }
+    command.wipe();
+    return false;
+}
+
+fn wifiChanging(state: *const model.Model) bool {
+    for (state.wifi.wifi_state.snapshot.items()) |network| switch (network.state) {
+        .connecting, .validating, .reconnecting => return true,
+        else => {},
+    };
+    return state.wifi.wifi_state.snapshot.radio == .starting or state.wifi.wifi_state.snapshot.radio == .stopping;
+}
+
+fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, wifi_client: ?*wifi_ipc.Client, bluetooth_client: ?*bluetooth_ipc.Client, bluetooth_request: *u32, action: model.Action) !SessionAction {
     if (!state.apply(action)) return .{};
     state.notice = "";
     if (state.takeSetting()) |setting|
@@ -328,6 +449,11 @@ fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer
             request.wipe();
             state.notice = "Wi-Fi service is unavailable";
         }
+    }
+    if (state.takeBluetoothCommand()) |pending| {
+        var command = pending;
+        if (!sendBluetooth(bluetooth_client, bluetooth_request, &command))
+            state.notice = "Bluetooth service is unavailable";
     }
     if (state.pending_power) |command| {
         state.pending_power = null;
@@ -379,15 +505,21 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     var wifi_client: ?wifi_ipc.Client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
     defer if (wifi_client) |client| client.close();
     var wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
+    var bluetooth_client: ?bluetooth_ipc.Client = bluetooth_ipc.Client.connect("/run/brick-bluetooth/control.sock") catch null;
+    defer if (bluetooth_client) |client| client.close();
+    var bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
+    var bluetooth_request: u32 = 1;
+    var network_changing = false;
     var captive_deadline = nowMilliseconds(io);
 
-    const input_fd = try discoverGamepad(io);
-    defer closeFd(io, input_fd, true);
-    var poll_fds = [_]std.posix.pollfd{
-        .{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 },
-        .{ .fd = if (wifi_client) |client| client.fd else -1, .events = std.posix.POLL.IN, .revents = 0 },
-    };
-    var dropped = false;
+    var gamepads = Gamepads{};
+    defer gamepads.close(io);
+    _ = try gamepads.rescan(io);
+    if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
+    const input_monitor = try openInputMonitor();
+    defer closeFd(io, input_monitor, true);
+    var input_rescan_deadline = nowMilliseconds(io) + 1000;
+    var poll_fds: [max_gamepads + 3]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var motion: @import("shelf_motion.zig").Motion = .{};
     var was_animating = false;
@@ -409,20 +541,41 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             const reconnect_wait: i32 = @intCast(@max(0, wifi_reconnect_deadline - now));
             timeout = if (timeout < 0) reconnect_wait else @min(timeout, reconnect_wait);
         }
+        if (bluetooth_client == null) {
+            const reconnect_wait: i32 = @intCast(@max(0, bluetooth_reconnect_deadline - now));
+            timeout = if (timeout < 0) reconnect_wait else @min(timeout, reconnect_wait);
+        }
+        const input_wait: i32 = @intCast(@max(0, input_rescan_deadline - now));
+        timeout = if (timeout < 0) input_wait else @min(timeout, input_wait);
         if (state.page == .wifi or state.page == .wifi_fallback) {
             const captive_wait: i32 = @intCast(@max(0, captive_deadline - now));
             timeout = if (timeout < 0) captive_wait else @min(timeout, captive_wait);
         }
-        poll_fds[1].fd = if (wifi_client) |client| client.fd else -1;
-        poll_fds[1].revents = 0;
+        for (gamepads.slots, 0..) |slot, index| {
+            poll_fds[index].fd = slot.fd;
+            poll_fds[index].revents = 0;
+        }
+        poll_fds[max_gamepads].fd = if (wifi_client) |client| client.fd else -1;
+        poll_fds[max_gamepads].revents = 0;
+        poll_fds[max_gamepads + 1].fd = if (bluetooth_client) |client| client.fd else -1;
+        poll_fds[max_gamepads + 1].revents = 0;
+        poll_fds[max_gamepads + 2].fd = input_monitor;
+        poll_fds[max_gamepads + 2].revents = 0;
         _ = try std.posix.poll(&poll_fds, timeout);
         if (save_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
             saveLibraryPreferences(io, state);
             save_deadline = null;
         };
-        if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
-            return error.GamepadDisconnected;
         var changed = animation or was_animating;
+        if ((poll_fds[max_gamepads + 2].revents & std.posix.POLL.IN) != 0) {
+            drainInputMonitor(input_monitor);
+            changed = (try gamepads.rescan(io)) or changed;
+        }
+        if (nowMilliseconds(io) >= input_rescan_deadline) {
+            changed = (try gamepads.rescan(io)) or changed;
+            if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
+            input_rescan_deadline = nowMilliseconds(io) + 1000;
+        }
         if ((state.page == .wifi or state.page == .wifi_fallback) and
             nowMilliseconds(io) >= captive_deadline)
         {
@@ -439,14 +592,19 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             wifi_client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
             wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
         }
+        if (bluetooth_client == null and nowMilliseconds(io) >= bluetooth_reconnect_deadline) {
+            bluetooth_client = bluetooth_ipc.Client.connect("/run/brick-bluetooth/control.sock") catch null;
+            bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
+            bluetooth_request = 1;
+        }
         if (wifi_client) |client| {
-            if ((poll_fds[1].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) {
+            if ((poll_fds[max_gamepads].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) {
                 client.close();
                 wifi_client = null;
                 wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
                 state.notice = "Wi-Fi service is restarting";
                 changed = true;
-            } else if ((poll_fds[1].revents & std.posix.POLL.IN) != 0) {
+            } else if ((poll_fds[max_gamepads].revents & std.posix.POLL.IN) != 0) {
                 var packet: [wifi_ipc.max_packet]u8 = undefined;
                 const event = client.receive(&packet) catch {
                     client.close();
@@ -457,7 +615,15 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     continue;
                 };
                 switch (event) {
-                    .snapshot => |snapshot| changed = state.updateWifi(snapshot) or changed,
+                    .snapshot => |snapshot| {
+                        changed = state.updateWifi(snapshot) or changed;
+                        const changing = wifiChanging(state);
+                        if (changing != network_changing) {
+                            network_changing = changing;
+                            var command = bluetooth.Command{ .generation = state.bluetooth.snapshot.generation, .request_id = 0, .kind = .network_activity, .value = changing };
+                            _ = sendBluetooth(if (bluetooth_client) |*connected| connected else null, &bluetooth_request, &command);
+                        }
+                    },
                     .result => |result| switch (result.status) {
                         .accepted => {},
                         .stale => state.notice = "Wi-Fi changed. Try again.",
@@ -466,11 +632,38 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 }
             }
         }
+        if (bluetooth_client) |client| {
+            if ((poll_fds[max_gamepads + 1].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) {
+                client.close();
+                bluetooth_client = null;
+                bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
+                state.notice = "Bluetooth service is restarting";
+                changed = true;
+            } else if ((poll_fds[max_gamepads + 1].revents & std.posix.POLL.IN) != 0) {
+                var packet: [bluetooth_ipc.max_packet]u8 = undefined;
+                const event = client.receive(&packet) catch {
+                    client.close();
+                    bluetooth_client = null;
+                    bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
+                    state.notice = "Bluetooth service is restarting";
+                    changed = true;
+                    continue;
+                };
+                switch (event) {
+                    .snapshot => |snapshot| changed = state.updateBluetooth(snapshot) or changed,
+                    .result => |result| switch (result.status) {
+                        .accepted => {},
+                        .stale => state.notice = "Bluetooth changed. Try again.",
+                        .rejected => state.notice = "Could not complete Bluetooth action",
+                    },
+                }
+            }
+        }
         was_animating = animation;
         {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
                 const previous = state.selected;
-                const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, action);
+                const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
@@ -479,28 +672,37 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
             };
         }
-        while ((poll_fds[0].revents & std.posix.POLL.IN) != 0) {
-            const bytes_read = std.posix.read(input_fd, &buffer) catch |err| switch (err) {
-                error.WouldBlock => break,
-                else => return err,
-            };
-            if (bytes_read == 0) return error.GamepadDisconnected;
-            if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
-            const events = std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read]);
-            for (events) |event| {
-                observeRepeat(&repeat, event, nowMilliseconds(io));
-                if (actionForEvent(event, &dropped)) |action| {
-                    const previous = state.selected;
-                    const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, action);
-                    if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
-                    if (state.page == .games and state.library_view == .shelf and previous != state.selected)
-                        motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
-                    if (result.launch) |index| return index;
-                    changed = changed or result.changed;
-                    if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
-                }
+        for (&gamepads.slots, 0..) |*slot, slot_index| {
+            if (slot.fd < 0) continue;
+            if ((poll_fds[slot_index].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) {
+                closeFd(io, slot.fd, true);
+                slot.* = .{};
+                repeat.reset();
+                input_rescan_deadline = nowMilliseconds(io);
+                continue;
             }
-            if (bytes_read < buffer.len) break;
+            while ((poll_fds[slot_index].revents & std.posix.POLL.IN) != 0) {
+                const bytes_read = std.posix.read(slot.fd, &buffer) catch |err| switch (err) {
+                    error.WouldBlock => break,
+                    else => return err,
+                };
+                if (bytes_read == 0) break;
+                if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
+                for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
+                    observeRepeat(&repeat, event, nowMilliseconds(io));
+                    if (actionForEvent(event, slot.builtin, &slot.dropped)) |action| {
+                        const previous = state.selected;
+                        const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
+                        if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
+                        if (state.page == .games and state.library_view == .shelf and previous != state.selected)
+                            motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
+                        if (result.launch) |index| return index;
+                        changed = changed or result.changed;
+                        if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
+                    }
+                }
+                if (bytes_read < buffer.len) break;
+            }
         }
         if (changed) {
             tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
@@ -517,45 +719,76 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
 
     var tree = state.tree();
     try framebuffer.show(&tree);
-    const input_fd = try discoverGamepad(io);
-    defer closeFd(io, input_fd, true);
-    var poll_fds = [_]std.posix.pollfd{.{ .fd = input_fd, .events = std.posix.POLL.IN, .revents = 0 }};
-    var dropped = false;
+    var gamepads = Gamepads{};
+    defer gamepads.close(io);
+    _ = try gamepads.rescan(io);
+    if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
+    const input_monitor = try openInputMonitor();
+    defer closeFd(io, input_monitor, true);
+    var rescan_deadline = nowMilliseconds(io) + 1000;
+    var poll_fds: [max_gamepads + 1]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
-        const ready = try std.posix.poll(&poll_fds, repeat.timeout(nowMilliseconds(io)));
-        if ((poll_fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0)
-            return error.GamepadDisconnected;
+        for (gamepads.slots, 0..) |slot, index| {
+            poll_fds[index].fd = slot.fd;
+            poll_fds[index].revents = 0;
+        }
+        poll_fds[max_gamepads].fd = input_monitor;
+        poll_fds[max_gamepads].revents = 0;
+        const now = nowMilliseconds(io);
+        const repeat_wait = repeat.timeout(now);
+        const scan_wait: i32 = @intCast(@max(0, rescan_deadline - now));
+        const timeout = if (repeat_wait < 0) scan_wait else @min(repeat_wait, scan_wait);
+        const ready = try std.posix.poll(&poll_fds, timeout);
         var changed = false;
+        if ((poll_fds[max_gamepads].revents & std.posix.POLL.IN) != 0) {
+            drainInputMonitor(input_monitor);
+            _ = try gamepads.rescan(io);
+        }
+        if (nowMilliseconds(io) >= rescan_deadline) {
+            _ = try gamepads.rescan(io);
+            if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
+            rescan_deadline = nowMilliseconds(io) + 1000;
+        }
         if (ready == 0) {
             if (repeat.due(nowMilliseconds(io))) |action| {
                 if (action == .up or action == .down)
                     changed = state.apply(action) or changed;
             }
         }
-        while ((poll_fds[0].revents & std.posix.POLL.IN) != 0) {
-            const bytes_read = std.posix.read(input_fd, &buffer) catch |err| switch (err) {
-                error.WouldBlock => break,
-                else => return err,
-            };
-            if (bytes_read == 0) return error.GamepadDisconnected;
-            if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
-            for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
-                observeRepeat(&repeat, event, nowMilliseconds(io));
-                if (actionForEvent(event, &dropped)) |action| {
-                    if (state.apply(action)) changed = true;
-                    if (state.takeCommand()) |command| {
-                        if (command == .save_state or command == .load_state) {
-                            var status = ui.message(state.appearance.colors(), if (command == .save_state) "Save state" else "Load state", if (command == .save_state) "Saving state…" else "Loading state…", "");
-                            try framebuffer.show(&status);
+        for (&gamepads.slots, 0..) |*slot, slot_index| {
+            if (slot.fd < 0) continue;
+            if ((poll_fds[slot_index].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) {
+                closeFd(io, slot.fd, true);
+                slot.* = .{};
+                repeat.reset();
+                rescan_deadline = nowMilliseconds(io);
+                continue;
+            }
+            while ((poll_fds[slot_index].revents & std.posix.POLL.IN) != 0) {
+                const bytes_read = std.posix.read(slot.fd, &buffer) catch |err| switch (err) {
+                    error.WouldBlock => break,
+                    else => return err,
+                };
+                if (bytes_read == 0) break;
+                if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
+                for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
+                    observeRepeat(&repeat, event, nowMilliseconds(io));
+                    if (actionForEvent(event, slot.builtin, &slot.dropped)) |action| {
+                        if (state.apply(action)) changed = true;
+                        if (state.takeCommand()) |command| {
+                            if (command == .save_state or command == .load_state) {
+                                var status = ui.message(state.appearance.colors(), if (command == .save_state) "Save state" else "Load state", if (command == .save_state) "Saving state…" else "Loading state…", "");
+                                try framebuffer.show(&status);
+                            }
+                            return command;
                         }
-                        return command;
                     }
                 }
+                if (bytes_read < buffer.len) break;
             }
-            if (bytes_read < buffer.len) break;
         }
         if (changed) {
             tree = state.tree();
@@ -624,6 +857,8 @@ pub fn run(io: std.Io) !void {
             state.last_played = game_index;
             state.resumable = retroarch.availableStates(io, game)[3];
             saveLibraryPreferences(io, &state);
+            if (retroarch.takeAudioLoss())
+                game_overlay.notice = "Bluetooth audio disconnected. Reconnect it, then relaunch the game.";
             while (true) {
                 refreshWifi(&state);
                 game_overlay.network_status = state.wifi.wifi_state.snapshot.settingsSummary();
@@ -699,8 +934,10 @@ pub fn probe(io: std.Io) !void {
     defer console.close();
     var framebuffer = try Framebuffer.open(io);
     defer framebuffer.close();
-    const input_fd = try discoverGamepad(io);
-    defer closeFd(io, input_fd, true);
+    var gamepads = Gamepads{};
+    defer gamepads.close(io);
+    _ = try gamepads.rescan(io);
+    if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
     var state = model.Model{};
     var tree = state.tree();
     try framebuffer.show(&tree);
@@ -709,15 +946,24 @@ pub fn probe(io: std.Io) !void {
 test "navigation presses and dropped streams resynchronise" {
     const testing = std.testing;
     var dropped = false;
-    try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 1 }, &dropped).?);
-    try testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_left, .value = 1 }, &dropped).?);
-    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 2 }, &dropped) == null);
-    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 2 }, &dropped) == null);
-    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = syn_dropped, .value = 0 }, &dropped) == null);
+    try testing.expectEqual(model.Action.down, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 1 }, true, &dropped).?);
+    try testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_left, .value = 1 }, true, &dropped).?);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_dpad_down, .value = 2 }, true, &dropped) == null);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 2 }, true, &dropped) == null);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = syn_dropped, .value = 0 }, true, &dropped) == null);
     try testing.expect(dropped);
-    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 1 }, &dropped) == null);
-    _ = actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = 0, .value = 0 }, &dropped);
+    try testing.expect(actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 1 }, true, &dropped) == null);
+    _ = actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_syn, .code = 0, .value = 0 }, true, &dropped);
     try testing.expect(!dropped);
+}
+
+test "input capability bitmaps and external gamepad conventions" {
+    try std.testing.expect(capabilityHas("1 0", 4));
+    try std.testing.expect(!capabilityHas("1 0", 0));
+    var dropped = false;
+    try std.testing.expectEqual(model.Action.select, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_south, .value = 1 }, false, &dropped).?);
+    try std.testing.expectEqual(model.Action.back, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 1 }, false, &dropped).?);
+    try std.testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_abs, .code = abs_hat0_x, .value = -1 }, false, &dropped).?);
 }
 
 fn performPower(io: std.Io, command: model.Power) !void {

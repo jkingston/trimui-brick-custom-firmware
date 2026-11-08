@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+const std = @import("std");
 const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
@@ -549,10 +550,10 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
     return choice(theme, settings_model.title(item), settings_model.labels(item), selected, active, note, "Settings");
 }
 
-pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []const u8) Tree {
+pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []const u8, bluetooth_summary: []const u8) Tree {
     const theme = values.appearance.colors();
-    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Wi-Fi" };
-    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), wifi_summary };
+    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Wi-Fi", "Bluetooth" };
+    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), wifi_summary, bluetooth_summary };
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Settings");
     const visible: usize = 5;
@@ -765,40 +766,112 @@ pub fn wifiHiddenSecurity(theme: Theme, selected: usize) Tree {
     return choice(theme, "Security", &.{ "Open", "WPA2 Personal" }, selected, null, "Choose the security used by the hidden network.", "Wi-Fi");
 }
 
-/// Host-renderable interaction prototype. It is intentionally not reachable
-/// from product navigation until the BlueZ adapter is implemented and qualified
-/// on the device.
-pub fn bluetooth(theme: Theme, radio: bluetooth_model.RadioState, discovery: bluetooth_model.DiscoveryState, devices: []const bluetooth_model.Device, selected: usize) Tree {
+pub fn bluetooth(theme: Theme, state: *const bluetooth_model.Model) Tree {
+    return switch (state.page) {
+        .list => bluetoothList(theme, state),
+        .details => bluetoothDetails(theme, state),
+        .forget_confirm => confirmation(theme, "Forget device", if (state.activeDevice()) |device| device.name.slice() else "Forget this device?", "This removes its pairing and saved preferences.", "Forget", state.confirm_selected),
+        .confirmation => confirmation(theme, "Pair device", if (state.snapshot.prompt_value_len == 0) "Confirm pairing?" else state.snapshot.prompt_value[0..state.snapshot.prompt_value_len], "Check that the same code appears on the other device.", "Pair", state.confirm_selected),
+        .code_entry => bluetoothCode(theme, state),
+        .code_display => bluetoothDisplayCode(theme, state),
+    };
+}
+
+fn bluetoothList(theme: Theme, state: *const bluetooth_model.Model) Tree {
+    const snapshot = &state.snapshot;
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Bluetooth");
     result.add(.{ .overlay_row = .{
         .bounds = .{ .x = 28, .y = 116, .width = 968, .height = 92 },
         .label = "Bluetooth",
         .detail = "",
-        .value = switch (radio) {
+        .value = switch (snapshot.radio) {
             .off, .stopping => "Off",
             .unavailable, .failed => "Unavailable",
             .starting, .ready => "On",
         },
-        .selected = selected == 0,
+        .selected = state.selected == 0,
         .disclosure = false,
     } });
-    textLabel(&result, .{ .x = 48, .y = 228, .width = 928, .height = 40 }, bluetooth_model.radioSummary(radio, discovery), if (radio == .failed or discovery == .failed) theme.text else theme.muted, font.caption);
+    textLabel(&result, .{ .x = 48, .y = 218, .width = 928, .height = 40 }, snapshot.status(), if (snapshot.radio == .failed or snapshot.discovery == .failed) theme.text else theme.muted, font.caption);
 
-    if (radio == .ready) {
-        for (devices[0..@min(devices.len, 4)], 0..) |device, index| result.add(.{ .overlay_row = .{
-            .bounds = .{ .x = 28, .y = 282 + @as(u16, @intCast(index)) * 102, .width = 968, .height = 96 },
-            .label = device.label(),
-            .detail = device.detail(),
-            .selected = selected == index + 1,
-            .disclosure = false,
-        } });
-    } else if (radio == .off) {
+    if (snapshot.radio == .ready) {
+        const visible: usize = 4;
+        const first = @min(state.selected -| 2, @as(usize, snapshot.device_count + 1) -| visible);
+        const total = snapshot.device_count + 1;
+        for (0..@min(visible, total - first)) |row| {
+            const item = first + row;
+            if (item == snapshot.device_count) {
+                result.add(.{ .overlay_row = .{
+                    .bounds = .{ .x = 28, .y = 270 + @as(u16, @intCast(row)) * 96, .width = 968, .height = 88 },
+                    .label = if (snapshot.discovery == .idle) "Find devices" else "Stop searching",
+                    .detail = "",
+                    .selected = state.selected == item + 1,
+                } });
+                continue;
+            }
+            const device = &snapshot.devices[item];
+            result.add(.{ .overlay_row = .{
+                .bounds = .{ .x = 28, .y = 270 + @as(u16, @intCast(row)) * 96, .width = 968, .height = 88 },
+                .label = device.name.slice(),
+                .detail = device.detail(),
+                .value = device.battery_label.slice(),
+                .selected = state.selected == item + 1,
+                .disclosure = false,
+            } });
+        }
+    } else if (snapshot.radio == .off) {
         textLabel(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Turn Bluetooth on to connect devices.", theme.text, font.body);
-    } else if (radio == .unavailable or radio == .failed) {
+    } else if (snapshot.radio == .unavailable or snapshot.radio == .failed) {
         textLabel(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Restart the device and try again.", theme.text, font.body);
     }
-    footer(&result, &.{ .{ .control = .back, .label = "Settings" }, .{ .control = .confirm, .label = if (selected == 0) "Change" else "Select" } });
+    if (snapshot.radio == .ready)
+        footer(&result, &.{ .{ .control = .back, .label = "Settings" }, .{ .control = .filter, .label = if (snapshot.discovery == .idle) "Find" else "Stop" }, .{ .control = .confirm, .label = "Select" } })
+    else
+        footer(&result, &.{ .{ .control = .back, .label = "Settings" }, .{ .control = .confirm, .label = "Change" } });
+    return result;
+}
+
+fn bluetoothDetails(theme: Theme, state: *const bluetooth_model.Model) Tree {
+    const device = state.activeDevice() orelse return bluetoothList(theme, state);
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, device.name.slice());
+    const audio = device.kind == .audio and device.state == .ready;
+    const labels = if (audio) [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", "Use for game audio", "Forget device" } else [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", "Forget device", "" };
+    const count: usize = if (audio) 3 else 2;
+    for (labels[0..count], 0..) |label, index| result.add(.{ .overlay_row = .{
+        .bounds = .{ .x = 28, .y = 148 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 },
+        .label = label,
+        .detail = if (index == 0) device.detail() else "",
+        .selected = state.detail_selected == index,
+    } });
+    footer(&result, &.{ .{ .control = .back, .label = "Bluetooth" }, .{ .control = .confirm, .label = "Select" } });
+    return result;
+}
+
+fn bluetoothCode(theme: Theme, state: *const bluetooth_model.Model) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, "Pair device");
+    textLabel(&result, .{ .x = 48, .y = 112, .width = 928, .height = 42 }, if (state.snapshot.prompt == .pin) "Enter the device PIN" else "Enter the pairing code", theme.muted, font.caption);
+    result.add(.{ .bar = .{ .bounds = .{ .x = 48, .y = 166, .width = 928, .height = 72 }, .color = theme.surface, .radius = geometry.radius } });
+    result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 178, .width = 880, .height = 48 }, .value = state.field.slice(), .color = theme.text, .font = font.body } });
+    result.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = state.field.selected } });
+    footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = if (state.field.selected == 39) "Pair" else "Type" } });
+    return result;
+}
+
+fn bluetoothDisplayCode(theme: Theme, state: *const bluetooth_model.Model) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, "Pair device");
+    var large = font.brand;
+    large.alignment = .center;
+    large.size = 96;
+    large.line_height = 120;
+    textLabel(&result, .{ .x = 80, .y = 238, .width = 864, .height = 120 }, state.snapshot.prompt_value[0..state.snapshot.prompt_value_len], theme.text, large);
+    var note_font = font.caption;
+    note_font.alignment = .center;
+    textLabel(&result, .{ .x = 80, .y = 392, .width = 864, .height = 84 }, "Enter this code on the other device.", theme.muted, note_font);
+    footer(&result, &.{.{ .control = .back, .label = "Cancel" }});
     return result;
 }
 
@@ -849,10 +922,9 @@ pub fn showNotice(tree: *Tree, notice: []const u8) void {
 }
 
 test "light and dark appearances preserve component geometry and typography" {
-    const std = @import("std");
     const themes = @import("theme.zig");
-    const light_screens = [_]Tree{ home(themes.light, 0), library(themes.light, &catalog.games, 0, .list, 0), library(themes.light, &catalog.games, 0, .shelf, 0), library(themes.light, &catalog.games, 0, .grid, 0), settings(0, .{}, "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
-    const dark_screens = [_]Tree{ home(themes.dark, 0), library(themes.dark, &catalog.games, 0, .list, 0), library(themes.dark, &catalog.games, 0, .shelf, 0), library(themes.dark, &catalog.games, 0, .grid, 0), settings(0, .{ .appearance = .dark }, "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
+    const light_screens = [_]Tree{ home(themes.light, 0), library(themes.light, &catalog.games, 0, .list, 0), library(themes.light, &catalog.games, 0, .shelf, 0), library(themes.light, &catalog.games, 0, .grid, 0), settings(0, .{}, "Unavailable", "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
+    const dark_screens = [_]Tree{ home(themes.dark, 0), library(themes.dark, &catalog.games, 0, .list, 0), library(themes.dark, &catalog.games, 0, .shelf, 0), library(themes.dark, &catalog.games, 0, .grid, 0), settings(0, .{ .appearance = .dark }, "Unavailable", "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
     for (&light_screens, &dark_screens) |*light_screen, *dark_screen| {
         try std.testing.expectEqual(light_screen.len, dark_screen.len);
         for (light_screen.slice(), dark_screen.slice()) |a, b| {

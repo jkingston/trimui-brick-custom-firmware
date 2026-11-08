@@ -33,6 +33,10 @@ define BRICK_SHELL_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/sbin/brick-settings
 	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/retroarch.cfg \
 		$(TARGET_DIR)/etc/retroarch/retroarch.cfg
+	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/TrimUI_Brick_Gamepad.cfg \
+		$(TARGET_DIR)/usr/share/libretro/autoconfig/udev/TrimUI_Brick_Gamepad.cfg
+	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/Brick_Test_Controller.cfg \
+		$(TARGET_DIR)/usr/share/libretro/autoconfig/udev/Brick_Test_Controller.cfg
 	rm -f $(TARGET_DIR)/usr/share/fonts/notosans/*Italic*.ttf
 	mkdir -p $(TARGET_DIR)/var/cache/fontconfig
 	env FONTCONFIG_FILE=/etc/fonts/fonts.conf \

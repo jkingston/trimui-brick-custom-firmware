@@ -41,6 +41,13 @@ pub const Failure = enum {
 };
 
 pub const Session = struct { config: []const u8, log: []const u8, saves: []const u8, states: []const u8 };
+var audio_lost_during_game = false;
+
+pub fn takeAudioLoss() bool {
+    const value = audio_lost_during_game;
+    audio_lost_during_game = false;
+    return value;
+}
 
 fn performance(io: std.Io, mode: []const u8) !void {
     var child = try std.process.spawn(io, .{ .argv = &.{ "/usr/sbin/brick-performance", mode } });
@@ -75,6 +82,53 @@ fn coreName(game: *const catalog.Game) []const u8 {
     if (std.mem.eql(u8, name, "mednafen_ngp_libretro.so")) return "Beetle NeoPop";
     if (std.mem.eql(u8, name, "fbneo_neogeo_libretro.so")) return "FinalBurn Neo (neogeo subset)";
     return std.Io.Dir.path.stem(name);
+}
+
+fn inputCapabilityHas(bitmap: []const u8, bit: usize) bool {
+    const nibble = bit / 4;
+    const shift: u3 = @intCast(bit % 4);
+    var seen: usize = 0;
+    var cursor = bitmap.len;
+    while (cursor != 0) {
+        cursor -= 1;
+        const byte = bitmap[cursor];
+        if (std.ascii.isWhitespace(byte)) continue;
+        const value = std.fmt.charToDigit(byte, 16) catch return false;
+        if (seen == nibble) return (value & (@as(u8, 1) << shift)) != 0;
+        seen += 1;
+    }
+    return false;
+}
+
+fn externalGamepad(io: std.Io, output: []u8) ?[]const u8 {
+    for (0..64) |index| {
+        var path: [128]u8 = undefined;
+        const name_path = std.fmt.bufPrint(&path, "/sys/class/input/event{d}/device/name", .{index}) catch continue;
+        const name = std.Io.Dir.cwd().readFile(io, name_path, output) catch continue;
+        const clean = std.mem.trim(u8, name, " \t\r\n");
+        if (std.mem.eql(u8, clean, "TrimUI Brick Gamepad")) continue;
+        var capabilities: [1024]u8 = undefined;
+        const capability_path = std.fmt.bufPrint(&path, "/sys/class/input/event{d}/device/capabilities/key", .{index}) catch continue;
+        const keys = std.Io.Dir.cwd().readFile(io, capability_path, &capabilities) catch continue;
+        if (!inputCapabilityHas(keys, 0x130)) continue;
+        var safe = clean.len != 0;
+        for (clean) |byte| if (byte < 0x20 or byte == '"' or byte == '\\') {
+            safe = false;
+            break;
+        };
+        if (!safe) continue;
+        return clean;
+    }
+    return null;
+}
+
+fn audioOverride(io: std.Io, output: []u8) ?[]const u8 {
+    const raw = std.Io.Dir.cwd().readFile(io, "/run/brick-shell/bluetooth-audio.cfg", output) catch return null;
+    const value = std.mem.trim(u8, raw, "\r\n");
+    if (!std.mem.startsWith(u8, value, "audio_device = \"bluealsa:DEV=") or
+        !std.mem.endsWith(u8, value, ",PROFILE=a2dp\"") or std.mem.indexOfScalar(u8, value, '\n') != null) return null;
+    for (value) |byte| if (byte < 0x20 or byte > 0x7e) return null;
+    return value;
 }
 
 fn migrate(io: std.Io, allocator: std.mem.Allocator, game: *const catalog.Game, library: []const catalog.Game, root: []const u8, session: Session) !void {
@@ -188,12 +242,19 @@ pub fn prepare(io: std.Io, allocator: std.mem.Allocator, game: *const catalog.Ga
     };
     // Exercise writes before handing the display to the emulator.
     cwd.writeFile(io, .{ .sub_path = marker, .data = game.rom_path }) catch return error.SaveStorageUnavailable;
+    var controller_name_buffer: [128]u8 = undefined;
+    const controller = externalGamepad(io, &controller_name_buffer);
+    var audio_buffer: [192]u8 = undefined;
+    const audio = audioOverride(io, &audio_buffer);
+    const controller_config = if (controller) |name| try std.fmt.allocPrint(allocator, "input_player1_reserved_device = \"{s}\"\ninput_player1_device_reservation_type = \"2\"\n" ++
+        "input_player2_reserved_device = \"TrimUI Brick Gamepad\"\ninput_player2_device_reservation_type = \"2\"\n", .{name}) else "";
+    const audio_config = if (audio) |route| try std.fmt.allocPrint(allocator, "{s}\n", .{route}) else "";
     const text = try std.fmt.allocPrint(allocator, "savefile_directory = \"{s}\"\nsavestate_directory = \"{s}\"\n" ++
         "sort_savefiles_enable = \"true\"\nsort_savestates_enable = \"true\"\n" ++
         "sort_savefiles_by_content_enable = \"false\"\nsort_savestates_by_content_enable = \"false\"\n" ++
         "savefiles_in_content_dir = \"false\"\nsavestates_in_content_dir = \"false\"\n" ++
         "savestate_auto_save = \"true\"\nsavestate_auto_load = \"true\"\nautosave_interval = \"10\"\n" ++
-        "config_save_on_exit = \"false\"\n", .{ session.saves, session.states });
+        "config_save_on_exit = \"false\"\n{s}{s}", .{ session.saves, session.states, controller_config, audio_config });
     cwd.writeFile(io, .{ .sub_path = session.config, .data = text }) catch return error.SaveStorageUnavailable;
     return session;
 }
@@ -201,6 +262,11 @@ pub fn prepare(io: std.Io, allocator: std.mem.Allocator, game: *const catalog.Ga
 pub fn launch(io: std.Io, game: *const catalog.Game, library: []const catalog.Game) !std.process.Child.Term {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
+    audio_lost_during_game = false;
+    const bluetooth_audio = blk: {
+        std.Io.Dir.cwd().access(io, "/run/brick-shell/bluetooth-audio.cfg", .{}) catch break :blk false;
+        break :blk true;
+    };
     const session = try prepare(io, arena.allocator(), game, library, "/data", "/run/brick-shell");
     const log = try std.Io.Dir.cwd().createFile(io, session.log, .{});
     defer log.close(io);
@@ -209,7 +275,12 @@ pub fn launch(io: std.Io, game: *const catalog.Game, library: []const catalog.Ga
         std.log.err("Failed to restore the menu performance profile: {s}", .{@errorName(err)});
     const argv = arguments(game) ++ [_][]const u8{ "--verbose", "--appendconfig", session.config };
     var child = try std.process.spawn(io, .{ .argv = &argv, .stdout = .{ .file = log }, .stderr = .{ .file = log } });
-    return child.wait(io);
+    const term = try child.wait(io);
+    if (bluetooth_audio)
+        std.Io.Dir.cwd().access(io, "/run/brick-shell/bluetooth-audio.cfg", .{}) catch {
+            audio_lost_during_game = true;
+        };
+    return term;
 }
 
 fn statePath(allocator: std.mem.Allocator, game: *const catalog.Game, session: Session, suffix: []const u8) ![]const u8 {

@@ -83,18 +83,29 @@ fn snapshot(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen: 
             state.selected = 0;
         }
     }
-    const bluetooth_devices = [_]bluetooth.Device{
-        .{ .name = "Living room headphones", .address = "00:11:22:33:44:55", .kind = .audio, .state = if (std.mem.eql(u8, screen, "bluetooth-pairing")) .pairing else .ready },
-        .{ .name = "Wireless controller", .address = "AA:BB:CC:DD:EE:FF", .kind = .controller, .state = .saved },
-        .{ .name = "", .address = "12:34:56:78:9A:BC", .kind = .other, .state = .nearby },
-    };
-    var tree = if (std.mem.startsWith(u8, screen, "bluetooth")) ui.bluetooth(
-        state.settings.appearance.colors(),
-        if (std.mem.eql(u8, screen, "bluetooth-off")) .off else if (std.mem.eql(u8, screen, "bluetooth-failed")) .failed else .ready,
-        if (std.mem.eql(u8, screen, "bluetooth") or std.mem.eql(u8, screen, "bluetooth-pairing")) .scanning_classic else .idle,
-        if (std.mem.eql(u8, screen, "bluetooth-off") or std.mem.eql(u8, screen, "bluetooth-failed")) &.{} else &bluetooth_devices,
-        if (std.mem.eql(u8, screen, "bluetooth-pairing")) 1 else 0,
-    ) else if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
+    var bluetooth_state = bluetooth.Model{};
+    var bluetooth_snapshot = try bluetooth.parse(
+        "snapshot version=1 generation=7 revision=4 radio=ready discovery=classic operation=discovery operation_device= prompt=none prompt_device= prompt_value=\n" ++
+            "device id=audio0123456789abcdef0123456789ab name_hex=4c6976696e6720726f6f6d206865616470686f6e6573 kind=audio state=ready battery=82 legacy=0\n" ++
+            "device id=pad00123456789abcdef0123456789ab name_hex=576972656c65737320636f6e74726f6c6c6572 kind=controller state=saved battery=64 legacy=0\n" ++
+            "device id=other123456789abcdef0123456789abc name_hex=426c7565746f6f746820646576696365 kind=other state=nearby battery=-1 legacy=1\nend\n",
+    );
+    if (std.mem.eql(u8, screen, "bluetooth-off")) {
+        bluetooth_snapshot.radio = .off;
+        bluetooth_snapshot.device_count = 0;
+    }
+    if (std.mem.eql(u8, screen, "bluetooth-failed")) {
+        bluetooth_snapshot.radio = .failed;
+        bluetooth_snapshot.device_count = 0;
+    }
+    if (std.mem.eql(u8, screen, "bluetooth-pairing")) {
+        bluetooth_snapshot.prompt = .confirm;
+        bluetooth_snapshot.prompt_device = bluetooth_snapshot.devices[1].id;
+        @memcpy(bluetooth_snapshot.prompt_value[0..6], "483921");
+        bluetooth_snapshot.prompt_value_len = 6;
+    }
+    _ = bluetooth_state.update(bluetooth_snapshot);
+    var tree = if (std.mem.startsWith(u8, screen, "bluetooth")) ui.bluetooth(state.settings.appearance.colors(), &bluetooth_state) else if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
         const wifi = @import("wifi.zig");
         var wifi_state = wifi.Model{};
         var wifi_snapshot = try wifi.parse(
@@ -205,6 +216,7 @@ test {
     _ = @import("wifi.zig");
     _ = @import("wifi_flow.zig");
     _ = @import("wifi_ipc.zig");
+    _ = @import("bluetooth_ipc.zig");
 }
 
 fn parseAppearance(value: ?[]const u8) !@import("theme.zig").Mode {
