@@ -3,6 +3,8 @@
 const std = @import("std");
 const asset_manifest = @import("asset_manifest.zig");
 
+const bundled_asset_root = "/usr/share/brick/cartridges";
+
 pub const Cover = @import("cover_kind.zig").Kind;
 
 pub const Game = struct {
@@ -113,6 +115,15 @@ fn lessThan(_: void, a: Game, b: Game) bool {
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
 
+fn applyAssets(found: []Game, exact: *const std.StringHashMap(asset_manifest.Assets), bundled: *const std.StringHashMap(asset_manifest.Assets)) void {
+    for (found) |*game| {
+        if (exact.get(game.rom_path)) |mapping| game.assets = mapping;
+        if (game.assets.sprite == null) {
+            if (bundled.get(game.platform_id)) |fallback| game.assets.sprite = fallback.sprite;
+        }
+    }
+}
+
 fn displayTitle(allocator: std.mem.Allocator, file_name: []const u8) ![]const u8 {
     const stem = std.Io.Dir.path.stem(file_name);
     const known = [_]struct { name: []const u8, title: []const u8 }{
@@ -219,11 +230,39 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
         break :blk std.StringHashMap(asset_manifest.Assets).init(allocator);
     };
     defer assets.deinit();
-    for (found.items) |*game| {
-        if (assets.get(game.rom_path)) |mapping| game.assets = mapping;
-    }
+    var bundled = asset_manifest.loadBundled(io, allocator, bundled_asset_root) catch |err| blk: {
+        std.log.warn("Ignoring invalid bundled cartridge assets: {s}", .{@errorName(err)});
+        break :blk std.StringHashMap(asset_manifest.Assets).init(allocator);
+    };
+    defer bundled.deinit();
+    applyAssets(found.items, &assets, &bundled);
     std.mem.sort(Game, found.items, {}, lessThan);
     return found.toOwnedSlice(allocator);
+}
+
+test "per-game assets override bundled sprites and incomplete entries inherit them" {
+    const allocator = std.testing.allocator;
+    const bundled_pixels = [_]u32{0xff010203};
+    const exact_pixels = [_]u32{0xff040506};
+    const bundled_texture = asset_manifest.Texture{ .width = 1, .height = 1, .pixels = &bundled_pixels, .content_x = 0, .content_y = 0, .content_width = 1, .content_height = 1 };
+    const exact_texture = asset_manifest.Texture{ .width = 1, .height = 1, .pixels = &exact_pixels, .content_x = 0, .content_y = 0, .content_width = 1, .content_height = 1 };
+    var bundled: std.StringHashMap(asset_manifest.Assets) = .init(allocator);
+    defer bundled.deinit();
+    try bundled.put("gb", .{ .sprite = bundled_texture });
+    var exact: std.StringHashMap(asset_manifest.Assets) = .init(allocator);
+    defer exact.deinit();
+    try exact.put("/data/Roms/GB/Exact.gb", .{ .sprite = exact_texture });
+    try exact.put("/data/Roms/GB/Incomplete.gb", .{ .model = "/model.glb" });
+    var found = [_]Game{
+        .{ .title = "Bundled", .system = "Game Boy", .platform_id = "gb", .summary = "", .core_path = "", .rom_path = "/data/Roms/GB/Bundled.gb", .cover = .library },
+        .{ .title = "Exact", .system = "Game Boy", .platform_id = "gb", .summary = "", .core_path = "", .rom_path = "/data/Roms/GB/Exact.gb", .cover = .library },
+        .{ .title = "Incomplete", .system = "Game Boy", .platform_id = "gb", .summary = "", .core_path = "", .rom_path = "/data/Roms/GB/Incomplete.gb", .cover = .library },
+    };
+    applyAssets(&found, &exact, &bundled);
+    try std.testing.expectEqual(@as(u32, 0xff010203), found[0].assets.sprite.?.pixels[0]);
+    try std.testing.expectEqual(@as(u32, 0xff040506), found[1].assets.sprite.?.pixels[0]);
+    try std.testing.expectEqual(@as(u32, 0xff010203), found[2].assets.sprite.?.pixels[0]);
+    try std.testing.expectEqualStrings("/model.glb", found[2].assets.model.?);
 }
 
 test "system aliases include existing and MinUI folder names" {

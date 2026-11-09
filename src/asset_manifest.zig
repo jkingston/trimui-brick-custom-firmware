@@ -24,6 +24,22 @@ const Manifest = struct {
     attribution: std.json.Value,
 };
 
+const BundledPlatform = struct {
+    id: []const u8,
+    label: []const u8,
+    model: []const u8,
+    sprite: []const u8,
+    width: u16,
+    height: u16,
+    sha256: []const u8,
+};
+
+const BundledManifest = struct {
+    schema_version: u32,
+    model_release: []const u8,
+    platforms: []const BundledPlatform,
+};
+
 pub const Assets = struct {
     model: ?[]const u8 = null,
     front: ?[]const u8 = null,
@@ -77,15 +93,7 @@ fn modelPath(allocator: std.mem.Allocator, asset_root: []const u8, id: ?[]const 
     return try confinedPath(allocator, asset_root, relative);
 }
 
-fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8, textures: ?std.json.Value, name: []const u8) !?Texture {
-    const value = textures orelse return null;
-    if (value != .object) return error.InvalidAssetTextures;
-    const member = if (std.mem.eql(u8, name, "artwork"))
-        value.object.get("artwork.front") orelse value.object.get("artwork.disc") orelse return null
-    else
-        value.object.get(name) orelse return null;
-    if (member != .string) return error.InvalidAssetTextures;
-    const path = try confinedPath(allocator, asset_root, member.string);
+fn loadTextureFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Texture {
     const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.page_allocator, .limited(4 * 1024 * 1024));
     defer std.heap.page_allocator.free(contents);
     if (contents.len < 8 or !std.mem.eql(u8, contents[0..4], "BRTX")) return error.InvalidAssetTexture;
@@ -127,6 +135,49 @@ fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8,
         .content_width = content_width,
         .content_height = content_height,
     };
+}
+
+fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8, textures: ?std.json.Value, name: []const u8) !?Texture {
+    const value = textures orelse return null;
+    if (value != .object) return error.InvalidAssetTextures;
+    const member = if (std.mem.eql(u8, name, "artwork"))
+        value.object.get("artwork.front") orelse value.object.get("artwork.disc") orelse return null
+    else
+        value.object.get(name) orelse return null;
+    if (member != .string) return error.InvalidAssetTextures;
+    const path = try confinedPath(allocator, asset_root, member.string);
+    return try loadTextureFile(io, allocator, path);
+}
+
+fn validPlatformId(id: []const u8) bool {
+    if (id.len == 0) return false;
+    for (id) |character| {
+        if (!std.ascii.isAlphanumeric(character) and character != '-') return false;
+    }
+    return true;
+}
+
+/// Load the ROM-independent sprites installed in the read-only firmware image.
+/// The returned texture storage belongs to allocator.
+pub fn loadBundled(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8) !std.StringHashMap(Assets) {
+    var result: std.StringHashMap(Assets) = .init(allocator);
+    const manifest_path = try std.Io.Dir.path.join(allocator, &.{ asset_root, "manifest.json" });
+    const contents = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(maximum_manifest_bytes)) catch |err| switch (err) {
+        error.FileNotFound => return result,
+        else => return err,
+    };
+    const manifest = try std.json.parseFromSliceLeaky(BundledManifest, allocator, contents, .{ .ignore_unknown_fields = false, .allocate = .alloc_always });
+    if (manifest.schema_version != 1) return error.UnsupportedAssetManifest;
+    for (manifest.platforms) |entry| {
+        if (!validPlatformId(entry.id)) return error.InvalidAssetPlatform;
+        if (result.contains(entry.id)) return error.DuplicateAssetPlatform;
+        const path = try confinedPath(allocator, asset_root, entry.sprite);
+        const sprite = try loadTextureFile(io, allocator, path);
+        if (sprite.width != entry.width or sprite.height != entry.height)
+            return error.InvalidAssetTextureDimensions;
+        try result.put(entry.id, .{ .sprite = sprite });
+    }
+    return result;
 }
 
 pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
@@ -241,4 +292,42 @@ test "manifest rejects paths outside the data and asset roots" {
         \\],"attribution":{}}
     });
     try std.testing.expectError(error.AssetPathEscapesRoot, load(io, allocator, root));
+}
+
+test "bundled manifest loads platform fallback sprites" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    try temporary.dir.createDirPath(io, "textures");
+    try temporary.dir.writeFile(io, .{ .sub_path = "textures/gb.brtx", .data = "BRTX\x01\x00\x01\x00\x03\x02\x01\xff" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "manifest.json", .data =
+        \\{"schema_version":1,"model_release":"test","platforms":[
+        \\{"id":"gb","label":"Game Boy","model":"gb","sprite":"textures/gb.brtx","width":1,"height":1,"sha256":"test"}
+        \\]}
+    });
+    var assets = try loadBundled(io, allocator, root);
+    defer assets.deinit();
+    const texture = assets.get("gb").?.sprite.?;
+    try std.testing.expectEqual(@as(u16, 1), texture.width);
+    try std.testing.expectEqual(@as(u32, 0xff010203), texture.pixels[0]);
+}
+
+test "bundled manifest rejects escaping sprite paths" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    try temporary.dir.writeFile(io, .{ .sub_path = "manifest.json", .data =
+        \\{"schema_version":1,"model_release":"test","platforms":[
+        \\{"id":"gb","label":"Game Boy","model":"gb","sprite":"../gb.brtx","width":1,"height":1,"sha256":"test"}
+        \\]}
+    });
+    try std.testing.expectError(error.AssetPathEscapesRoot, loadBundled(io, allocator, root));
 }

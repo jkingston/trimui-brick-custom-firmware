@@ -41,11 +41,13 @@ description = "Configure the composed Buildroot tree"
 run = '''
 root="$MISE_PROJECT_ROOT"
 base="$(realpath "${BASE:-../firmware}")"
+assets="$(realpath "${ASSETS:-../cartridge-assets}")"
 buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
 buildroot="$base/output/buildroot-$buildroot_version"
 output="$(realpath -m "${O:-$root/output/build}")"
-externals="$base $root"
+externals="$base $assets $root"
 test -f "$base/Makefile"
+test -f "$assets/runtime/manifest.json"
 make -C "$base" O="$output" EXTERNALS="$externals" configure
 "$buildroot/utils/config" --file "$output/.config" --enable BR2_PACKAGE_BRICK_SHELL
 "$buildroot/utils/config" --file "$output/.config" --set-str \
@@ -56,6 +58,7 @@ make -C "$base" O="$output" EXTERNALS="$externals" configure
 make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
     BR2_DL_DIR="$base/output/downloads" olddefconfig
 grep -qx 'BR2_PACKAGE_BRICK_SHELL=y' "$output/.config"
+grep -qx 'BR2_PACKAGE_BRICK_CARTRIDGE_ASSETS=y' "$output/.config"
 '''
 
 [tasks.build]
@@ -65,14 +68,17 @@ depends = ["configure"]
 run = '''
 root="$MISE_PROJECT_ROOT"
 base="$(realpath "${BASE:-../firmware}")"
+assets="$(realpath "${ASSETS:-../cartridge-assets}")"
 buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
 buildroot="$base/output/buildroot-$buildroot_version"
 output="$(realpath -m "${O:-$root/output/build}")"
-make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" \
-    BR2_DL_DIR="$base/output/downloads" brick-shell-dirclean
-make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" \
+externals="$base $assets $root"
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
+    BR2_DL_DIR="$base/output/downloads" \
+    brick-shell-dirclean brick-cartridge-assets-dirclean
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
     BR2_DL_DIR="$base/output/downloads" brick-shell
-make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" \
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
     BR2_DL_DIR="$base/output/downloads"
 '''
 
@@ -81,10 +87,11 @@ description = "Clean the composed Buildroot output"
 run = '''
 root="$MISE_PROJECT_ROOT"
 base="$(realpath "${BASE:-../firmware}")"
+assets="$(realpath "${ASSETS:-../cartridge-assets}")"
 buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
 buildroot="$base/output/buildroot-$buildroot_version"
 output="$(realpath -m "${O:-$root/output/build}")"
-make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $root" clean
+make -C "$buildroot" O="$output" BR2_EXTERNAL="$base $assets $root" clean
 '''
 
 [tasks.release]
@@ -92,10 +99,11 @@ description = "Build and verify a clean release image"
 run = '''
 root="$MISE_PROJECT_ROOT"
 base="$(realpath "${BASE:-../firmware}")"
+assets="$(realpath "${ASSETS:-../cartridge-assets}")"
 buildroot_version="$(sed -n 's/^BUILDROOT_VERSION := //p' "$base/Makefile")"
 buildroot="$base/output/buildroot-$buildroot_version"
 output="$(realpath -m "${RELEASE_O:-$root/output/release}")"
-externals="$base $root"
+externals="$base $assets $root"
 test ! -e "$output/.config"
 test ! -e "$output/local.mk"
 O="$output" mise run configure

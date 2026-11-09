@@ -125,8 +125,10 @@ BIOS set. Core availability does not guarantee compatibility with every game.
 
 ## Cartridge artwork
 
-Neutral cartridge models and game-specific artwork are installed only for ROMs
-present on the data card. Clone
+The firmware image includes a neutral, pre-rendered 3D cartridge or disc for
+every supported platform. The shell uses these built-in assets immediately for
+any discovered ROM, so the cartridge shelf does not require a separate setup
+step. Game-specific artwork can override the built-in sprite. Clone
 the [asset repository](https://github.com/jkingston/trimui-brick-cartridge-assets),
 then synchronize through the Brick's USB network interface:
 
