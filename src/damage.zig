@@ -264,8 +264,11 @@ fn expand(rect: ui.Rect, x: u16, y: u16) ui.Rect {
     return .{
         .x = rect.x,
         .y = rect.y,
-        .width = @intCast(@min(@as(u32, 1024 - rect.x), @as(u32, rect.width) + x)),
-        .height = @intCast(@min(@as(u32, 768 - rect.y), @as(u32, rect.height) + y)),
+        // Shelf neighbours may be wholly outside the viewport while entering or
+        // leaving cartridge flow. Such elements paint no pixels; their damage
+        // bounds must not underflow merely because their origin is off-screen.
+        .width = @intCast(@min(@as(u32, 1024 -| rect.x), @as(u32, rect.width) + x)),
+        .height = @intCast(@min(@as(u32, 768 -| rect.y), @as(u32, rect.height) + y)),
     };
 }
 
@@ -383,4 +386,22 @@ test "damage signatures preserve both hashes across buffered update boundaries" 
             try std.testing.expectEqual(expected, hash.final());
         }
     }
+}
+
+test "paint bounds clip cartridges outside the viewport without underflow" {
+    const outside = paintBounds(.{ .cartridge = .{
+        .bounds = .{ .x = 1120, .y = 154, .width = 256, .height = 330 },
+        .platform = "gba",
+        .texture = null,
+        .sprite = null,
+    } });
+    try std.testing.expectEqual(@as(u16, 0), outside.width);
+
+    const edge = paintBounds(.{ .cartridge = .{
+        .bounds = .{ .x = 1000, .y = 154, .width = 256, .height = 330 },
+        .platform = "gba",
+        .texture = null,
+        .sprite = null,
+    } });
+    try std.testing.expectEqual(@as(u16, 24), edge.width);
 }
