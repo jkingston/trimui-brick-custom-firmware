@@ -2,7 +2,7 @@
 
 const input = @import("input.zig");
 
-pub const initial_delay_ms: i64 = 325;
+pub const initial_delay_ms: i64 = 600;
 
 pub const Controller = struct {
     held: ?input.Action = null,
@@ -49,10 +49,10 @@ const std = @import("std");
 test "repeat waits, accelerates, and stops on release" {
     var repeat: Controller = .{};
     repeat.press(.down, 1000);
-    try std.testing.expectEqual(@as(i32, 325), repeat.timeout(1000));
-    try std.testing.expect(repeat.due(1324) == null);
-    try std.testing.expectEqual(input.Action.down, repeat.due(1325).?);
-    try std.testing.expectEqual(@as(i32, 125), repeat.timeout(1325));
+    try std.testing.expectEqual(@as(i32, 600), repeat.timeout(1000));
+    try std.testing.expect(repeat.due(1599) == null);
+    try std.testing.expectEqual(input.Action.down, repeat.due(1600).?);
+    try std.testing.expectEqual(@as(i32, 125), repeat.timeout(1600));
     for (0..4) |_| _ = repeat.due(repeat.next_ms);
     try std.testing.expectEqual(@as(i32, 90), repeat.timeout(repeat.next_ms - 90));
     for (0..9) |_| _ = repeat.due(repeat.next_ms);
@@ -66,5 +66,5 @@ test "a different direction replaces the held direction" {
     repeat.press(.down, 0);
     repeat.press(.left, 100);
     repeat.release(.down);
-    try std.testing.expectEqual(input.Action.left, repeat.due(425).?);
+    try std.testing.expectEqual(input.Action.left, repeat.due(700).?);
 }

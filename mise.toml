@@ -28,11 +28,8 @@ run = '''
 rm -rf output/check
 zig build -Dtarget=aarch64-linux-gnu -Dcpu=cortex_a53 -Doptimize=ReleaseSmall \
     --prefix output/check --summary all
-# The contained captive fallback includes bounded URL parsing and an offline QR
-# renderer. Bluetooth device management, controller hotplug and audio routing add
-# the production integration layer; keep the complete stripped shell below a
-# deliberate 672 KiB cap.
-test "$(stat -c %s output/check/bin/brick-shell)" -le 688128
+# Includes three retained layer pairs and the complete deterministic screen oracle.
+test "$(stat -c %s output/check/bin/brick-shell)" -le 933888
 '''
 
 [tasks.check]
@@ -126,9 +123,11 @@ description = "Render deterministic UI screenshots"
 run = '''
 mkdir -p output/screenshots
 zig build -Doptimize=ReleaseSafe --prefix output/host-shell --summary all
-for screen in splash home games games-shelf games-grid game settings bluetooth bluetooth-off bluetooth-pairing bluetooth-failed wifi wifi-picker wifi-picker-off wifi-picker-error wifi-details wifi-password wifi-hidden-name wifi-hidden-security wifi-info wifi-open-confirm wifi-forget-confirm overlay overlay-states overlay-network overlay-network-captive network-request-off network-request-captive network-request-limited languages; do
+for screen in splash home home-recent games games-empty games-shelf games-grid game game-failed settings settings-overflow settings-feedback brightness performance display_timeout suspend_timeout appearance reduced_motion systems views power shutdown bluetooth bluetooth-checking bluetooth-off bluetooth-unavailable bluetooth-starting bluetooth-stopping bluetooth-connecting bluetooth-details bluetooth-pairing bluetooth-code-entry bluetooth-code-display bluetooth-failed wifi wifi-picker wifi-picker-checking wifi-picker-off wifi-picker-starting wifi-picker-stopping wifi-picker-error wifi-details wifi-password wifi-hidden-name wifi-hidden-security wifi-info wifi-open-confirm wifi-forget-confirm overlay overlay-states overlay-network overlay-network-captive network-request-off network-request-captive network-request-limited languages; do
     output/host-shell/bin/brick-shell --snapshot "output/screenshots/$screen.ppm" "$screen"
     magick "output/screenshots/$screen.ppm" "output/screenshots/$screen.png"
+    output/host-shell/bin/brick-shell --snapshot "output/screenshots/$screen-dark.ppm" "$screen" dark
+    magick "output/screenshots/$screen-dark.ppm" "output/screenshots/$screen-dark.png"
 done
 '''
 

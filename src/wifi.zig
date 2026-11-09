@@ -106,9 +106,11 @@ pub const Snapshot = struct {
 
     pub fn settingsSummary(self: Snapshot) []const u8 {
         return switch (self.radio) {
-            .unavailable, .failed => "Unavailable",
-            .off, .stopping => "Off",
-            .starting => "On",
+            .unavailable => "Unavailable",
+            .failed => "Failed",
+            .off => "Off",
+            .stopping => "Stopping…",
+            .starting => "Starting…",
             .ready => switch (self.connectivity) {
                 .captive => "Sign-in required",
                 .limited => "No internet",
@@ -157,6 +159,7 @@ pub const Command = struct {
 
 pub const Model = struct {
     snapshot: Snapshot = .{},
+    initialized: bool = false,
     selected: usize = 0,
     focused: ?Identity = null,
     pending: ?Command = null,
@@ -168,6 +171,7 @@ pub const Model = struct {
         if (next.generation == self.snapshot.generation and next.revision <= self.snapshot.revision) return false;
 
         const previous_focus = self.focused;
+        self.initialized = true;
         self.snapshot = if (self.freeze_order and next.generation == self.snapshot.generation)
             stableOrder(self.snapshot, next)
         else
@@ -187,6 +191,14 @@ pub const Model = struct {
         return true;
     }
 
+    pub fn summary(self: *const Model) []const u8 {
+        return if (self.initialized) self.snapshot.settingsSummary() else "Checking…";
+    }
+
+    pub fn status(self: *const Model) []const u8 {
+        return if (self.initialized) self.snapshot.status() else "Checking Wi-Fi…";
+    }
+
     /// Scans may update values while the user is moving through the list, but
     /// must not move the row under their thumb. The caller releases the order
     /// when leaving and re-entering the picker.
@@ -196,13 +208,9 @@ pub const Model = struct {
 
     pub fn itemCount(self: *const Model) usize {
         if (self.snapshot.radio != .ready) return 1;
-        // Switch + networks + hidden network + optional saved-networks row.
-        var count: usize = 2 + self.snapshot.network_count;
-        for (self.snapshot.items()) |network| if (network.saved and !network.in_range) {
-            count += 1;
-            break;
-        };
-        return count;
+        // Switch + concrete network rows + hidden network. Out-of-range saved
+        // networks remain concrete rows rather than a dead summary item.
+        return 2 + self.snapshot.network_count;
     }
 
     pub fn move(self: *Model, delta: i8) bool {
@@ -240,6 +248,33 @@ pub const Model = struct {
         self.focused = if (self.selectedNetwork()) |network| network.id else null;
     }
 };
+
+test "out-of-range saved networks remain concrete selectable rows" {
+    var model = Model{};
+    const snapshot = try parse("snapshot generation=1 revision=1 radio=ready connectivity=none can_scan=0\n" ++
+        "network id=saved name_hex=5361766564 security=wpa2_personal signal=weak state=out_of_range saved=1 current=0 in_range=0 auto=1 private=1 address_hex=\nend\n");
+    try std.testing.expect(model.update(snapshot));
+    try std.testing.expectEqual(@as(usize, 3), model.itemCount());
+    try std.testing.expect(model.move(1));
+    try std.testing.expectEqualStrings("Saved", model.selectedNetwork().?.name.slice());
+}
+
+test "failed radio is distinct from unavailable radio" {
+    var snapshot = Snapshot{ .radio = .unavailable };
+    try std.testing.expectEqualStrings("Unavailable", snapshot.settingsSummary());
+    snapshot.radio = .failed;
+    try std.testing.expectEqualStrings("Failed", snapshot.settingsSummary());
+}
+
+test "startup is checking until the authority supplies a snapshot" {
+    var state = Model{};
+    try std.testing.expect(!state.initialized);
+    try std.testing.expectEqualStrings("Checking…", state.summary());
+    try std.testing.expectEqualStrings("Checking Wi-Fi…", state.status());
+    try std.testing.expect(state.update(.{ .generation = 1, .revision = 1, .radio = .unavailable }));
+    try std.testing.expect(state.initialized);
+    try std.testing.expectEqualStrings("Unavailable", state.summary());
+}
 
 fn stableOrder(previous: Snapshot, latest: Snapshot) Snapshot {
     var result = latest;

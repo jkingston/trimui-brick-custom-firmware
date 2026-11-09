@@ -4,10 +4,18 @@ Product layer for the TrimUI Brick base firmware. A small event-driven Zig shell
 consistent game menu, built on the base firmware’s hardware services.
 
 The Zig shell uses PangoFT2 for multilingual text. It builds a fixed-capacity
-declarative UI tree, renders directly to the Linux framebuffer, and waits in
+declarative UI tree, renders with GLES into DMA-BUF scanout buffers, and waits in
 `poll()` when nothing changes. Selecting a game releases the framebuffer,
 runs `retroarch -L <core> <content>`, then restores the shell when RetroArch
 exits. ROMs and saves live on the writable SD partition under `/data`.
+
+The UI is layered deliberately. `ui_scene.zig` owns renderer-neutral primitives,
+`ui_components.zig` owns reusable controls, and product view modules build flat
+scenes from application state. `render.zig` turns those scenes into immediate
+paint operations consumed by either the CPU pixel oracle or the production GPU
+sink. Display scheduling, scene retention and texture retention are independent
+modules; the Linux event loop owns device and service integration rather than
+rendering policy.
 
 Place this repository beside the Brick base repository, then run:
 
@@ -33,7 +41,10 @@ Game Boy Advance and Mega Drive homebrew games for local testing. Their sources 
 hashes are recorded in `roms/`; the ROM binaries are ignored by Git.
 
 For desktop work, `mise run simulator` opens the same 1024x768 model, layout and
-software renderer used by the device, sized to the Brick's 3.2-inch 4:3 panel.
+CPU reference renderer, sized to the Brick's 3.2-inch 4:3 panel. The device uses
+the same UI tree and text layout with the PowerVR GPU renderer; it has no CPU
+renderer fallback. Damage and device-pixel regression results are recorded in
+[`docs/display-runtime-validation.md`](docs/display-runtime-validation.md).
 Press P to switch between physical-size and 1:1 pixel views. Arrow keys navigate,
 Z/Enter confirms, X/Escape returns, V changes view, H opens the menu and M previews the in-game
 overlay. `mise run screenshots` renders the shell and overlay screens without

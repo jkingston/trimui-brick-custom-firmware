@@ -3,6 +3,11 @@
 case "$1" in
 	start)
 		mountpoint -q /data || { echo 'Persistent data is unavailable'; exit 1; }
+		if [ -f /run/brick-shell.pid ] && kill -0 "$(cat /run/brick-shell.pid)" 2>/dev/null; then
+			echo 'Brick shell already running'
+			exit 0
+		fi
+		modprobe governor_performance && modprobe pvrsrvkm && modprobe brick_dc_metadata || exit 1
 		for system in FC GB GBC GBA MS GG MD SFC PS NEOGEO NGP; do
 			mkdir -p "/data/Roms/$system" || exit 1
 		done
@@ -15,14 +20,41 @@ case "$1" in
 		fi
 		mkdir -p /data/BIOS /data/Saves/sram /data/Saves/states || exit 1
 		printf 'Starting Brick shell: '
+		rm -f /run/brick-shell.ready
 		start-stop-daemon -S -q -b -m -p /run/brick-shell.pid \
-			-x /usr/bin/brick-shell -- --run
+			-x /bin/sh -- -c 'exec /usr/libexec/brick-shell-watchdog --restore-only -- /usr/bin/brick-shell --run >>/var/log/brick-shell.log 2>&1' || exit 1
+		attempts=100
+		while [ ! -e /run/brick-shell.ready ]; do
+			pid=$(cat /run/brick-shell.pid 2>/dev/null)
+			if [ "$attempts" -eq 0 ] || { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; }; then
+				echo 'FAILED: GPU startup; see /var/log/brick-shell.log'
+				"$0" stop
+				exit 1
+			fi
+			attempts=$((attempts - 1))
+			sleep 0.05
+		done
 		echo OK
 		;;
 	stop)
 		printf 'Stopping Brick shell: '
-		start-stop-daemon -K -q -p /run/brick-shell.pid -x /usr/bin/brick-shell
-		rm -f /run/brick-shell.pid
+		pid=$(cat /run/brick-shell.pid 2>/dev/null)
+		start-stop-daemon -K -q -p /run/brick-shell.pid -x /usr/libexec/brick-shell-watchdog
+		case "$pid" in
+			''|*[!0-9]*) ;;
+			*)
+				attempts=500
+				while kill -0 "$pid" 2>/dev/null; do
+					if [ "$attempts" -eq 0 ]; then
+						echo FAILED
+						exit 1
+					fi
+					attempts=$((attempts - 1))
+					sleep 0.01
+				done
+				;;
+		esac
+		rm -f /run/brick-shell.pid /run/brick-shell.ready
 		echo OK
 		;;
 	restart)

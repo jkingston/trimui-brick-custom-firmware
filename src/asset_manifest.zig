@@ -86,7 +86,8 @@ fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8,
         value.object.get(name) orelse return null;
     if (member != .string) return error.InvalidAssetTextures;
     const path = try confinedPath(allocator, asset_root, member.string);
-    const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(4 * 1024 * 1024));
+    const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.page_allocator, .limited(4 * 1024 * 1024));
+    defer std.heap.page_allocator.free(contents);
     if (contents.len < 8 or !std.mem.eql(u8, contents[0..4], "BRTX")) return error.InvalidAssetTexture;
     const width = @as(u16, contents[4]) | (@as(u16, contents[5]) << 8);
     const height = @as(u16, contents[6]) | (@as(u16, contents[7]) << 8);
@@ -113,14 +114,18 @@ fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8,
         }
     }
     const empty = min_x == width;
+    const content_x: u16 = if (empty) 0 else min_x;
+    const content_y: u16 = if (empty) 0 else min_y;
+    const content_width: u16 = if (empty) width else max_x - min_x + 1;
+    const content_height: u16 = if (empty) height else max_y - min_y + 1;
     return .{
         .width = width,
         .height = height,
         .pixels = pixels,
-        .content_x = if (empty) 0 else min_x,
-        .content_y = if (empty) 0 else min_y,
-        .content_width = if (empty) width else max_x - min_x + 1,
-        .content_height = if (empty) height else max_y - min_y + 1,
+        .content_x = content_x,
+        .content_y = content_y,
+        .content_width = content_width,
+        .content_height = content_height,
     };
 }
 

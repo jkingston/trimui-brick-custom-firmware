@@ -3,28 +3,21 @@ const std = @import("std");
 const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
+const display_scheduler = @import("display_scheduler.zig");
 const input_repeat = @import("input_repeat.zig");
 const model = @import("model.zig");
 const overlay = @import("overlay.zig");
-const render = @import("render.zig");
 const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
 const settings = @import("settings.zig");
 const bluetooth_ipc = @import("bluetooth_ipc.zig");
 const wifi_ipc = @import("wifi_ipc.zig");
 
-const framebuffer_path = "/dev/fb0";
-const blank_path = "/sys/class/graphics/fb0/blank";
-const virtual_size_path = "/sys/class/graphics/fb0/virtual_size";
-const bits_path = "/sys/class/graphics/fb0/bits_per_pixel";
-const stride_path = "/sys/class/graphics/fb0/stride";
 const tty_path = "/dev/tty0";
 const kd_set_mode: u32 = 0x4b3a;
-const kd_text: usize = 0;
 const kd_graphics: usize = 1;
-const fb_io_get_variable_screen_info: u32 = 0x4600;
-const fb_io_pan_display: u32 = 0x4606;
-const fb_activate_vertical_blank: u32 = 16;
+var profile_input = false;
+pub const Profile = enum { settings, shelf, overlay };
 
 const ev_syn: u16 = 0x00;
 const ev_key: u16 = 0x01;
@@ -51,169 +44,16 @@ const InputEvent = extern struct {
     value: i32,
 };
 
-const FbBitfield = extern struct {
-    offset: u32,
-    length: u32,
-    msb_right: u32,
-};
-
-const FbVarScreeninfo = extern struct {
-    xres: u32,
-    yres: u32,
-    xres_virtual: u32,
-    yres_virtual: u32,
-    xoffset: u32,
-    yoffset: u32,
-    bits_per_pixel: u32,
-    grayscale: u32,
-    red: FbBitfield,
-    green: FbBitfield,
-    blue: FbBitfield,
-    transp: FbBitfield,
-    nonstd: u32,
-    activate: u32,
-    height: u32,
-    width: u32,
-    accel_flags: u32,
-    pixclock: u32,
-    left_margin: u32,
-    right_margin: u32,
-    upper_margin: u32,
-    lower_margin: u32,
-    hsync_len: u32,
-    vsync_len: u32,
-    sync: u32,
-    vmode: u32,
-    rotate: u32,
-    colorspace: u32,
-    reserved: [4]u32,
-};
-
-comptime {
-    if (@sizeOf(FbVarScreeninfo) != 160) @compileError("fb_var_screeninfo ABI mismatch");
-}
-
-const Geometry = struct {
-    width: usize,
-    virtual_height: usize,
-    bits_per_pixel: usize,
-    stride: usize,
-
-    fn validate(self: Geometry) !void {
-        if (self.width != render.width or self.virtual_height < render.height)
-            return error.UnsupportedFramebufferGeometry;
-        if (self.bits_per_pixel != 32 or self.stride != render.width * @sizeOf(u32))
-            return error.UnsupportedFramebufferFormat;
-    }
-};
-
 fn readAttribute(io: std.Io, path: []const u8, buffer: []u8) ![]const u8 {
     const bytes = try std.Io.Dir.cwd().readFile(io, path, buffer);
     return std.mem.trim(u8, bytes, " \t\r\n");
-}
-
-fn parseGeometry(io: std.Io) !Geometry {
-    var size_buffer: [64]u8 = undefined;
-    const size = try readAttribute(io, virtual_size_path, &size_buffer);
-    const comma = std.mem.findScalar(u8, size, ',') orelse return error.InvalidFramebufferGeometry;
-    var bits_buffer: [32]u8 = undefined;
-    var stride_buffer: [32]u8 = undefined;
-    return .{
-        .width = try std.fmt.parseInt(usize, size[0..comma], 10),
-        .virtual_height = try std.fmt.parseInt(usize, size[comma + 1 ..], 10),
-        .bits_per_pixel = try std.fmt.parseInt(usize, try readAttribute(io, bits_path, &bits_buffer), 10),
-        .stride = try std.fmt.parseInt(usize, try readAttribute(io, stride_path, &stride_buffer), 10),
-    };
 }
 
 fn closeFd(io: std.Io, fd: std.posix.fd_t, nonblocking: bool) void {
     (std.Io.File{ .handle = fd, .flags = .{ .nonblocking = nonblocking } }).close(io);
 }
 
-fn writeAttribute(io: std.Io, path: []const u8, value: []const u8) !void {
-    const file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only });
-    defer file.close(io);
-    var buffer: [16]u8 = undefined;
-    var writer = file.writer(io, &buffer);
-    try writer.interface.writeAll(value);
-    try writer.interface.flush();
-}
-
-const Framebuffer = struct {
-    io: std.Io,
-    fd: std.posix.fd_t,
-    memory: []align(std.heap.page_size_min) u8,
-    surface: render.Surface,
-    variable: FbVarScreeninfo,
-    page_count: usize,
-    draw_page: usize,
-    unblanked: bool = false,
-    background: ?[]u32 = null,
-
-    fn open(io: std.Io) !Framebuffer {
-        const geometry = try parseGeometry(io);
-        try geometry.validate();
-        const fd = try std.posix.openat(std.posix.AT.FDCWD, framebuffer_path, .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);
-        errdefer closeFd(io, fd, false);
-        // SAFETY: a successful FBIOGET_VSCREENINFO call initializes every byte.
-        var variable: FbVarScreeninfo = undefined;
-        if (std.posix.errno(std.os.linux.ioctl(fd, fb_io_get_variable_screen_info, @intFromPtr(&variable))) != .SUCCESS)
-            return error.FramebufferInfoFailed;
-        if (variable.xres != render.width or variable.yres != render.height or
-            variable.yres_virtual != geometry.virtual_height or geometry.virtual_height % render.height != 0)
-            return error.UnsupportedFramebufferGeometry;
-        const page_count = geometry.virtual_height / render.height;
-        if (page_count < 2 or variable.yoffset % render.height != 0 or variable.yoffset / render.height >= page_count)
-            return error.FramebufferPageFlippingUnavailable;
-        const display_page = variable.yoffset / render.height;
-        const draw_page = (display_page + 1) % page_count;
-        const memory = try std.posix.mmap(null, geometry.stride * geometry.virtual_height, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0);
-        const pixel_pointer: [*]u32 = @ptrCast(@alignCast(memory.ptr));
-        return .{
-            .io = io,
-            .fd = fd,
-            .memory = memory,
-            .surface = .{ .pixels = pixel_pointer[draw_page * render.width * render.height ..][0 .. render.width * render.height] },
-            .variable = variable,
-            .page_count = page_count,
-            .draw_page = draw_page,
-        };
-    }
-
-    fn close(self: *Framebuffer) void {
-        if (self.background) |background| std.heap.page_allocator.free(background);
-        std.posix.munmap(self.memory);
-        closeFd(self.io, self.fd, false);
-    }
-
-    fn show(self: *Framebuffer, tree: *const ui.Tree) !void {
-        if (tree.preserve_background) {
-            if (self.background) |background| @memcpy(self.surface.pixels, background);
-        }
-        self.surface.render(tree);
-        self.variable.xoffset = 0;
-        self.variable.yoffset = @intCast(self.draw_page * render.height);
-        self.variable.activate = fb_activate_vertical_blank;
-        if (std.posix.errno(std.os.linux.ioctl(self.fd, fb_io_pan_display, @intFromPtr(&self.variable))) != .SUCCESS)
-            return error.FramebufferPresentFailed;
-        self.draw_page = (self.draw_page + 1) % self.page_count;
-        const pixel_pointer: [*]u32 = @ptrCast(@alignCast(self.memory.ptr));
-        self.surface.pixels = pixel_pointer[self.draw_page * render.width * render.height ..][0 .. render.width * render.height];
-        if (!self.unblanked) {
-            try writeAttribute(self.io, blank_path, "0\n");
-            self.unblanked = true;
-        }
-    }
-
-    fn captureBackground(self: *Framebuffer) !void {
-        const display_page = self.variable.yoffset / render.height;
-        const pixel_pointer: [*]u32 = @ptrCast(@alignCast(self.memory.ptr));
-        const displayed = pixel_pointer[display_page * render.width * render.height ..][0 .. render.width * render.height];
-        const background = try std.heap.page_allocator.alloc(u32, render.width * render.height);
-        @memcpy(background, displayed);
-        self.background = background;
-    }
-};
+const Display = display_scheduler.Scheduler;
 
 const Console = struct {
     io: std.Io,
@@ -228,13 +68,17 @@ const Console = struct {
     }
 
     fn close(self: *Console) void {
-        _ = std.os.linux.ioctl(self.fd, kd_set_mode, kd_text);
+        // Do not switch through KD_TEXT between the splash, menu, emulator,
+        // and overlay. fbcon applies that transition asynchronously and can
+        // reset fb_info.var.yoffset after the next owner has acquired fb0.
+        // Every graphical owner asserts its own mode when it opens the tty.
         closeFd(self.io, self.fd, false);
     }
 };
 
 const max_gamepads = 8;
 const input_directory = "/dev/input";
+const InputPaths = struct { devices: []const u8 = input_directory, sysfs: []const u8 = "/sys/class/input" };
 const Gamepad = struct {
     fd: std.posix.fd_t = -1,
     event_index: u8 = 255,
@@ -276,15 +120,21 @@ const Gamepads = struct {
     }
 
     fn rescan(self: *Gamepads, io: std.Io) !bool {
+        return self.rescanAt(io, .{});
+    }
+
+    fn rescanAt(self: *Gamepads, io: std.Io, paths: InputPaths) !bool {
+        const started = if (profile_input) std.Io.Timestamp.now(io, .awake).toMicroseconds() else 0;
+        defer if (profile_input) std.log.info("UI input scan: start={d}us work={d}us", .{ started, std.Io.Timestamp.now(io, .awake).toMicroseconds() - started });
         var present: [64]bool = @splat(false);
         var changed = false;
         for (0..64) |raw_index| {
-            var path_buffer: [128]u8 = undefined;
-            const name_path = try std.fmt.bufPrint(&path_buffer, "/sys/class/input/event{d}/device/name", .{raw_index});
+            var path_buffer: [512]u8 = undefined;
+            const name_path = try std.fmt.bufPrint(&path_buffer, "{s}/event{d}/device/name", .{ paths.sysfs, raw_index });
             var name_buffer: [128]u8 = undefined;
             const name = readAttribute(io, name_path, &name_buffer) catch continue;
             var capability_buffer: [1024]u8 = undefined;
-            const capability_path = try std.fmt.bufPrint(&path_buffer, "/sys/class/input/event{d}/device/capabilities/key", .{raw_index});
+            const capability_path = try std.fmt.bufPrint(&path_buffer, "{s}/event{d}/device/capabilities/key", .{ paths.sysfs, raw_index });
             const capabilities = readAttribute(io, capability_path, &capability_buffer) catch continue;
             const builtin = std.mem.eql(u8, name, "TrimUI Brick Gamepad");
             if (!builtin and !capabilityHas(capabilities, btn_south)) continue;
@@ -292,12 +142,19 @@ const Gamepads = struct {
             const index: u8 = @intCast(raw_index);
             if (self.hasIndex(index)) continue;
             for (&self.slots) |*slot| if (slot.fd < 0) {
-                const event_path = try std.fmt.bufPrint(&path_buffer, "/dev/input/event{d}", .{raw_index});
+                const event_path = try std.fmt.bufPrint(&path_buffer, "{s}/event{d}", .{ paths.devices, raw_index });
                 const fd = std.posix.openat(std.posix.AT.FDCWD, event_path, .{
                     .ACCMODE = .RDONLY,
                     .CLOEXEC = true,
                     .NONBLOCK = true,
                 }, 0) catch break;
+                if (profile_input) {
+                    const monotonic: c_int = 1;
+                    if (std.posix.errno(std.os.linux.ioctl(fd, 0x400445a0, @intFromPtr(&monotonic))) != .SUCCESS) {
+                        closeFd(io, fd, true);
+                        return error.InputClock;
+                    }
+                }
                 slot.* = .{ .fd = fd, .event_index = index, .builtin = builtin };
                 changed = true;
                 break;
@@ -317,21 +174,41 @@ const Gamepads = struct {
     }
 };
 
-fn openInputMonitor() !std.posix.fd_t {
+// Watch before enumerating so hotplug during startup remains queued.
+fn openInputMonitor(path: [*:0]const u8) !std.posix.fd_t {
     const raw = std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC | std.os.linux.IN.NONBLOCK);
     if (std.posix.errno(raw) != .SUCCESS) return error.InputMonitorUnavailable;
     const fd: std.posix.fd_t = @intCast(raw);
     errdefer _ = std.os.linux.close(fd);
-    const watch = std.os.linux.inotify_add_watch(fd, input_directory, std.os.linux.IN.CREATE | std.os.linux.IN.DELETE | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MOVED_FROM | std.os.linux.IN.ATTRIB);
+    const watch = std.os.linux.inotify_add_watch(fd, path, std.os.linux.IN.CREATE | std.os.linux.IN.DELETE | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MOVED_FROM | std.os.linux.IN.ATTRIB | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVE_SELF);
     if (std.posix.errno(watch) != .SUCCESS) return error.InputMonitorUnavailable;
     return fd;
 }
 
-fn drainInputMonitor(fd: std.posix.fd_t) void {
+const InputMonitorEvent = extern struct { watch: i32, mask: u32, cookie: u32, name_len: u32 };
+
+fn checkInputMonitorEvents(bytes: []const u8) !void {
+    var offset: usize = 0;
+    while (offset < bytes.len) {
+        if (bytes.len - offset < @sizeOf(InputMonitorEvent)) return error.InvalidInputMonitorEvent;
+        const event = std.mem.bytesToValue(InputMonitorEvent, bytes[offset..][0..@sizeOf(InputMonitorEvent)]);
+        offset += @sizeOf(InputMonitorEvent);
+        if (event.name_len > bytes.len - offset) return error.InvalidInputMonitorEvent;
+        offset += event.name_len;
+        if (event.mask & (std.os.linux.IN.IGNORED | std.os.linux.IN.UNMOUNT | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVE_SELF) != 0)
+            return error.InputMonitorUnavailable;
+    }
+}
+
+fn drainInputMonitor(fd: std.posix.fd_t) !void {
     var events: [1024]u8 = undefined;
     while (true) {
-        const result = std.os.linux.read(fd, &events, events.len);
-        if (std.posix.errno(result) != .SUCCESS or result == 0) return;
+        const result = std.posix.read(fd, &events) catch |err| switch (err) {
+            error.WouldBlock => return,
+            else => return err,
+        };
+        if (result == 0) return error.InputMonitorUnavailable;
+        try checkInputMonitorEvents(events[0..result]);
         if (result < events.len) return;
     }
 }
@@ -407,6 +284,7 @@ fn repeatAllowed(state: *const model.Model, action: model.Action) bool {
 const SessionAction = struct { changed: bool = false, launch: ?usize = null };
 
 fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
+    if (profile_input) return;
     const dir = std.Io.Dir.cwd().openDir(io, "/data/settings", .{}) catch return;
     defer dir.close(io);
     @import("library_preferences.zig").save(io, dir, state) catch |err|
@@ -433,27 +311,60 @@ fn wifiChanging(state: *const model.Model) bool {
     return state.wifi.wifi_state.snapshot.radio == .starting or state.wifi.wifi_state.snapshot.radio == .stopping;
 }
 
-fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer, wifi_client: ?*wifi_ipc.Client, bluetooth_client: ?*bluetooth_ipc.Client, bluetooth_request: *u32, action: model.Action) !SessionAction {
+fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_client: ?*wifi_ipc.Client, bluetooth_client: ?*bluetooth_ipc.Client, bluetooth_request: *u32, action: model.Action) !SessionAction {
     if (!state.apply(action)) return .{};
-    state.notice = "";
-    if (state.takeSetting()) |setting|
-        settings.apply(io, state.settings, setting) catch {
+    state.feedback = .{};
+    if (state.takeSetting()) |setting| {
+        if (settings.apply(io, state.settings, setting)) |_| {
+            state.feedback = .{ .kind = .success, .message = switch (setting) {
+                .brightness => "Brightness saved",
+                .performance => "Performance mode saved",
+                .display_timeout => "Screen-off timeout saved",
+                .suspend_timeout => "Suspend timeout saved",
+                .appearance => "Appearance changed",
+                .reduced_motion => if (state.settings.reduced_motion) "Reduced motion on" else "Reduced motion off",
+            } };
+        } else |_| {
             state.settings = settings.load(io);
-            state.notice = "Could not apply setting";
-        };
+            state.feedback = .{ .kind = .failure, .message = "Could not apply setting" };
+        }
+    }
     if (state.takeWifiRequest()) |pending| {
         var request = pending;
+        state.feedback = .{ .kind = .progress, .message = switch (request.command.kind) {
+            .set_enabled => if (request.command.value) "Turning Wi-Fi on…" else "Turning Wi-Fi off…",
+            .scan => "Refreshing networks…",
+            .connect => "Connecting to Wi-Fi…",
+            .cancel => "Cancelling Wi-Fi action…",
+            .disconnect => "Disconnecting from Wi-Fi…",
+            .forget => "Forgetting network…",
+            .set_auto_connect, .set_private_address => "Saving network setting…",
+            .open_captive => "Opening Wi-Fi sign in…",
+            .recheck => "Checking internet access…",
+        } };
         if (wifi_client) |client| client.send(&request) catch {
-            state.notice = "Wi-Fi service is unavailable";
+            state.feedback = .{ .kind = .failure, .message = "Wi-Fi service is unavailable" };
         } else {
             request.wipe();
-            state.notice = "Wi-Fi service is unavailable";
+            state.feedback = .{ .kind = .failure, .message = "Wi-Fi service is unavailable" };
         }
     }
     if (state.takeBluetoothCommand()) |pending| {
         var command = pending;
+        state.feedback = .{ .kind = .progress, .message = switch (command.kind) {
+            .set_radio => if (command.value) "Turning Bluetooth on…" else "Turning Bluetooth off…",
+            .start_search => "Looking for devices…",
+            .cancel => "Cancelling Bluetooth action…",
+            .pair => "Pairing device…",
+            .connect => "Connecting device…",
+            .disconnect => "Disconnecting device…",
+            .forget => "Forgetting device…",
+            .select_audio => "Preparing game audio…",
+            .confirm_pairing, .submit_passkey => "Confirming pairing…",
+            .network_activity => "Coordinating radios…",
+        } };
         if (!sendBluetooth(bluetooth_client, bluetooth_request, &command))
-            state.notice = "Bluetooth service is unavailable";
+            state.feedback = .{ .kind = .failure, .message = "Bluetooth service is unavailable" };
     }
     if (state.pending_power) |command| {
         state.pending_power = null;
@@ -463,16 +374,16 @@ fn applySessionAction(io: std.Io, state: *model.Model, framebuffer: *Framebuffer
             .suspend_device => "Going to sleep…",
             .shutdown => "Shutting down…",
         }, "");
-        try framebuffer.show(&status);
+        try display.show(&status);
         performPower(io, command) catch {
-            state.notice = if (command == .suspend_device) "Unable to sleep. The device is still awake." else "Could not complete power action";
+            state.feedback = .{ .kind = .failure, .message = if (command == .suspend_device) "Unable to sleep. The device is still awake." else "Could not complete power action" };
         };
         state.page = .home;
         state.selected = 0;
     }
     if (state.takeLaunch()) |index| {
         var launching = ui.gameDetail(state.settings.appearance.colors(), state.games[index], null);
-        try framebuffer.show(&launching);
+        try display.show(&launching);
         saveLibraryPreferences(io, state);
         return .{ .launch = index };
     }
@@ -490,17 +401,22 @@ fn refreshCaptive(io: std.Io, state: *model.Model) bool {
     return changed;
 }
 
+fn markReady(io: std.Io) !void {
+    const ready = try std.Io.Dir.cwd().createFile(io, "/run/brick-shell.ready", .{});
+    ready.close(io);
+}
+
 fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     // Stop fbcon from drawing its text cursor over the product surface.
     var console = try Console.open(io);
     defer console.close();
-    var framebuffer = try Framebuffer.open(io);
-    defer framebuffer.close();
+    var display = try Display.open(io, profile_input);
+    defer display.close();
 
     state.battery_percent = batteryPercent(io);
     var battery_deadline = nowMilliseconds(io) + 60000;
     var tree = state.tree();
-    try framebuffer.show(&tree);
+    try display.show(&tree);
 
     var wifi_client: ?wifi_ipc.Client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
     defer if (wifi_client) |client| client.close();
@@ -512,13 +428,13 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     var network_changing = false;
     var captive_deadline = nowMilliseconds(io);
 
+    const input_monitor = try openInputMonitor(input_directory);
+    defer closeFd(io, input_monitor, true);
     var gamepads = Gamepads{};
     defer gamepads.close(io);
     _ = try gamepads.rescan(io);
     if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
-    const input_monitor = try openInputMonitor();
-    defer closeFd(io, input_monitor, true);
-    var input_rescan_deadline = nowMilliseconds(io) + 1000;
+    try markReady(io);
     var poll_fds: [max_gamepads + 3]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var motion: @import("shelf_motion.zig").Motion = .{};
@@ -528,9 +444,11 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
 
     while (true) {
         const now = nowMilliseconds(io);
+        motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
         const animation = state.page == .games and state.library_view == .shelf and motion.active(now);
-        var timeout: i32 = if (animation) (if (repeat_timeout < 0) @import("design.zig").motion.frame_ms else @min(@import("design.zig").motion.frame_ms, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
+        if (animation or was_animating) try display.requestFrame(null);
+        var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
             const remaining: i32 = @intCast(@max(0, deadline - now));
             timeout = if (timeout < 0) remaining else @min(timeout, remaining);
@@ -545,8 +463,6 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             const reconnect_wait: i32 = @intCast(@max(0, bluetooth_reconnect_deadline - now));
             timeout = if (timeout < 0) reconnect_wait else @min(timeout, reconnect_wait);
         }
-        const input_wait: i32 = @intCast(@max(0, input_rescan_deadline - now));
-        timeout = if (timeout < 0) input_wait else @min(timeout, input_wait);
         if (state.page == .wifi or state.page == .wifi_fallback) {
             const captive_wait: i32 = @intCast(@max(0, captive_deadline - now));
             timeout = if (timeout < 0) captive_wait else @min(timeout, captive_wait);
@@ -561,20 +477,17 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         poll_fds[max_gamepads + 1].revents = 0;
         poll_fds[max_gamepads + 2].fd = input_monitor;
         poll_fds[max_gamepads + 2].revents = 0;
-        _ = try std.posix.poll(&poll_fds, timeout);
+        _ = try display.poll(&poll_fds, timeout);
         if (save_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
             saveLibraryPreferences(io, state);
             save_deadline = null;
         };
         var changed = animation or was_animating;
+        var rescan_inputs = false;
+        if ((poll_fds[max_gamepads + 2].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;
         if ((poll_fds[max_gamepads + 2].revents & std.posix.POLL.IN) != 0) {
-            drainInputMonitor(input_monitor);
-            changed = (try gamepads.rescan(io)) or changed;
-        }
-        if (nowMilliseconds(io) >= input_rescan_deadline) {
-            changed = (try gamepads.rescan(io)) or changed;
-            if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
-            input_rescan_deadline = nowMilliseconds(io) + 1000;
+            try drainInputMonitor(input_monitor);
+            rescan_inputs = true;
         }
         if ((state.page == .wifi or state.page == .wifi_fallback) and
             nowMilliseconds(io) >= captive_deadline)
@@ -602,7 +515,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 client.close();
                 wifi_client = null;
                 wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
-                state.notice = "Wi-Fi service is restarting";
+                state.feedback = .{ .kind = .warning, .message = "Wi-Fi service is restarting" };
                 changed = true;
             } else if ((poll_fds[max_gamepads].revents & std.posix.POLL.IN) != 0) {
                 var packet: [wifi_ipc.max_packet]u8 = undefined;
@@ -610,7 +523,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     client.close();
                     wifi_client = null;
                     wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
-                    state.notice = "Wi-Fi service is restarting";
+                    state.feedback = .{ .kind = .warning, .message = "Wi-Fi service is restarting" };
                     changed = true;
                     continue;
                 };
@@ -626,8 +539,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     },
                     .result => |result| switch (result.status) {
                         .accepted => {},
-                        .stale => state.notice = "Wi-Fi changed. Try again.",
-                        .rejected => state.notice = "Could not complete Wi-Fi action",
+                        .stale => state.feedback = .{ .kind = .warning, .message = "Wi-Fi changed. Try again." },
+                        .rejected => state.feedback = .{ .kind = .failure, .message = "Could not complete Wi-Fi action" },
                     },
                 }
             }
@@ -637,7 +550,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 client.close();
                 bluetooth_client = null;
                 bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
-                state.notice = "Bluetooth service is restarting";
+                state.feedback = .{ .kind = .warning, .message = "Bluetooth service is restarting" };
                 changed = true;
             } else if ((poll_fds[max_gamepads + 1].revents & std.posix.POLL.IN) != 0) {
                 var packet: [bluetooth_ipc.max_packet]u8 = undefined;
@@ -645,7 +558,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     client.close();
                     bluetooth_client = null;
                     bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
-                    state.notice = "Bluetooth service is restarting";
+                    state.feedback = .{ .kind = .warning, .message = "Bluetooth service is restarting" };
                     changed = true;
                     continue;
                 };
@@ -653,8 +566,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     .snapshot => |snapshot| changed = state.updateBluetooth(snapshot) or changed,
                     .result => |result| switch (result.status) {
                         .accepted => {},
-                        .stale => state.notice = "Bluetooth changed. Try again.",
-                        .rejected => state.notice = "Could not complete Bluetooth action",
+                        .stale => state.feedback = .{ .kind = .warning, .message = "Bluetooth changed. Try again." },
+                        .rejected => state.feedback = .{ .kind = .failure, .message = "Could not complete Bluetooth action" },
                     },
                 }
             }
@@ -663,7 +576,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
                 const previous = state.selected;
-                const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
+                const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
@@ -678,7 +591,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 closeFd(io, slot.fd, true);
                 slot.* = .{};
                 repeat.reset();
-                input_rescan_deadline = nowMilliseconds(io);
+                rescan_inputs = true;
                 continue;
             }
             while ((poll_fds[slot_index].revents & std.posix.POLL.IN) != 0) {
@@ -692,21 +605,32 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     observeRepeat(&repeat, event, nowMilliseconds(io));
                     if (actionForEvent(event, slot.builtin, &slot.dropped)) |action| {
                         const previous = state.selected;
-                        const result = try applySessionAction(io, state, &framebuffer, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
+                        const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                         if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                             motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                         if (result.launch) |index| return index;
                         changed = changed or result.changed;
+                        if (result.changed) display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
                     }
                 }
                 if (bytes_read < buffer.len) break;
             }
         }
+        if (rescan_inputs) {
+            const inputs_changed = try gamepads.rescan(io);
+            if (inputs_changed) repeat.reset();
+            changed = inputs_changed or changed;
+            if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
+        }
         if (changed) {
             tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
-            try framebuffer.show(&tree);
+            try display.requestFrame(&tree);
+        }
+        if (display.frameDue()) {
+            tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
+            try display.submit(&tree);
         }
     }
 }
@@ -714,18 +638,18 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
 fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     var console = try Console.open(io);
     defer console.close();
-    var framebuffer = try Framebuffer.open(io);
-    defer framebuffer.close();
+    var display = try Display.open(io, profile_input);
+    defer display.close();
 
     var tree = state.tree();
-    try framebuffer.show(&tree);
+    try display.show(&tree);
+    const input_monitor = try openInputMonitor(input_directory);
+    defer closeFd(io, input_monitor, true);
     var gamepads = Gamepads{};
     defer gamepads.close(io);
     _ = try gamepads.rescan(io);
     if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
-    const input_monitor = try openInputMonitor();
-    defer closeFd(io, input_monitor, true);
-    var rescan_deadline = nowMilliseconds(io) + 1000;
+    if (profile_input) try markReady(io);
     var poll_fds: [max_gamepads + 1]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
@@ -739,18 +663,13 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         poll_fds[max_gamepads].revents = 0;
         const now = nowMilliseconds(io);
         const repeat_wait = repeat.timeout(now);
-        const scan_wait: i32 = @intCast(@max(0, rescan_deadline - now));
-        const timeout = if (repeat_wait < 0) scan_wait else @min(repeat_wait, scan_wait);
-        const ready = try std.posix.poll(&poll_fds, timeout);
+        const ready = try display.poll(&poll_fds, repeat_wait);
         var changed = false;
+        var rescan_inputs = false;
+        if ((poll_fds[max_gamepads].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;
         if ((poll_fds[max_gamepads].revents & std.posix.POLL.IN) != 0) {
-            drainInputMonitor(input_monitor);
-            _ = try gamepads.rescan(io);
-        }
-        if (nowMilliseconds(io) >= rescan_deadline) {
-            _ = try gamepads.rescan(io);
-            if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
-            rescan_deadline = nowMilliseconds(io) + 1000;
+            try drainInputMonitor(input_monitor);
+            rescan_inputs = true;
         }
         if (ready == 0) {
             if (repeat.due(nowMilliseconds(io))) |action| {
@@ -764,7 +683,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                 closeFd(io, slot.fd, true);
                 slot.* = .{};
                 repeat.reset();
-                rescan_deadline = nowMilliseconds(io);
+                rescan_inputs = true;
                 continue;
             }
             while ((poll_fds[slot_index].revents & std.posix.POLL.IN) != 0) {
@@ -777,11 +696,14 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                 for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
                     observeRepeat(&repeat, event, nowMilliseconds(io));
                     if (actionForEvent(event, slot.builtin, &slot.dropped)) |action| {
-                        if (state.apply(action)) changed = true;
+                        if (state.apply(action)) {
+                            changed = true;
+                            display.recordInput(event.seconds * 1_000_000 + event.microseconds);
+                        }
                         if (state.takeCommand()) |command| {
                             if (command == .save_state or command == .load_state) {
                                 var status = ui.message(state.appearance.colors(), if (command == .save_state) "Save state" else "Load state", if (command == .save_state) "Saving state…" else "Loading state…", "");
-                                try framebuffer.show(&status);
+                                try display.show(&status);
                             }
                             return command;
                         }
@@ -790,9 +712,17 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                 if (bytes_read < buffer.len) break;
             }
         }
+        if (rescan_inputs) {
+            if (try gamepads.rescan(io)) repeat.reset();
+            if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
+        }
         if (changed) {
             tree = state.tree();
-            try framebuffer.show(&tree);
+            try display.requestFrame(&tree);
+        }
+        if (display.frameDue()) {
+            tree = state.tree();
+            try display.submit(&tree);
         }
     }
 }
@@ -811,17 +741,25 @@ fn refreshWifi(state: *model.Model) void {
     }
 }
 
-pub fn run(io: std.Io) !void {
+pub fn run(io: std.Io, profile: ?Profile) !void {
+    profile_input = profile != null;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const initial_settings = settings.load(io);
     {
         var console = try Console.open(io);
         defer console.close();
-        var framebuffer = try Framebuffer.open(io);
-        defer framebuffer.close();
+        var display = try Display.open(io, profile_input);
+        defer display.close();
         var splash = ui.splash(initial_settings.appearance.colors());
-        try framebuffer.show(&splash);
+        try display.show(&splash);
+    }
+    if (profile == .overlay) {
+        var game_overlay = overlay.Model{ .appearance = initial_settings.appearance, .title = "Input regression" };
+        std.log.info("UI profile: overlay", .{});
+        const command = try runOverlay(io, &game_overlay);
+        std.log.info("UI overlay profile: command={s}", .{@tagName(command)});
+        return;
     }
     const library = try catalog.discover(io, arena.allocator(), "/data");
     var state = model.Model{ .games = library, .settings = initial_settings };
@@ -829,6 +767,12 @@ pub fn run(io: std.Io) !void {
         defer dir.close(io);
         @import("library_preferences.zig").load(io, dir, &state);
     } else |_| {}
+    if (profile) |page| switch (page) {
+        .settings => state.page = .settings,
+        .shelf => state = .{ .games = &catalog.games, .page = .games, .library_view = .shelf, .settings = initial_settings },
+        .overlay => {},
+    };
+    if (profile) |page| std.log.info("UI profile: {s} games={d}", .{ @tagName(page), state.games.len });
     if (state.last_played) |index| state.resumable = retroarch.availableStates(io, &state.games[index])[3];
     while (true) {
         const game_index = (try runSession(io, &state, false)) orelse continue;
@@ -857,8 +801,10 @@ pub fn run(io: std.Io) !void {
             state.last_played = game_index;
             state.resumable = retroarch.availableStates(io, game)[3];
             saveLibraryPreferences(io, &state);
-            if (retroarch.takeAudioLoss())
+            if (retroarch.takeAudioLoss()) {
                 game_overlay.notice = "Bluetooth audio disconnected. Reconnect it, then relaunch the game.";
+                game_overlay.notice_kind = .failure;
+            }
             while (true) {
                 refreshWifi(&state);
                 game_overlay.network_status = state.wifi.wifi_state.snapshot.settingsSummary();
@@ -874,6 +820,7 @@ pub fn run(io: std.Io) !void {
                             game_overlay.layer = .failure;
                             game_overlay.failed_command = .exit_game;
                             game_overlay.notice = "No automatic state was saved. Return to the game and try again.";
+                            game_overlay.notice_kind = .failure;
                             continue;
                         }
                         break :game_session;
@@ -885,6 +832,7 @@ pub fn run(io: std.Io) !void {
                             game_overlay.confirmation = 0;
                             game_overlay.failed_command = .save_state;
                             game_overlay.notice = "Could not write the saved state. Check free space on the SD card.";
+                            game_overlay.notice_kind = .failure;
                             std.log.err("Failed to save state: {s}", .{@errorName(err)});
                             continue;
                         };
@@ -892,11 +840,13 @@ pub fn run(io: std.Io) !void {
                         game_overlay.selected = 1;
                         game_overlay.saved = true;
                         game_overlay.notice = "State saved";
+                        game_overlay.notice_kind = .success;
                     },
                     .load_state => {
                         retroarch.loadState(io, game, state.games, game_overlay.state_slot) catch |err| {
                             game_overlay.layer = .states;
                             game_overlay.notice = "Could not load that saved state";
+                            game_overlay.notice_kind = .failure;
                             std.log.err("Failed to load state: {s}", .{@errorName(err)});
                             continue;
                         };
@@ -911,6 +861,7 @@ pub fn run(io: std.Io) !void {
                             state.settings = settings.load(io);
                             game_overlay.performance_profile = @backingInt(state.settings.performance);
                             game_overlay.notice = "Could not apply performance profile";
+                            game_overlay.notice_kind = .failure;
                             std.log.err("Failed to apply performance profile: {s}", .{@errorName(err)});
                         };
                     },
@@ -932,15 +883,15 @@ pub fn run(io: std.Io) !void {
 pub fn probe(io: std.Io) !void {
     var console = try Console.open(io);
     defer console.close();
-    var framebuffer = try Framebuffer.open(io);
-    defer framebuffer.close();
+    var display = try Display.open(io, profile_input);
+    defer display.close();
     var gamepads = Gamepads{};
     defer gamepads.close(io);
     _ = try gamepads.rescan(io);
     if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
     var state = model.Model{};
     var tree = state.tree();
-    try framebuffer.show(&tree);
+    try display.show(&tree);
 }
 
 test "navigation presses and dropped streams resynchronise" {
@@ -984,4 +935,88 @@ fn batteryPercent(io: std.Io) ?u8 {
     const bytes = std.Io.Dir.cwd().readFile(io, "/sys/class/power_supply/axp2202-battery/capacity", &buffer) catch return null;
     const value = std.fmt.parseInt(u8, std.mem.trim(u8, bytes, " \r\n"), 10) catch return null;
     return if (value <= 100) value else null;
+}
+
+fn writeInputFixture(dir: std.Io.Dir, index: u8, builtin: bool) !void {
+    const io = std.testing.io;
+    var buffer: [128]u8 = undefined;
+    try dir.createDirPath(io, try std.fmt.bufPrint(&buffer, "sysfs/event{d}/device/capabilities", .{index}));
+    try dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&buffer, "sysfs/event{d}/device/name", .{index}), .data = if (builtin) "TrimUI Brick Gamepad" else "Fixture gamepad" });
+    var keys: [btn_south / 4 + 1]u8 = @splat('0');
+    keys[0] = '1';
+    try dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&buffer, "sysfs/event{d}/device/capabilities/key", .{index}), .data = &keys });
+    try dir.writeFile(io, .{ .sub_path = try std.fmt.bufPrint(&buffer, "input/event{d}", .{index}), .data = "" });
+}
+
+test "input watch catches startup hotplug removal and reconnection without a timer" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    try temporary.dir.createDirPath(io, "input");
+    try temporary.dir.createDirPath(io, "sysfs");
+    const paths = InputPaths{
+        .devices = try std.fmt.allocPrint(allocator, "{s}/input", .{root}),
+        .sysfs = try std.fmt.allocPrint(allocator, "{s}/sysfs", .{root}),
+    };
+    const monitor = try openInputMonitor(try allocator.dupeSentinel(u8, paths.devices, 0));
+    defer closeFd(io, monitor, true);
+    var gamepads = Gamepads{};
+    defer gamepads.close(io);
+    try std.testing.expect(!try gamepads.rescanAt(io, paths));
+    try writeInputFixture(temporary.dir, 2, true);
+    var fds = [_]std.posix.pollfd{.{ .fd = monitor, .events = std.posix.POLL.IN, .revents = 0 }};
+    try std.testing.expectEqual(@as(usize, 1), try std.posix.poll(&fds, 100));
+    try drainInputMonitor(monitor);
+    try std.testing.expect(try gamepads.rescanAt(io, paths));
+    try std.testing.expect(gamepads.hasBuiltin());
+    const builtin_fd = gamepads.slots[0].fd;
+    try std.testing.expect(!try gamepads.rescanAt(io, paths));
+    try std.testing.expectEqual(builtin_fd, gamepads.slots[0].fd);
+    for (0..3) |_| {
+        try writeInputFixture(temporary.dir, 3, false);
+        try std.testing.expectEqual(@as(usize, 1), try std.posix.poll(&fds, 100));
+        try drainInputMonitor(monitor);
+        try std.testing.expect(try gamepads.rescanAt(io, paths));
+        try std.testing.expect(gamepads.hasIndex(3));
+        try temporary.dir.deleteFile(io, "input/event3");
+        try temporary.dir.deleteTree(io, "sysfs/event3");
+        try std.testing.expectEqual(@as(usize, 1), try std.posix.poll(&fds, 100));
+        try drainInputMonitor(monitor);
+        try std.testing.expect(try gamepads.rescanAt(io, paths));
+        try std.testing.expect(!gamepads.hasIndex(3));
+        try std.testing.expectEqual(builtin_fd, gamepads.slots[0].fd);
+    }
+    try std.testing.expectEqual(@as(usize, 0), try std.posix.poll(&fds, 0));
+}
+
+test "input notification overflow permits reconciliation but lost watches fail" {
+    var event = InputMonitorEvent{ .watch = -1, .mask = std.os.linux.IN.Q_OVERFLOW, .cookie = 0, .name_len = 0 };
+    try checkInputMonitorEvents(std.mem.asBytes(&event));
+    event.mask = std.os.linux.IN.IGNORED;
+    try std.testing.expectError(error.InputMonitorUnavailable, checkInputMonitorEvents(std.mem.asBytes(&event)));
+    event.mask = std.os.linux.IN.CREATE;
+    event.name_len = 16;
+    try std.testing.expectError(error.InvalidInputMonitorEvent, checkInputMonitorEvents(std.mem.asBytes(&event)));
+    try std.testing.expectError(error.InvalidInputMonitorEvent, checkInputMonitorEvents(&.{0}));
+}
+
+test "removing the watched input directory is detected" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.createDirPath(io, "input");
+    const root = try temporary.dir.realPathFileAlloc(io, "input", std.testing.allocator);
+    defer std.testing.allocator.free(root);
+    const path = try std.testing.allocator.dupeSentinel(u8, root, 0);
+    defer std.testing.allocator.free(path);
+    const monitor = try openInputMonitor(path);
+    defer closeFd(io, monitor, true);
+    try temporary.dir.deleteTree(io, "input");
+    var fds = [_]std.posix.pollfd{.{ .fd = monitor, .events = std.posix.POLL.IN, .revents = 0 }};
+    try std.testing.expectEqual(@as(usize, 1), try std.posix.poll(&fds, 100));
+    try std.testing.expectError(error.InputMonitorUnavailable, drainInputMonitor(monitor));
 }

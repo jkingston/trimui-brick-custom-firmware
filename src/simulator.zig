@@ -295,6 +295,7 @@ pub fn main(init: std.process.Init) !void {
     var was_animating = false;
     while (true) {
         const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
+        motion.reduced = state.settings.reduced_motion;
         const animating = !overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now);
         const repeat_timeout = repeat.timeout(now);
         const timeout = if (animating) (if (repeat_timeout < 0) @import("design.zig").motion.frame_ms else @min(@import("design.zig").motion.frame_ms, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
@@ -334,8 +335,17 @@ pub fn main(init: std.process.Init) !void {
                     std.log.info("Overlay command: {s}", .{@tagName(command)});
                     switch (command) {
                         .resume_game, .exit_game, .load_state => overlay_visible = false,
-                        .save_state => game_overlay.notice = "Simulator: no save written",
+                        .save_state => {
+                            game_overlay.notice = "Simulator: no save written";
+                            game_overlay.notice_kind = .warning;
+                        },
                         .apply_performance => {},
+                        .network_settings => {
+                            overlay_visible = false;
+                            state.page = .wifi;
+                            state.selected = 0;
+                            state.wifi.page = .list;
+                        },
                     }
                     changed = true;
                 }

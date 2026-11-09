@@ -28,7 +28,7 @@ pub const Model = struct {
     last_played: ?usize = null,
     resumable: bool = false,
     filter_positions: [catalog.systems.len + 1]usize = @splat(0),
-    notice: []const u8 = "",
+    feedback: ui.Feedback = .{},
     pending_launch: ?usize = null,
     launch_failed: ?retroarch.Failure = null,
     settings: settings_model.Values = .{},
@@ -66,6 +66,7 @@ pub const Model = struct {
             .appearance => @backingInt(self.settings.appearance),
             .display_timeout => self.settings.display_timeout,
             .suspend_timeout => self.settings.suspend_timeout,
+            .reduced_motion => @intFromBool(self.settings.reduced_motion),
         };
     }
 
@@ -76,6 +77,7 @@ pub const Model = struct {
             .appearance => self.settings.appearance = @fromBackingInt(@intCast(self.selected)),
             .display_timeout => self.settings.display_timeout = @intCast(self.selected),
             .suspend_timeout => self.settings.suspend_timeout = @intCast(self.selected),
+            .reduced_motion => self.settings.reduced_motion = self.selected != 0,
         }
         self.pending_setting = self.active_setting;
     }
@@ -109,6 +111,11 @@ pub const Model = struct {
         }
         if (self.page == .bluetooth) {
             if (action == .back and self.bluetooth.page == .list) {
+                if (self.bluetooth.snapshot.operation != .none and self.bluetooth.snapshot.operation != .discovery) {
+                    const changed = self.bluetooth.apply(action);
+                    if (changed) self.revision += 1;
+                    return changed;
+                }
                 if (self.bluetooth.snapshot.discovery != .idle)
                     _ = self.bluetooth.apply(.filter);
                 self.page = .settings;
@@ -145,10 +152,6 @@ pub const Model = struct {
                 } else if (self.page == .setting and self.active_setting == .brightness) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, 10);
                     if (self.selected != before_selected) self.chooseSetting();
-                } else if (self.page == .settings and self.selected < settings_count) {
-                    const setting: settings_model.Setting = @fromBackingInt(@intCast(self.selected));
-                    self.settings.adjust(setting, if (left) -1 else 1);
-                    self.pending_setting = setting;
                 }
             },
             .select => switch (self.page) {
@@ -292,7 +295,34 @@ pub const Model = struct {
     }
 
     pub fn updateWifi(self: *Model, next: wifi.Snapshot) bool {
+        const previous = self.wifi.wifi_state.snapshot;
         const changed = self.wifi.update(next);
+        if (changed) {
+            if (previous.radio != .ready and next.radio == .ready)
+                self.feedback = .{ .kind = .success, .message = "Wi-Fi on" }
+            else if (previous.radio != .off and next.radio == .off)
+                self.feedback = .{ .kind = .success, .message = "Wi-Fi off" }
+            else {
+                for (next.items()) |network| if (network.current and network.state == .connected) {
+                    const was_connected = if (previous.find(network.id)) |index| previous.networks[index].state == .connected else false;
+                    if (!was_connected) self.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
+                    break;
+                };
+                for (previous.items()) |network| {
+                    if (next.find(network.id)) |index| {
+                        const current = next.networks[index];
+                        if (network.state == .connected and current.state != .connected)
+                            self.feedback = .{ .kind = .success, .message = "Disconnected from Wi-Fi" }
+                        else if (network.auto_connect != current.auto_connect)
+                            self.feedback = .{ .kind = .success, .message = if (current.auto_connect) "Auto-connect on" else "Auto-connect off" }
+                        else if (network.private_address != current.private_address)
+                            self.feedback = .{ .kind = .success, .message = if (current.private_address) "Private address on" else "Private address off" };
+                    } else if (network.saved) {
+                        self.feedback = .{ .kind = .success, .message = "Network forgotten" };
+                    }
+                }
+            }
+        }
         if (changed) self.revision += 1;
         return changed;
     }
@@ -302,7 +332,39 @@ pub const Model = struct {
     }
 
     pub fn updateBluetooth(self: *Model, next: bluetooth_model.Snapshot) bool {
+        const previous = self.bluetooth.snapshot;
         const changed = self.bluetooth.update(next);
+        if (changed) {
+            if (previous.radio != .ready and next.radio == .ready)
+                self.feedback = .{ .kind = .success, .message = "Bluetooth on" }
+            else if (previous.radio != .off and next.radio == .off)
+                self.feedback = .{ .kind = .success, .message = "Bluetooth off" }
+            else if (previous.operation != .none and next.operation == .none) self.feedback = switch (previous.operation) {
+                .pairing => .{ .kind = .success, .message = "Device paired" },
+                .connection => .{ .kind = .success, .message = "Device connected" },
+                .disconnection => .{ .kind = .success, .message = "Device disconnected" },
+                .forget => .{ .kind = .success, .message = "Device forgotten" },
+                .radio_change, .discovery, .none => self.feedback,
+            } else if (previous.discovery != .idle and next.discovery == .idle)
+                self.feedback = .{ .kind = .success, .message = "Device search finished" }
+            else {
+                for (previous.items()) |device| {
+                    if (next.find(device.id)) |index| {
+                        const current = next.devices[index];
+                        const was_connected = device.state == .connected or device.state == .preparing_audio or device.state == .ready;
+                        const is_connected = current.state == .connected or current.state == .preparing_audio or current.state == .ready;
+                        if (!was_connected and is_connected)
+                            self.feedback = .{ .kind = .success, .message = "Device connected" }
+                        else if ((device.state == .connected or device.state == .preparing_audio) and current.state == .ready)
+                            self.feedback = .{ .kind = .success, .message = "Game audio ready" }
+                        else if (was_connected and !is_connected)
+                            self.feedback = .{ .kind = .success, .message = "Device disconnected" };
+                    } else if (device.state != .nearby) {
+                        self.feedback = .{ .kind = .success, .message = "Device forgotten" };
+                    }
+                }
+            }
+        }
         if (changed) self.revision += 1;
         return changed;
     }
@@ -359,7 +421,7 @@ pub const Model = struct {
             .home => ui.homeSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
             .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_view, shelf_offset),
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
-            .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.snapshot.settingsSummary(), self.bluetooth.snapshot.summary()),
+            .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.summary(), self.bluetooth.summary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
             .wifi => self.wifiTree(theme),
             .wifi_fallback => ui.wifiFallback(theme, self.wifi_fallback.url(), &self.wifi_fallback.qr),
@@ -383,7 +445,7 @@ pub const Model = struct {
         if (self.page == .home) {
             if (self.battery_percent) |percent| result.add(.{ .battery = .{ .bounds = .{ .x = 916, .y = 40, .width = 60, .height = 28 }, .percent = percent } });
         }
-        if (self.notice.len != 0) ui.showNotice(&result, self.notice);
+        if (self.feedback.visible()) ui.showFeedback(&result, self.feedback);
         return result;
     }
 
@@ -509,18 +571,14 @@ test "Back at Home is inert with or without a resumable session" {
     }
 }
 
-test "brightness shortcut cannot wrap maximum to minimum" {
+test "settings list never changes values through unadvertised shortcuts" {
     var state = Model{ .page = .settings, .selected = 0 };
-    for (0..20) |_| {
-        _ = state.apply(.right);
-        _ = state.takeSetting();
-    }
+    const before = state.settings;
+    for (0..20) |_| _ = state.apply(.right);
     try std.testing.expectEqual(@as(u8, 10), state.settings.brightness);
-    for (0..20) |_| {
-        _ = state.apply(.left);
-        _ = state.takeSetting();
-    }
-    try std.testing.expectEqual(@as(u8, 0), state.settings.brightness);
+    for (0..20) |_| _ = state.apply(.left);
+    try std.testing.expectEqualDeep(before, state.settings);
+    try std.testing.expectEqual(@as(?settings_model.Setting, null), state.takeSetting());
 }
 
 test "Wi-Fi picker commands retain the authority generation" {
@@ -548,6 +606,30 @@ test "Wi-Fi settings row ignores setting adjustment shortcuts" {
     try std.testing.expect(!state.apply(.right));
     try std.testing.expectEqualDeep(before, state.settings);
     try std.testing.expectEqual(@as(?settings_model.Setting, null), state.takeSetting());
+}
+
+test "radio and device snapshot transitions produce positive feedback" {
+    var state = Model{};
+    _ = state.updateBluetooth(try bluetooth_model.parse("snapshot version=1 generation=1 revision=1 radio=starting discovery=idle operation=radio_change operation_device= prompt=none prompt_device= prompt_value=\nend\n"));
+    _ = state.updateBluetooth(try bluetooth_model.parse("snapshot version=1 generation=1 revision=2 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\nend\n"));
+    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
+    try std.testing.expectEqualStrings("Bluetooth on", state.feedback.message);
+
+    _ = state.updateWifi(try wifi.parse("snapshot generation=2 revision=1 radio=starting connectivity=none can_scan=0\nend\n"));
+    _ = state.updateWifi(try wifi.parse("snapshot generation=2 revision=2 radio=ready connectivity=internet can_scan=1\nend\n"));
+    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
+    try std.testing.expectEqualStrings("Wi-Fi on", state.feedback.message);
+
+    _ = state.updateBluetooth(try bluetooth_model.parse(
+        "snapshot version=1 generation=3 revision=1 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
+            "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=connected battery=80 legacy=0\nend\n",
+    ));
+    _ = state.updateBluetooth(try bluetooth_model.parse(
+        "snapshot version=1 generation=3 revision=2 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
+            "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=ready battery=80 legacy=0\nend\n",
+    ));
+    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
+    try std.testing.expectEqualStrings("Game audio ready", state.feedback.message);
 }
 
 test "captive network exposes bounded manual fallback and returns to Wi-Fi" {

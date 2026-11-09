@@ -3,7 +3,7 @@
 const std = @import("std");
 const asset_manifest = @import("asset_manifest.zig");
 
-pub const Cover = enum { library, falling, minekart, adjustris, rkanoid, willow };
+pub const Cover = @import("cover_kind.zig").Kind;
 
 pub const Game = struct {
     title: []const u8,

@@ -1,0 +1,77 @@
+#!/bin/sh
+set -eu
+
+# Run from a writable directory containing the two cross-built probes. The
+# service is always restarted, including after a failed or interrupted stage.
+KMS_PROBE=${KMS_PROBE:-./kms-plane-probe}
+GPU_PROBE=${GPU_PROBE:-./brick-gpu-spike}
+GPU_LOADER=${GPU_LOADER:-/lib/ld-linux-aarch64.so.1}
+GPU_LIBRARY_PATH=${GPU_LIBRARY_PATH:-/usr/lib/brick-gpu}
+FRAMES=${KMS_REPRO_FRAMES:-120}
+SERVICE=${BRICK_SHELL_SERVICE:-/etc/init.d/S20brick-shell}
+LOG=${KMS_REPRO_LOG:-./tearing-repros.log}
+STAGE_LOG=${LOG}.stage
+load_pid=
+
+test -x "$KMS_PROBE"
+test -x "$GPU_PROBE"
+test -x "$GPU_LOADER"
+test -d "$GPU_LIBRARY_PATH"
+test -x "$SERVICE"
+case "$FRAMES" in
+	''|*[!0-9]*) echo "KMS_REPRO_FRAMES must be an integer" >&2; exit 2 ;;
+esac
+if [ "$FRAMES" -lt 120 ] || [ "$FRAMES" -gt 120 ]; then
+	echo "KMS_REPRO_FRAMES must currently be 120" >&2
+	exit 2
+fi
+
+restore_shell()
+{
+	if [ -n "$load_pid" ]; then
+		kill "$load_pid" 2>/dev/null || true
+		wait "$load_pid" 2>/dev/null || true
+	fi
+	rm -f "$STAGE_LOG"
+	"$SERVICE" start || true
+}
+trap restore_shell EXIT HUP INT TERM
+
+run_logged()
+{
+	set +e
+	"$@" >"$STAGE_LOG" 2>&1
+	status=$?
+	set -e
+	tee -a "$LOG" <"$STAGE_LOG"
+	: >"$STAGE_LOG"
+	return "$status"
+}
+
+: >"$LOG"
+"$SERVICE" stop
+
+echo "stage=kms_cpu_suite frames=$FRAMES" | tee -a "$LOG"
+run_logged env KMS_TEARING_SUITE=1 KMS_REPRO_FRAMES="$FRAMES" \
+	"$KMS_PROBE"
+
+for phase in 0 100 250 500 1000 2000 4000 8000 12000 15000; do
+	echo "stage=gpu_phase phase_us=$phase frames=$FRAMES" | tee -a "$LOG"
+	run_logged env GPU_PROBE_PRESENT=1 GPU_PROBE_FRAMES="$FRAMES" GPU_PROBE_PHASE_US="$phase" \
+		"$GPU_LOADER" --library-path "$GPU_LIBRARY_PATH" "$GPU_PROBE"
+done
+
+if [ -n "${KMS_REPRO_LOAD_COMMAND:-}" ]; then
+	echo "stage=loaded_cpu_suite command=$KMS_REPRO_LOAD_COMMAND" | tee -a "$LOG"
+	sh -c "$KMS_REPRO_LOAD_COMMAND" &
+	load_pid=$!
+	run_logged env KMS_TEARING_SUITE=1 KMS_REPRO_FRAMES="$FRAMES" \
+		"$KMS_PROBE"
+	kill "$load_pid" 2>/dev/null || true
+	wait "$load_pid" 2>/dev/null || true
+	load_pid=
+else
+	echo "stage=loaded_cpu_suite SKIP reason=KMS_REPRO_LOAD_COMMAND-not-set" | tee -a "$LOG"
+fi
+
+echo "suite=PASS automated_checks visual_result=REQUIRES_VIDEO_REVIEW log=$LOG" | tee -a "$LOG"

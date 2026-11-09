@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 
-pub const Setting = enum { brightness, performance, display_timeout, suspend_timeout, appearance };
+pub const Setting = enum { brightness, performance, display_timeout, suspend_timeout, appearance, reduced_motion };
 pub const Performance = enum { battery, balanced, performance };
 
 pub const Values = struct {
@@ -10,6 +10,7 @@ pub const Values = struct {
     performance: Performance = .balanced,
     display_timeout: u8 = 4,
     suspend_timeout: u8 = 0,
+    reduced_motion: bool = false,
 
     pub fn adjust(self: *Values, setting: Setting, direction: i8) void {
         switch (setting) {
@@ -18,6 +19,7 @@ pub const Values = struct {
             .performance => self.performance = @fromBackingInt(@intCast(step(@backingInt(self.performance), 3, direction))),
             .display_timeout => self.display_timeout = step(self.display_timeout, display_seconds.len, direction),
             .suspend_timeout => self.suspend_timeout = step(self.suspend_timeout, suspend_seconds.len, direction),
+            .reduced_motion => self.reduced_motion = !self.reduced_motion,
         }
     }
 
@@ -28,6 +30,7 @@ pub const Values = struct {
             .performance => performance_labels[@backingInt(self.performance)],
             .display_timeout => display_labels[self.display_timeout],
             .suspend_timeout => suspend_labels[self.suspend_timeout],
+            .reduced_motion => if (self.reduced_motion) "On" else "Off",
         };
     }
 };
@@ -73,6 +76,7 @@ pub fn load(io: std.Io) Values {
         result.display_timeout = indexOf(display_seconds, value) orelse result.display_timeout;
     if (readNumber(io, "/data/settings/suspend-timeout", 86400)) |value|
         result.suspend_timeout = indexOf(suspend_seconds, value) orelse result.suspend_timeout;
+    if (readNumber(io, "/data/settings/reduced-motion", 1)) |value| result.reduced_motion = value == 1;
     var buffer: [32]u8 = undefined;
     const data = std.Io.Dir.cwd().readFile(io, "/data/settings/performance", &buffer) catch return result;
     const profile = std.mem.trim(u8, data, " \t\r\n");
@@ -96,6 +100,7 @@ pub fn apply(io: std.Io, values: Values, setting: Setting) !void {
         .performance => @tagName(values.performance),
         .display_timeout => try std.fmt.bufPrint(&number, "{d}", .{display_seconds[values.display_timeout]}),
         .suspend_timeout => try std.fmt.bufPrint(&number, "{d}", .{suspend_seconds[values.suspend_timeout]}),
+        .reduced_motion => if (values.reduced_motion) "1" else "0",
     };
     var child = try std.process.spawn(io, .{ .argv = &.{ "/usr/sbin/brick-settings", @tagName(setting), value } });
     const term = try child.wait(io);
@@ -119,6 +124,10 @@ test "brightness clamps while discrete performance choices wrap" {
     values.performance = .performance;
     values.adjust(.performance, 1);
     try std.testing.expectEqual(Performance.battery, values.performance);
+    try std.testing.expect(!values.reduced_motion);
+    values.adjust(.reduced_motion, 1);
+    try std.testing.expect(values.reduced_motion);
+    try std.testing.expectEqualStrings("On", values.value(.reduced_motion));
 }
 
 pub fn saveAppearance(io: std.Io, dir: std.Io.Dir, mode: @import("theme.zig").Mode) !void {
@@ -148,6 +157,7 @@ pub fn labels(setting: Setting) []const []const u8 {
         .display_timeout => &display_labels,
         .suspend_timeout => &suspend_labels,
         .appearance => &.{ "Light", "Dark" },
+        .reduced_motion => &.{ "Off", "On" },
     };
 }
 
@@ -158,5 +168,6 @@ pub fn title(setting: Setting) []const u8 {
         .display_timeout => "Screen off",
         .suspend_timeout => "Suspend",
         .appearance => "Appearance",
+        .reduced_motion => "Reduced motion",
     };
 }

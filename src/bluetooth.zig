@@ -89,9 +89,12 @@ pub const Snapshot = struct {
     }
     pub fn summary(self: Snapshot) []const u8 {
         return switch (self.radio) {
-            .unavailable, .failed => "Unavailable",
-            .off, .stopping => "Off",
-            .starting, .ready => "On",
+            .unavailable => "Unavailable",
+            .failed => "Failed",
+            .off => "Off",
+            .stopping => "Stopping…",
+            .starting => "Starting…",
+            .ready => "On",
         };
     }
     pub fn status(self: Snapshot) []const u8 {
@@ -101,11 +104,17 @@ pub const Snapshot = struct {
             .starting => "Turning Bluetooth on…",
             .stopping => "Turning Bluetooth off…",
             .failed => "Bluetooth could not start",
-            .ready => switch (self.discovery) {
-                .classic, .low_energy => "Looking for devices…",
-                .paused => "Looking for devices…",
-                .failed => "Device search failed",
-                .idle => "Choose a device",
+            .ready => switch (self.operation) {
+                .pairing => "Pairing device…",
+                .connection => "Connecting device…",
+                .disconnection => "Disconnecting device…",
+                .forget => "Forgetting device…",
+                .radio_change => "Changing Bluetooth state…",
+                .discovery, .none => switch (self.discovery) {
+                    .classic, .low_energy, .paused => "Looking for devices…",
+                    .failed => "Device search failed",
+                    .idle => "Choose a device",
+                },
             },
         };
     }
@@ -129,6 +138,7 @@ pub const Page = enum { list, details, forget_confirm, confirmation, code_entry,
 
 pub const Model = struct {
     snapshot: Snapshot = .{},
+    initialized: bool = false,
     page: Page = .list,
     selected: usize = 0,
     active: ?Identity = null,
@@ -139,6 +149,7 @@ pub const Model = struct {
     next_request_id: u32 = 1,
     pub fn update(self: *Model, next: Snapshot) bool {
         if (next.generation < self.snapshot.generation or (next.generation == self.snapshot.generation and next.revision <= self.snapshot.revision)) return false;
+        self.initialized = true;
         const focused = if (self.page == .list and self.selected > 0 and self.selected <= self.snapshot.device_count)
             self.snapshot.devices[self.selected - 1].id
         else
@@ -171,6 +182,14 @@ pub const Model = struct {
         } else self.selected = @min(self.selected, self.itemCount() -| 1);
         return true;
     }
+
+    pub fn summary(self: *const Model) []const u8 {
+        return if (self.initialized) self.snapshot.summary() else "Checking…";
+    }
+
+    pub fn status(self: *const Model) []const u8 {
+        return if (self.initialized) self.snapshot.status() else "Checking Bluetooth…";
+    }
     pub fn activeDevice(self: *const Model) ?*const Device {
         const id = self.active orelse return null;
         const index = self.snapshot.find(id) orelse return null;
@@ -196,6 +215,12 @@ pub const Model = struct {
         };
     }
     fn applyList(self: *Model, action: input.Action) bool {
+        const cancellable = self.snapshot.operation != .none and self.snapshot.operation != .discovery;
+        if (cancellable) {
+            if (action != .back) return false;
+            self.queue(.cancel, if (self.snapshot.operation_device.len == 0) null else self.snapshot.operation_device, false);
+            return true;
+        }
         switch (action) {
             .up => self.selected -|= 1,
             .down => self.selected = @min(self.selected + 1, self.itemCount() -| 1),
@@ -374,6 +399,34 @@ test "snapshot uses opaque ids and optional battery" {
     const snapshot = try parse(packet);
     try std.testing.expectEqualStrings("Gamepad", snapshot.devices[0].name.slice());
     try std.testing.expectEqual(@as(?u8, 73), snapshot.devices[0].battery);
+}
+
+test "failed radio is distinct from unavailable radio" {
+    var snapshot = Snapshot{ .radio = .unavailable };
+    try std.testing.expectEqualStrings("Unavailable", snapshot.summary());
+    snapshot.radio = .failed;
+    try std.testing.expectEqualStrings("Failed", snapshot.summary());
+}
+
+test "startup is checking until the authority supplies a snapshot" {
+    var state = Model{};
+    try std.testing.expect(!state.initialized);
+    try std.testing.expectEqualStrings("Checking…", state.summary());
+    try std.testing.expectEqualStrings("Checking Bluetooth…", state.status());
+    try std.testing.expect(state.update(.{ .generation = 1, .revision = 1, .radio = .unavailable }));
+    try std.testing.expect(state.initialized);
+    try std.testing.expectEqualStrings("Unavailable", state.summary());
+}
+test "an in-flight device operation accepts only explicit cancellation" {
+    var model = Model{};
+    const snapshot = try parse("snapshot version=1 generation=1 revision=1 radio=ready discovery=idle operation=connection operation_device=pad prompt=none prompt_device= prompt_value=\n" ++
+        "device id=pad name_hex=47616d65706164 kind=controller state=saved battery=-1 legacy=0\nend\n");
+    try std.testing.expect(model.update(snapshot));
+    try std.testing.expect(!model.apply(.select));
+    try std.testing.expect(model.apply(.back));
+    const command = model.takeCommand().?;
+    try std.testing.expectEqual(CommandKind.cancel, command.kind);
+    try std.testing.expect(Identity.eql(snapshot.operation_device, command.device.?));
 }
 test "pairing prompt routes through confirmation" {
     var model = Model{};

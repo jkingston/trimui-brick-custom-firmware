@@ -20,6 +20,7 @@ pub const Model = struct {
     title: []const u8 = "Game",
     system: []const u8 = "",
     notice: []const u8 = "",
+    notice_kind: ui.FeedbackKind = .success,
     saved: bool = false,
     available: [4]bool = @splat(false),
     pending: ?Command = null,
@@ -103,15 +104,18 @@ pub const Model = struct {
 
     pub fn tree(self: *const Model) ui.Tree {
         const performance_values = [_][]const u8{ "Power saver", "Balanced", "Performance" };
-        return switch (self.layer) {
-            .pause => ui.overlayPauseWithNetwork(self.appearance.colors(), self.title, self.selected, self.save_slot, performance_values[self.performance_profile], self.network_status, self.notice),
-            .states => ui.overlayStates(self.appearance.colors(), self.title, self.state_slot, self.notice, self.available),
+        var result = switch (self.layer) {
+            .pause => ui.overlayPauseWithNetwork(self.appearance.colors(), self.title, self.selected, self.save_slot, performance_values[self.performance_profile], self.network_status, ""),
+            .states => ui.overlayStates(self.appearance.colors(), self.title, self.state_slot, "", self.available),
             .save_slots => ui.saveSlots(self.appearance.colors(), self.title, self.save_slot, self.available),
             .replace_confirm => ui.confirmation(self.appearance.colors(), "Replace saved state", "Replace this saved state?", "The existing state in this slot will be replaced.", "Replace state", self.confirmation),
             .load_confirm => ui.confirmation(self.appearance.colors(), "Load saved state", "Return to this saved state?", "Progress since that state will be lost.", "Load state", self.confirmation),
             .performance => ui.choice(self.appearance.colors(), "Performance", &performance_values, self.selected, self.performance_profile, "Balances responsiveness and power use.", "Game menu"),
             .failure => ui.confirmation(self.appearance.colors(), "Unable to save", "State was not saved", self.notice, "Try again", self.confirmation),
         };
+        if (self.layer != .failure and self.notice.len != 0)
+            ui.showFeedback(&result, .{ .kind = self.notice_kind, .message = self.notice });
+        return result;
     }
 
     fn applyPause(self: *Model, action: input.Action) void {

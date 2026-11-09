@@ -39,5 +39,9 @@ suspend_timeout)
 	write_setting "$directory/suspend-timeout" "$value"
 	/etc/init.d/S49powerkey restart
 	;;
+reduced_motion)
+	case "$value" in 0|1) ;; *) exit 2 ;; esac
+	write_setting "$directory/reduced-motion" "$value"
+	;;
 *) exit 2 ;;
 esac

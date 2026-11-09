@@ -4,32 +4,131 @@ const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
 const artwork_colors = @import("artwork_colors.zig");
-const ui = @import("ui.zig");
+const damage = @import("damage.zig");
+const ui = @import("ui_scene.zig");
 const text_pango = @import("text_pango.zig");
 
 pub const width: usize = design.geometry.width;
 pub const height: usize = design.geometry.height;
 
+pub fn prepareText(tree: *const ui.Tree) void {
+    var token: u8 = 0;
+    (Surface{ .sink = .{ .context = &token, .clip = Preparation.clip, .fill = Preparation.fill, .mask = Preparation.mask, .texture = Preparation.texture } }).render(tree);
+}
+
+const Preparation = struct {
+    fn clip(_: *anyopaque, _: []const ui.Rect) void {}
+    fn fill(_: *anyopaque, _: ui.Rect, _: ui.Color, _: u8) void {}
+    fn mask(_: *anyopaque, _: u64, _: u16, _: u16, _: []const u8, _: u16, _: u16, _: u32) void {}
+    fn texture(_: *anyopaque, _: @import("asset_manifest.zig").Texture, _: ui.Rect, _: u8, _: i16, _: u16) void {}
+};
+
+test "text preparation warms the next paint without changing its tree" {
+    const views = @import("ui.zig");
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var tree = views.wifiPassword(@import("theme.zig").light, "Example", 17, "", false);
+    const before = damage.Scene.capture(&tree);
+    prepareText(&tree);
+    const misses = text_pango.cacheMissCount();
+    (Surface{ .pixels = pixels }).render(&tree);
+    try std.testing.expectEqual(misses, text_pango.cacheMissCount());
+    const after = damage.Scene.capture(&tree);
+    const changes = damage.Scene.changes(&before, &after);
+    try std.testing.expectEqual(@as(usize, 0), changes.slice().len);
+}
+
 pub const Surface = struct {
-    pixels: []u32,
+    pixels: []u32 = &.{},
+    sink: ?@import("paint_sink.zig").Sink = null,
+    clips: []const ui.Rect = &.{},
+    prepainted_overlay_rows: bool = false,
 
     pub fn render(self: Surface, tree: *const ui.Tree) void {
-        if (!tree.preserve_background) @memset(self.pixels, pack(tree.background));
-        for (tree.slice()) |element| switch (element) {
+        if (!tree.preserve_background) self.fill(.{ .x = 0, .y = 0, .width = width, .height = height }, tree.background);
+        for (tree.slice()) |element| self.renderElement(element, tree.theme);
+    }
+
+    pub fn renderDamage(self: Surface, tree: *const ui.Tree, changed: *const damage.RectSet) void {
+        const rects = changed.slice();
+        if (rects.len == 0) return;
+        var surface = self;
+        surface.clips = rects;
+        if (self.sink) |sink| sink.clip(sink.context, rects);
+        defer if (self.sink) |sink| sink.clip(sink.context, &.{});
+        if (!tree.preserve_background) for (rects) |rect| {
+            if (!opaqueCover(tree, rect)) surface.fill(rect, tree.background);
+        };
+        surface.prepainted_overlay_rows = independentOverlayRows(tree, rects);
+        if (surface.prepainted_overlay_rows) for (tree.slice()) |element| {
+            if (element != .overlay_row or !intersectsDamage(element, rects)) continue;
+            const row = element.overlay_row;
+            surface.fillRounded(row.bounds, row.style.background, geometry.radius);
+        };
+        for (tree.slice()) |element| {
+            const bounds = damage.paintBounds(element);
+            for (rects) |rect| if (damage.intersects(bounds, rect)) {
+                surface.renderElement(element, tree.theme);
+                break;
+            };
+        }
+    }
+
+    fn intersectsDamage(element: ui.Element, rects: []const ui.Rect) bool {
+        const bounds = damage.paintBounds(element);
+        for (rects) |rect| if (damage.intersects(bounds, rect)) return true;
+        return false;
+    }
+
+    fn independentOverlayRows(tree: *const ui.Tree, rects: []const ui.Rect) bool {
+        var found = false;
+        for (tree.slice(), 0..) |element, index| {
+            if (element != .overlay_row or !intersectsDamage(element, rects)) continue;
+            found = true;
+            const bounds = damage.paintBounds(element);
+            for (tree.slice(), 0..) |other, other_index| {
+                if (index != other_index and damage.intersects(bounds, damage.paintBounds(other))) return false;
+            }
+        }
+        return found;
+    }
+
+    fn opaqueCover(tree: *const ui.Tree, rect: ui.Rect) bool {
+        for (tree.slice()) |element| {
+            const bounds = switch (element) {
+                .bar => |bar| if (bar.radius == 0) bar.bounds else continue,
+                .menu_row => |row| if (geometry.radius == 0) row.bounds else continue,
+                .overlay_row => |row| if (geometry.radius == 0) row.bounds else continue,
+                else => continue,
+            };
+            if (contains(bounds, rect)) return true;
+        }
+        return false;
+    }
+
+    fn contains(outer: ui.Rect, inner: ui.Rect) bool {
+        return outer.x <= inner.x and outer.y <= inner.y and
+            @as(u32, outer.x) + outer.width >= @as(u32, inner.x) + inner.width and
+            @as(u32, outer.y) + outer.height >= @as(u32, inner.y) + inner.height;
+    }
+
+    pub fn renderElement(self: Surface, element: ui.Element, theme: ui.Theme) void {
+        switch (element) {
             .bar => |bar| self.fillRounded(bar.bounds, bar.color, bar.radius),
             .scrim => |scrim| self.fillAlpha(scrim.bounds, scrim.color, scrim.alpha),
             .text => |text| {
-                if (!text_pango.draw(self.pixels, width, text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.font, text.language, text.lines, text.bounds.height)) @panic("Text renderer unavailable");
+                if (!self.paintText(text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.font, text.language, text.lines, text.bounds.height, null, false, 0)) @panic("Text renderer unavailable");
             },
             .text_block => |block| self.textBlock(block),
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .qr_code => |qr| self.drawQr(qr),
-            .keyboard => |keyboard| self.drawKeyboard(keyboard, tree.theme),
+            .keyboard => |keyboard| self.drawKeyboard(keyboard, theme),
+            .keyboard_key => |key| self.drawKeyboardKey(key.keyboard, theme, key.index, true),
             .cover => |cover| self.drawCover(cover),
             .cartridge => |cartridge| self.drawCartridge(cartridge),
             .overlay_row => |item| self.drawOverlayRow(item),
-        };
+        }
     }
 
     fn artworkFont(size: u16) design.Font {
@@ -50,6 +149,13 @@ pub const Surface = struct {
     }
 
     fn fill(self: Surface, rect: ui.Rect, color: ui.Color) void {
+        if (self.sink) |sink| return sink.fill(sink.context, rect, color, 255);
+        if (self.clips.len != 0) {
+            var unclipped = self;
+            unclipped.clips = &.{};
+            for (self.clips) |clip| if (damage.intersection(rect, clip)) |part| unclipped.fill(part, color);
+            return;
+        }
         if (rect.x >= width or rect.y >= height) return;
         const right = @min(@as(usize, rect.x) + rect.width, width);
         const bottom = @min(@as(usize, rect.y) + rect.height, height);
@@ -73,6 +179,7 @@ pub const Surface = struct {
     }
 
     fn fillAlpha(self: Surface, rect: ui.Rect, color: ui.Color, alpha: u8) void {
+        if (self.sink) |sink| return sink.fill(sink.context, rect, color, alpha);
         if (rect.x >= width or rect.y >= height) return;
         const right = @min(@as(usize, rect.x) + rect.width, width);
         const bottom = @min(@as(usize, rect.y) + rect.height, height);
@@ -80,6 +187,7 @@ pub const Surface = struct {
         while (y < bottom) : (y += 1) {
             var x: usize = rect.x;
             while (x < right) : (x += 1) {
+                if (!damage.containsPixel(self.clips, x, y)) continue;
                 var destination: ui.Color = @bitCast(self.pixels[y * width + x]);
                 destination.r = blend255(destination.r, color.r, alpha);
                 destination.g = blend255(destination.g, color.g, alpha);
@@ -97,10 +205,10 @@ pub const Surface = struct {
         const tail = block.detail_font.line_height * block.detail_lines + block.gap;
         var measured: u16 = 0;
         const lead: u16 = if (block.detail_above) tail else 0;
-        if (!text_pango.drawBlock(self.pixels, width, block.bounds.x, block.bounds.y + lead, block.bounds.width, block.title, pack(block.color), block.title_font, "", block.lines, block.bounds.height, &measured, block.centered, tail)) @panic("Text renderer unavailable");
+        if (!self.paintText(block.bounds.x, block.bounds.y + lead, block.bounds.width, block.title, pack(block.color), block.title_font, "", block.lines, block.bounds.height, &measured, block.centered, tail)) @panic("Text renderer unavailable");
         const top = block.bounds.y + if (block.centered) (block.bounds.height -| (measured + tail)) / 2 else @as(u16, 0);
         const detail_y = if (block.detail_above) top else top + measured + block.gap;
-        if (!text_pango.draw(self.pixels, width, block.bounds.x, detail_y, block.bounds.width, block.detail, pack(block.detail_color), block.detail_font, "", block.detail_lines, block.detail_font.line_height * block.detail_lines)) @panic("Text renderer unavailable");
+        if (!self.paintText(block.bounds.x, detail_y, block.bounds.width, block.detail, pack(block.detail_color), block.detail_font, "", block.detail_lines, block.detail_font.line_height * block.detail_lines, null, false, 0)) @panic("Text renderer unavailable");
     }
 
     fn menuRow(self: Surface, row: ui.MenuRow) void {
@@ -115,32 +223,18 @@ pub const Surface = struct {
         const available = row.bounds.width - 2 * padding - (if (row.disclosure) @as(u16, 24) else 0);
         const tail: u16 = if (row.detail.len != 0) font.caption.line_height + 6 else 0;
         var measured_height: u16 = 0;
-        if (!text_pango.drawBlock(self.pixels, width, row.bounds.x + padding, row.bounds.y, available, row.label, pack(row.style.text), title_font, "", row.lines, row.bounds.height, &measured_height, true, tail)) @panic("Text renderer unavailable");
+        if (!self.paintText(row.bounds.x + padding, row.bounds.y, available, row.label, pack(row.style.text), title_font, "", row.lines, row.bounds.height, &measured_height, true, tail)) @panic("Text renderer unavailable");
         const text_y = row.bounds.y + (row.bounds.height -| (measured_height + tail)) / 2;
         if (row.detail.len != 0) self.drawTextBounded(row.bounds.x + padding, text_y + measured_height + 6, available, row.detail, row.style.detail, detail_font);
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + (row.bounds.height - 24) / 2, row.style.text);
     }
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
-        self.fillRounded(item.bounds, item.style.background, geometry.radius);
-        var label_font = font.body;
-        label_font.ink_centered = true;
-        var detail_font = font.caption;
-        detail_font.ink_centered = true;
-        label_font.weight = if (item.selected) .medium else .regular;
-        const value_width: u16 = if (item.value.len != 0) 320 else 0;
-        const tail: u16 = if (item.detail.len != 0) font.caption.line_height + 6 else 0;
-        const label_y = item.bounds.y + (item.bounds.height -| (label_font.line_height + tail)) / 2;
-        self.drawTextBounded(item.bounds.x + geometry.row_padding, label_y, item.bounds.width - value_width - 2 * geometry.row_padding, item.label, item.style.text, label_font);
-        if (item.detail.len != 0) self.drawTextBounded(item.bounds.x + geometry.row_padding, label_y + label_font.line_height + 6, item.bounds.width - 2 * geometry.row_padding, item.detail, item.style.detail, detail_font);
-        if (item.value.len != 0) {
-            var value_font = font.caption;
-            value_font.ink_centered = true;
-            value_font.size = 34;
-            value_font.line_height = 41;
-            value_font.alignment = .end;
-            self.drawTextBounded(item.bounds.x + item.bounds.width - value_width - geometry.row_padding, item.bounds.y + (item.bounds.height - value_font.line_height) / 2, value_width, item.value, item.style.text, value_font);
-        }
+        if (!self.prepainted_overlay_rows) self.fillRounded(item.bounds, item.style.background, geometry.radius);
+        for (@import("row_layout.zig").overlay(item)) |part|
+            self.drawTextBounded(part.bounds.x, part.bounds.y, part.bounds.width, part.value, part.color, part.font);
+        if (item.disclosure)
+            self.drawChevron(item.bounds.x + item.bounds.width - 38, item.bounds.y + (item.bounds.height - 24) / 2, item.style.text);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
@@ -158,12 +252,14 @@ pub const Surface = struct {
             fitted.height = @intCast(@as(u32, bounds.width) * texture.content_height / texture.content_width);
             fitted.y += (bounds.height - fitted.height) / 2;
         }
+        if (self.sink) |sink| return sink.texture(sink.context, texture, fitted, dim, tilt, clip_left);
         var y: u16 = 0;
         while (y < fitted.height and fitted.y + y < height) : (y += 1) {
             var x: u16 = 0;
             while (x < fitted.width) : (x += 1) {
                 const screen_x = @as(i32, fitted.x) + x - clip_left;
                 if (screen_x < 0 or screen_x >= width) continue;
+                if (!damage.containsPixel(self.clips, @intCast(screen_x), fitted.y + y)) continue;
                 const far_x = if (tilt < 0) x else fitted.width - 1 - x;
                 const inset: u16 = @intCast(@as(u32, far_x) * @abs(tilt) * fitted.height / @max(1, @as(u32, fitted.width) * 8000));
                 if (y < inset or y >= fitted.height - inset) continue;
@@ -381,33 +477,38 @@ pub const Surface = struct {
     }
 
     fn drawKeyboard(self: Surface, keyboard: ui.Keyboard, theme: ui.Theme) void {
+        for (0..@import("keyboard_layout.zig").count) |index|
+            self.drawKeyboardKey(keyboard, theme, index, index == keyboard.selected);
+    }
+
+    fn drawKeyboardKey(self: Surface, keyboard: ui.Keyboard, theme: ui.Theme, index: usize, selected: bool) void {
         const lower = "1234567890qwertyuiopasdfghjklzxcvbnm";
         const upper = "1234567890QWERTYUIOPASDFGHJKLZXCVBNM";
         const symbols = "1234567890!@#$%^&*()[]{}<>?+-=_/:;,.~`";
         const keys = if (keyboard.symbols) symbols else if (keyboard.uppercase) upper else lower;
-        const columns: u16 = 10;
-        const rows: u16 = 4;
-        const gap: u16 = 8;
-        const key_width = (keyboard.bounds.width - gap * (columns - 1)) / columns;
-        const key_height = (keyboard.bounds.height - gap * (rows - 1)) / rows;
+        const layout = @import("keyboard_layout.zig");
         var key_font = font.body;
         key_font.alignment = .center;
         key_font.ink_centered = true;
-        for (0..40) |index| {
-            const x = keyboard.bounds.x + @as(u16, @intCast(index % columns)) * (key_width + gap);
-            const y = keyboard.bounds.y + @as(u16, @intCast(index / columns)) * (key_height + gap);
-            const selected = index == keyboard.selected;
-            const background = if (selected) theme.selection else theme.surface;
-            const foreground = if (selected) theme.selection_text else theme.text;
-            self.fillRounded(.{ .x = x, .y = y, .width = key_width, .height = key_height }, background, geometry.radius);
-            const value = if (index < 36) keys[index .. index + 1] else switch (index) {
-                36 => "Aa",
-                37 => "#+",
-                38 => "\xe2\x8c\xab",
-                else => "Go",
+        const bounds = layout.keyBounds(keyboard.bounds, index);
+        if (self.clips.len != 0) {
+            var visible = false;
+            for (self.clips) |clip| if (damage.intersects(bounds, clip)) {
+                visible = true;
+                break;
             };
-            if (!text_pango.draw(self.pixels, width, x, y, key_width, value, pack(foreground), key_font, "", 1, key_height)) @panic("Text renderer unavailable");
+            if (!visible) return;
         }
+        const background = if (selected) theme.selection else theme.surface;
+        const foreground = if (selected) theme.selection_text else theme.text;
+        self.fillRounded(bounds, background, geometry.radius);
+        const value = if (index < 36) keys[index .. index + 1] else switch (index) {
+            36 => "Aa",
+            37 => "#+",
+            38 => "\xe2\x8c\xab",
+            else => "Go",
+        };
+        if (!self.paintText(bounds.x, bounds.y, bounds.width, value, pack(foreground), key_font, "", 1, bounds.height, null, false, 0)) @panic("Text renderer unavailable");
     }
 
     fn drawChevron(self: Surface, x: u16, y: u16, color: ui.Color) void {
@@ -429,8 +530,12 @@ pub const Surface = struct {
     fn drawTextBoundedLanguage(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: ui.Color, text_font: design.Font, language: []const u8) void {
         if (x >= width or y >= height or text_font.size == 0) return;
         const available = @min(max_width, width - x);
-        if (!text_pango.draw(self.pixels, width, x, y, available, value, pack(color), text_font, language, 1, 96))
+        if (!self.paintText(x, y, available, value, pack(color), text_font, language, 1, 96, null, false, 0))
             @panic("PangoFT2 text renderer or required fonts are unavailable");
+    }
+
+    fn paintText(self: Surface, x: u16, y: u16, max_width: u16, value: []const u8, color: u32, text_font: design.Font, language: []const u8, lines: u8, max_height: u16, measured: ?*u16, centered: bool, tail: u16) bool {
+        return text_pango.drawBlockClipped(self.sink, self.clips, self.pixels, width, x, y, max_width, value, color, text_font, language, lines, max_height, measured, centered, tail);
     }
 };
 
@@ -485,14 +590,37 @@ test "multiline titles use their height and remain inside the text rectangle" {
     try std.testing.expect(second_line);
 }
 
+test "overlay disclosures paint a bounded trailing affordance" {
+    const pixels_without = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels_without);
+    const pixels_with = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels_with);
+    const theme = @import("theme.zig").light;
+    var without = ui.Tree{ .theme = theme, .background = theme.background };
+    without.add(.{ .overlay_row = .{ .bounds = .{ .x = 28, .y = 138, .width = 968, .height = 96 }, .label = "Settings", .detail = "", .selected = false, .disclosure = false } });
+    var with = ui.Tree{ .theme = theme, .background = theme.background };
+    with.add(.{ .overlay_row = .{ .bounds = .{ .x = 28, .y = 138, .width = 968, .height = 96 }, .label = "Settings", .detail = "", .selected = false, .disclosure = true } });
+    (Surface{ .pixels = pixels_without }).render(&without);
+    (Surface{ .pixels = pixels_with }).render(&with);
+    var changed: usize = 0;
+    var leftmost: usize = width;
+    for (pixels_without, pixels_with, 0..) |a, b, index| if (a != b) {
+        changed += 1;
+        leftmost = @min(leftmost, index % width);
+    };
+    try std.testing.expect(changed > 0);
+    try std.testing.expect(leftmost >= 940);
+}
+
 test "theme changes interface surfaces but preserves artwork pixels" {
+    const views = @import("ui.zig");
     const a = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(a);
     const b = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(b);
     const themes = @import("theme.zig");
-    var light = ui.home(themes.light, 0);
-    var dark = ui.home(themes.dark, 0);
+    var light = views.home(themes.light, 0);
+    var dark = views.home(themes.dark, 0);
     (Surface{ .pixels = a }).render(&light);
     (Surface{ .pixels = b }).render(&dark);
     try std.testing.expect(a[0] != b[0]);
