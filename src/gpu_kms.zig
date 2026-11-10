@@ -53,6 +53,7 @@ const Connector = extern struct {
     encoders: ?*anyopaque,
 };
 const Encoder = extern struct { id: u32, kind: u32, crtc: u32, possible_crtcs: u32, possible_clones: u32 };
+const Framebuffer = extern struct { id: u32, width: u32, height: u32, pitch: u32, bpp: u32, depth: u32, handle: u32 };
 const PlaneResources = extern struct { count: u32, planes: [*]u32 };
 const Plane = extern struct {
     format_count: u32,
@@ -108,6 +109,8 @@ const Api = struct {
     drmModeGetCrtc: *const fn (c_int, u32) callconv(.c) ?*Crtc,
     drmModeFreeCrtc: *const fn (*Crtc) callconv(.c) void,
     drmModeSetCrtc: *const fn (c_int, u32, u32, u32, u32, [*]const u32, c_int, *const Mode) callconv(.c) c_int,
+    drmModeGetFB: *const fn (c_int, u32) callconv(.c) ?*Framebuffer,
+    drmModeFreeFB: *const fn (*Framebuffer) callconv(.c) void,
     drmSetClientCap: *const fn (c_int, u64, u64) callconv(.c) c_int,
     drmSetMaster: *const fn (c_int) callconv(.c) c_int,
     drmDropMaster: *const fn (c_int) callconv(.c) c_int,
@@ -175,6 +178,41 @@ fn properties(fd: c_int, plane_id: u32) !PlaneProperties {
     return result;
 }
 
+fn planeType(fd: c_int, plane_id: u32) !?u64 {
+    const list = api.drmModeObjectGetProperties(fd, plane_id, 0xeeeeeeee) orelse return error.DrmProperties;
+    defer api.drmModeFreeObjectProperties(list);
+    for (list.ids[0..list.count], list.values[0..list.count]) |id, value| {
+        const property = api.drmModeGetProperty(fd, id) orelse return error.DrmProperty;
+        defer api.drmModeFreeProperty(property);
+        if (std.mem.eql(u8, propertyName(property), "type")) return value;
+    }
+    return null;
+}
+
+fn usableCrtc(crtc: *const Crtc) bool {
+    // Atomic DRM clients can leave a valid mode with no legacy CRTC buffer.
+    // The next owner can still modeset its own primary plane in that mode.
+    return crtc.valid != 0 and crtc.mode.hdisplay == 1024 and crtc.mode.vdisplay == 768;
+}
+
+fn isHandoffFramebuffer(framebuffer: *const Framebuffer) bool {
+    // fbdev has a three-page virtual surface, so its DRM framebuffer is taller
+    // than the active mode. It remains kernel-owned across UI and game clients.
+    return framebuffer.width == 1024 and framebuffer.height >= 768;
+}
+
+fn handoffFramebuffer(fd: c_int, resources: *const Resources) !u32 {
+    var result: u32 = 0;
+    for (resources.fbs[0..@intCast(resources.fb_count)]) |id| {
+        const framebuffer = api.drmModeGetFB(fd, id) orelse return error.DrmFramebuffer;
+        defer api.drmModeFreeFB(framebuffer);
+        if (!isHandoffFramebuffer(framebuffer)) continue;
+        if (result != 0) return error.AmbiguousHandoffFramebuffer;
+        result = id;
+    }
+    return if (result != 0) result else error.MissingHandoffFramebuffer;
+}
+
 fn add(request: *AtomicRequest, object: u32, property: u32, value: u64) !void {
     if (property == 0 or api.drmModeAtomicAddProperty(request, object, property, value) < 0) return error.DrmAtomicProperty;
 }
@@ -210,7 +248,16 @@ pub const Presenter = struct {
         defer api.drmModeFreeEncoder(encoder);
         const crtc = api.drmModeGetCrtc(fd, encoder.crtc) orelse return error.DrmCrtc;
         defer api.drmModeFreeCrtc(crtc);
-        if (crtc.valid == 0 or crtc.buffer == 0 or crtc.mode.hdisplay != 1024 or crtc.mode.vdisplay != 768) return error.UnsupportedMode;
+        if (!usableCrtc(crtc)) return error.UnsupportedMode;
+        var saved = crtc.*;
+        if (saved.buffer == 0) {
+            // RetroArch's atomic DRM backend removes its plane framebuffer on
+            // exit, so drmModeGetCrtc reports buffer 0 even though the mode is
+            // still valid. Restore the persistent fbdev framebuffer between
+            // owners; otherwise closing this UI session would disable the CRTC
+            // and the next menu/overlay could not reacquire it.
+            saved.buffer = try handoffFramebuffer(fd, resources);
+        }
         const planes = api.drmModeGetPlaneResources(fd) orelse return error.DrmPlanes;
         defer api.drmModeFreePlaneResources(planes);
         var primary_plane: u32 = 0;
@@ -218,13 +265,20 @@ pub const Presenter = struct {
         for (planes.planes[0..planes.count]) |plane_id| {
             const plane = api.drmModeGetPlane(fd, plane_id) orelse return error.DrmPlane;
             defer api.drmModeFreePlane(plane);
-            if (plane.crtc == crtc.id and plane.framebuffer == crtc.buffer) primary_plane = plane.id;
-            if (plane.crtc == 0 and std.mem.indexOfScalar(u32, plane.formats[0..plane.format_count], 0x34325241) != null) overlay_plane = plane.id;
+            const kind = try planeType(fd, plane_id);
+            // Prefer the legacy scanout match when one exists. RetroArch uses
+            // atomic planes and removes its framebuffer on exit, leaving
+            // crtc.buffer at zero; in that state use the kernel's immutable
+            // primary-plane type instead.
+            if ((crtc.buffer != 0 and plane.crtc == crtc.id and plane.framebuffer == crtc.buffer) or
+                (primary_plane == 0 and kind == 1 and plane.possible_crtcs & 1 != 0))
+                primary_plane = plane.id;
+            if (plane.crtc == 0 and kind != 1 and std.mem.indexOfScalar(u32, plane.formats[0..plane.format_count], 0x34325241) != null) overlay_plane = plane.id;
         }
         if (primary_plane == 0 or overlay_plane == 0) return error.DrmCompositionPlanes;
         var self = Presenter{
             .fd = fd,
-            .saved = crtc.*,
+            .saved = saved,
             .connector = connector.id,
             .primary_plane = primary_plane,
             .primary = try properties(fd, primary_plane),
@@ -347,3 +401,17 @@ pub const Presenter = struct {
         _ = api.drmDropMaster(self.fd);
     }
 };
+
+test "an atomic client may hand off a valid mode without a legacy framebuffer" {
+    var crtc: Crtc = std.mem.zeroes(Crtc);
+    crtc.valid = 1;
+    crtc.mode.hdisplay = 1024;
+    crtc.mode.vdisplay = 768;
+    try std.testing.expectEqual(@as(u32, 0), crtc.buffer);
+    try std.testing.expect(usableCrtc(&crtc));
+
+    var framebuffer: Framebuffer = std.mem.zeroes(Framebuffer);
+    framebuffer.width = 1024;
+    framebuffer.height = 2304;
+    try std.testing.expect(isHandoffFramebuffer(&framebuffer));
+}
