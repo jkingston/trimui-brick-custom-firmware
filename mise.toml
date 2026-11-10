@@ -75,7 +75,7 @@ output="$(realpath -m "${O:-$root/output/build}")"
 externals="$base $assets $root"
 make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
     BR2_DL_DIR="$base/output/downloads" \
-    brick-shell-dirclean brick-cartridge-assets-dirclean
+    brick-gpu-dirclean brick-shell-dirclean brick-cartridge-assets-dirclean
 make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
     BR2_DL_DIR="$base/output/downloads" brick-shell
 make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \
