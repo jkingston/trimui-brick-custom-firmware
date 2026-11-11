@@ -39,6 +39,21 @@ document explains the decisions they enforce.
 Raw durations and easing curves outside `design.zig` are defects. Components
 select a `MotionRole`; they do not construct private motion styles.
 
+## Visual language
+
+- Hierarchy comes from scale, spacing, weight, and composition—not decorative
+  markers. Selection rails, glowing edges, nested pills, and ornamental cards
+  are not part of Brick's language.
+- Resting controls live on the page. The focused control alone gains a quiet
+  matte surface and depth; press contracts and inverts that same surface.
+- Use warm paper and deep ink in light mode, near-black and warm white in dark
+  mode. Status colour is reserved for actual warning or failure state.
+- Inter establishes titles, high-emphasis actions, and UI copy through the
+  shared type scale. Noto Sans remains the multilingual fallback. Do not choose
+  typefaces in a screen.
+- Footers are one hairline action rail: navigation/context at the left,
+  immediate actions grouped at the right. Keep labels short and action-led.
+
 ## Interaction states
 
 All selectable components use `interaction.State`.
@@ -73,6 +88,18 @@ row.value = value;
 row.overlay(&tree);
 ```
 
+### Landing action card
+
+Use `ui_components.actionCard()` when a landing or overview surface needs
+spatial hierarchy rather than another list. `primary` is the dominant next
+action; `secondary` is supporting navigation. Cards own the same stable ID,
+state styling, press response, activity feedback, focus motion, and damage
+contract as rows. Never assemble a card from an unrelated focus frame and text.
+
+When focus moves between differently sized cards, `focus_motion.Controller`
+morphs the shared plate's position and size from its visible geometry. Screen
+code declares only the destination bounds and emphasis.
+
 ### Focus group
 
 Use `interaction.FocusGroup` for one-dimensional movement. A `boundary` result
@@ -80,14 +107,15 @@ is distinct from `moved` and `empty`; route it to semantic boundary feedback.
 Grid navigation may calculate its spatial destination, but must preserve the
 same result contract and held-input controller.
 
-`focus_motion.Controller` owns the visible focus rail. Feed each rebuilt scene
-to it before presentation; it retargets from the rail's currently visible
-position. Focus uses the restrained surface treatment and rail, while press is
-the stronger inversion. Do not reproduce either treatment inside a screen.
+`focus_motion.Controller` owns the visible focus plate. Feed each rebuilt scene
+to it before presentation; it retargets from the plate's currently visible
+position and size. Focus uses one restrained moving surface, quiet depth, and a full
+perimeter keyline; press settles inward into the stronger inversion. Do not add
+selection rails, pills, or screen-specific focus ornaments.
 
 When a supported direction cannot move farther, call the controller's
 `boundary()` response. It nudges toward the attempted direction and strengthens
-the rail briefly; reduced motion keeps the rail pulse without moving content.
+the perimeter briefly; reduced motion keeps the perimeter pulse without moving content.
 Irrelevant axes remain silent, so feedback means “the end” rather than “that
 control does not use this button.”
 

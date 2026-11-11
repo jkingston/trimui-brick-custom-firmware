@@ -236,8 +236,9 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .scrim => |value| value.bounds,
         .text => |value| value.bounds,
         .text_block => |value| value.bounds,
-        .focus_frame => |value| value.bounds,
-        .menu_row => |value| value.bounds,
+        .focus_frame => |value| focusBounds(value.bounds, value.displayedBounds()),
+        .menu_row => |value| focusBounds(value.bounds, value.displayedBounds()),
+        .action_card => |value| focusBounds(value.bounds, value.displayedBounds()),
         .battery => |value| value.bounds,
         .meter => |value| value.bounds,
         .activity => |value| value.bounds,
@@ -257,8 +258,21 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
             // label/detail layout extends below the opaque row background.
             const font = @import("design.zig").typeface;
             const text_height = font.body.line_height + if (value.detail.len != 0) font.caption.line_height + @as(u16, 6) else @as(u16, 0);
-            break :blk expand(value.bounds, 0, text_height -| value.bounds.height);
+            break :blk expand(focusBounds(value.bounds, value.displayedBounds()), 0, text_height -| value.bounds.height);
         },
+    };
+}
+
+fn focusBounds(logical: ui.Rect, displayed: ui.Rect) ui.Rect {
+    const x = @min(logical.x, displayed.x);
+    const y = @min(logical.y, displayed.y);
+    const far_right = @max(@as(u32, logical.x) + logical.width, @as(u32, displayed.x) + displayed.width);
+    const far_bottom = @max(@as(u32, logical.y) + logical.height, @as(u32, displayed.y) + displayed.height + 3);
+    return .{
+        .x = x,
+        .y = y,
+        .width = @intCast(@min(@as(u32, 1024 - x), far_right - x)),
+        .height = @intCast(@min(@as(u32, 768 - y), far_bottom - y)),
     };
 }
 
@@ -329,7 +343,7 @@ fn hashAny(hash: *Hasher, value: anytype) void {
     }
 }
 
-test "selection change damages only old and new rows" {
+test "selection change damages the connected focus path" {
     const views = @import("ui.zig");
     var first = views.settings(0, .{}, "Off", "Off");
     var previous = Scene.capture(&first);
@@ -337,9 +351,8 @@ test "selection change damages only old and new rows" {
     const next = Scene.capture(&second);
     const changed = Scene.changes(&previous, &next);
     try std.testing.expect(!changed.full);
-    try std.testing.expectEqual(@as(usize, 2), changed.len);
-    try std.testing.expectEqual(@as(u16, 96), changed.rects[0].height);
-    try std.testing.expectEqual(@as(u16, 96), changed.rects[1].height);
+    try std.testing.expectEqual(@as(usize, 1), changed.len);
+    try std.testing.expectEqual(@as(u16, 195), changed.rects[0].height);
     previous = Scene.capture(&second);
     try std.testing.expectEqual(@as(usize, 0), Scene.changes(&previous, &next).len);
 }

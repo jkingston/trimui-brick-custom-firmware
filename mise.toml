@@ -30,9 +30,10 @@ zig build -Dtarget=aarch64-linux-gnu -Dcpu=cortex_a53 -Doptimize=ReleaseSmall \
     --prefix output/check --summary all
 # Includes three retained layer pairs, the deterministic screen oracle, and the
 # shared interaction-state, press/boundary feedback, feedback-lifecycle,
-# focus/navigation/viewport/activity/keyboard motion, retained scenes,
-# contextual-launch and latency.
-test "$(stat -c %s output/check/bin/brick-shell)" -le 979968
+# focus/navigation/viewport/activity/keyboard/card motion, retained scenes,
+# contextual-launch and latency. The 968 KiB ceiling includes the reusable
+# action-card renderer and keeps a measured limit rather than dropping it.
+test "$(stat -c %s output/check/bin/brick-shell)" -le 991232
 '''
 
 [tasks.check]
@@ -55,7 +56,7 @@ make -C "$base" O="$output" EXTERNALS="$externals" configure
 "$buildroot/utils/config" --file "$output/.config" --enable BR2_PACKAGE_BRICK_SHELL
 "$buildroot/utils/config" --file "$output/.config" --set-str \
     BR2_PACKAGE_GOOGLEFONTDIRECTORY_FONTS \
-    'ofl/notosans ofl/notosansarabic ofl/notosanshebrew ofl/notosansdevanagari ofl/notosansbengali ofl/notosansgurmukhi ofl/notosansgujarati ofl/notosansoriya ofl/notosanstamil ofl/notosanstelugu ofl/notosanskannada ofl/notosansmalayalam ofl/notosanssinhala ofl/notosansthai ofl/notosanslao ofl/notosanskhmer ofl/notosanssc ofl/notosansarmenian ofl/notosansgeorgian ofl/notosansethiopic ofl/notosansmyanmar ofl/notosanssymbols2 ofl/notoemoji'
+    'ofl/inter ofl/notosans ofl/notosansarabic ofl/notosanshebrew ofl/notosansdevanagari ofl/notosansbengali ofl/notosansgurmukhi ofl/notosansgujarati ofl/notosansoriya ofl/notosanstamil ofl/notosanstelugu ofl/notosanskannada ofl/notosansmalayalam ofl/notosanssinhala ofl/notosansthai ofl/notosanslao ofl/notosanskhmer ofl/notosanssc ofl/notosansarmenian ofl/notosansgeorgian ofl/notosansethiopic ofl/notosansmyanmar ofl/notosanssymbols2 ofl/notoemoji'
 "$buildroot/utils/config" --file "$output/.config" --set-str BR2_ROOTFS_POST_BUILD_SCRIPT \
     '$(BR2_EXTERNAL_BRICK_PATH)/board/trimui/brick/post-build.sh $(BR2_EXTERNAL_BRICK_UI_PATH)/board/trimui/brick/post-build.sh'
 make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \

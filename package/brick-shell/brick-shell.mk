@@ -43,6 +43,7 @@ define BRICK_SHELL_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/Brick_Test_Controller.cfg \
 		$(TARGET_DIR)/usr/share/libretro/autoconfig/udev/Brick_Test_Controller.cfg
 	rm -f $(TARGET_DIR)/usr/share/fonts/notosans/*Italic*.ttf
+	rm -f $(TARGET_DIR)/usr/share/fonts/inter/*Italic*.ttf
 	mkdir -p $(TARGET_DIR)/var/cache/fontconfig
 	env FONTCONFIG_FILE=/etc/fonts/fonts.conf \
 		$(HOST_DIR)/bin/fc-cache --really-force --system-only \

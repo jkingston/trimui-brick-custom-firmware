@@ -151,6 +151,7 @@ pub fn cacheMissCount() u64 {
 const DescriptionEntry = struct {
     size: u16 = 0,
     weight: design.Weight = .regular,
+    family: design.Family = .ui,
     value: ?*FontDescription = null,
 };
 var descriptions: [24]DescriptionEntry = @splat(.{});
@@ -179,18 +180,25 @@ fn current() ?*Engine {
 
 fn description(state: *Engine, font: design.Font) ?*FontDescription {
     for (&descriptions) |*entry| {
-        if (entry.value != null and entry.size == font.size and entry.weight == font.weight) return entry.value;
+        if (entry.value != null and entry.size == font.size and entry.weight == font.weight and entry.family == font.family) return entry.value;
     }
     for (&descriptions) |*entry| {
         if (entry.value != null) continue;
-        const family: [*:0]const u8 = switch (font.weight) {
-            .regular => "Noto Sans",
-            .medium => "Noto Sans Medium",
-            .semibold => "Noto Sans SemiBold",
+        const family: [*:0]const u8 = switch (font.family) {
+            .ui => switch (font.weight) {
+                .regular => "Inter, Noto Sans",
+                .medium => "Inter Medium, Noto Sans Medium",
+                .semibold => "Inter SemiBold, Noto Sans SemiBold",
+            },
+            .display => switch (font.weight) {
+                .regular => "Inter, Noto Sans",
+                .medium => "Inter Medium, Noto Sans Medium",
+                .semibold => "Inter SemiBold, Noto Sans SemiBold",
+            },
         };
         const value = state.descriptionFromString(family) orelse return null;
         state.descriptionSetAbsoluteSize(value, @as(f64, @floatFromInt(@as(u32, font.size) * pango_scale)));
-        entry.* = .{ .size = font.size, .weight = font.weight, .value = value };
+        entry.* = .{ .size = font.size, .weight = font.weight, .family = font.family, .value = value };
         return value;
     }
     return null;

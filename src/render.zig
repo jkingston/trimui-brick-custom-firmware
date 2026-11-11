@@ -42,11 +42,14 @@ pub const Surface = struct {
     pixels: []u32 = &.{},
     sink: ?@import("paint_sink.zig").Sink = null,
     clips: []const ui.Rect = &.{},
-    prepainted_overlay_rows: bool = false,
+    prepainted_interactions: bool = false,
 
     pub fn render(self: Surface, tree: *const ui.Tree) void {
         if (!tree.preserve_background) self.fill(.{ .x = 0, .y = 0, .width = width, .height = height }, tree.background);
-        for (tree.slice()) |element| self.renderElement(element, tree.theme);
+        var surface = self;
+        for (tree.slice()) |element| surface.renderInteractionBackdrop(element);
+        surface.prepainted_interactions = true;
+        for (tree.slice()) |element| surface.renderElement(element, tree.theme);
     }
 
     pub fn renderTransition(self: Surface, frame: @import("navigation_motion.zig").Frame) void {
@@ -69,12 +72,9 @@ pub const Surface = struct {
         if (!tree.preserve_background) for (rects) |rect| {
             if (!opaqueCover(tree, rect)) surface.fill(rect, tree.background);
         };
-        surface.prepainted_overlay_rows = independentOverlayRows(tree, rects);
-        if (surface.prepainted_overlay_rows) for (tree.slice()) |element| {
-            if (element != .overlay_row or !intersectsDamage(element, rects)) continue;
-            const row = element.overlay_row;
-            surface.fillRounded(row.bounds, row.style.background, geometry.radius);
-        };
+        for (tree.slice()) |element|
+            if (intersectsDamage(element, rects)) surface.renderInteractionBackdrop(element);
+        surface.prepainted_interactions = true;
         for (tree.slice()) |element| {
             const bounds = damage.paintBounds(element);
             for (rects) |rect| if (damage.intersects(bounds, rect)) {
@@ -90,24 +90,12 @@ pub const Surface = struct {
         return false;
     }
 
-    fn independentOverlayRows(tree: *const ui.Tree, rects: []const ui.Rect) bool {
-        var found = false;
-        for (tree.slice(), 0..) |element, index| {
-            if (element != .overlay_row or !intersectsDamage(element, rects)) continue;
-            found = true;
-            const bounds = damage.paintBounds(element);
-            for (tree.slice(), 0..) |other, other_index| {
-                if (index != other_index and damage.intersects(bounds, damage.paintBounds(other))) return false;
-            }
-        }
-        return found;
-    }
-
     fn opaqueCover(tree: *const ui.Tree, rect: ui.Rect) bool {
         for (tree.slice()) |element| {
             const bounds = switch (element) {
                 .bar => |bar| if (bar.radius == 0) bar.bounds else continue,
                 .menu_row => |row| if (geometry.radius == 0) row.bounds else continue,
+                .action_card => |card| if (geometry.radius == 0) card.bounds else continue,
                 .overlay_row => |row| if (geometry.radius == 0) row.bounds else continue,
                 else => continue,
             };
@@ -132,6 +120,7 @@ pub const Surface = struct {
             .text_block => |block| self.textBlock(block),
             .focus_frame => |frame| self.focusFrame(frame),
             .menu_row => |row| self.menuRow(row),
+            .action_card => |card| self.actionCard(card),
             .battery => |battery| self.drawBattery(battery),
             .meter => |meter| self.drawMeter(meter),
             .activity => |activity| self.drawActivity(activity),
@@ -142,6 +131,34 @@ pub const Surface = struct {
             .cartridge => |cartridge| self.drawCartridge(cartridge),
             .overlay_row => |item| self.drawOverlayRow(item),
         }
+    }
+
+    fn renderInteractionBackdrop(self: Surface, element: ui.Element) void {
+        switch (element) {
+            .focus_frame => |frame| self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
+            .menu_row => |row| self.interactionPlate(row.bounds, row.displayedBounds(), row.state, row.style.base, row.style.background, row.style.border, row.style.shadow),
+            .action_card => |card| self.interactionPlate(card.bounds, card.displayedBounds(), card.state, card.style.base, card.style.background, card.style.border, card.style.shadow),
+            .overlay_row => |row| self.interactionPlate(row.bounds, row.displayedBounds(), row.state, row.style.base, row.style.background, row.style.border, row.style.shadow),
+            else => {},
+        }
+    }
+
+    fn interactionPlate(self: Surface, logical: ui.Rect, displayed: ui.Rect, state: @import("interaction.zig").State, base: ui.Color, background: ui.Color, border: ui.Color, shadow: ui.Color) void {
+        self.fillRounded(logical, base, geometry.radius);
+        if (!state.hasFocus()) return;
+        const pressed = state == .pressed or state == .activating;
+        const plate = if (pressed) contract(logical, if (state == .pressed) 2 else 1) else displayed;
+        if (!pressed) {
+            const shadow_bounds = ui.Rect{ .x = plate.x, .y = @min(@as(u16, @intCast(height)) - plate.height, plate.y + 3), .width = plate.width, .height = plate.height };
+            self.fillRounded(shadow_bounds, shadow, geometry.radius);
+        }
+        self.fillRounded(plate, background, geometry.radius);
+        self.stroke(plate, border, if (state == .boundary or state == .failed) 3 else 1);
+    }
+
+    fn contract(bounds: ui.Rect, amount: u16) ui.Rect {
+        const safe = @min(amount, @min(bounds.width / 2, bounds.height / 2));
+        return .{ .x = bounds.x + safe, .y = bounds.y + safe, .width = bounds.width - 2 * safe, .height = bounds.height - 2 * safe };
     }
 
     fn artworkFont(size: u16) design.Font {
@@ -225,15 +242,11 @@ pub const Surface = struct {
     }
 
     fn focusFrame(self: Surface, frame: ui.FocusFrame) void {
-        self.fill(frame.bounds, frame.style.background);
-        if (frame.state.hasFocus()) self.stroke(frame.bounds, frame.style.border, if (frame.state == .pressed) 5 else if (frame.state == .boundary) 4 else 3);
-        self.focusRail(frame.bounds, frame.focus_offset_x, frame.focus_offset_y, frame.state, frame.style.rail);
+        if (!self.prepainted_interactions) self.renderInteractionBackdrop(.{ .focus_frame = frame });
     }
 
     fn menuRow(self: Surface, row: ui.MenuRow) void {
-        self.fillRounded(row.bounds, row.style.background, geometry.radius);
-        if (row.state == .pressed) self.stroke(row.bounds, row.style.border, 4);
-        self.focusRail(row.bounds, row.focus_offset_x, row.focus_offset_y, row.state, row.style.accent);
+        if (!self.prepainted_interactions) self.renderInteractionBackdrop(.{ .menu_row = row });
         var title_font = row.label_font;
         title_font.ink_centered = true;
         var detail_font = font.caption;
@@ -241,23 +254,71 @@ pub const Surface = struct {
         title_font.weight = if (row.selected) .medium else .regular;
         if (row.lines == 2) title_font.line_height = 44;
         const padding = geometry.row_padding;
-        const available = row.bounds.width - 2 * padding - (if (row.disclosure) @as(u16, 24) else 0);
+        const available = row.bounds.width - 2 * padding - (if (row.disclosure) @as(u16, 24) else 0) - ui.stateAffordanceWidth(row.state);
         const tail: u16 = if (row.detail.len != 0) font.caption.line_height + 6 else 0;
         var measured_height: u16 = 0;
         if (!self.paintText(row.bounds.x + padding, row.bounds.y, available, row.label, pack(row.style.text), title_font, "", row.lines, row.bounds.height, &measured_height, true, tail)) @panic("Text renderer unavailable");
         const text_y = row.bounds.y + (row.bounds.height -| (measured_height + tail)) / 2;
         if (row.detail.len != 0) self.drawTextBounded(row.bounds.x + padding, text_y + measured_height + 6, available, row.detail, row.style.detail, detail_font);
+        self.stateAffordance(row.bounds, row.state, row.style.accent, row.activity_phase, row.activity_animated, row.disclosure);
         if (row.disclosure) self.drawChevron(row.bounds.x + row.bounds.width - 38, row.bounds.y + (row.bounds.height - 24) / 2, row.style.text);
     }
 
+    fn actionCard(self: Surface, card: ui.ActionCard) void {
+        if (!self.prepainted_interactions) self.renderInteractionBackdrop(.{ .action_card = card });
+        const padding: u16 = 28;
+        var eyebrow_font = font.control;
+        eyebrow_font.size = 25;
+        eyebrow_font.line_height = 32;
+        eyebrow_font.weight = .semibold;
+        var label_font = font.title;
+        label_font.size = if (card.emphasis == .primary) 58 else 45;
+        label_font.line_height = if (card.emphasis == .primary) 66 else 54;
+        var detail_font = font.caption;
+        detail_font.size = 29;
+        detail_font.line_height = 38;
+
+        const content_width = card.bounds.width - 2 * padding - ui.stateAffordanceWidth(card.state);
+        self.drawTextBounded(card.bounds.x + padding, card.bounds.y + padding, content_width, card.eyebrow, card.style.detail, eyebrow_font);
+
+        const detail_height = if (card.detail.len == 0) @as(u16, 0) else detail_font.line_height * card.detail_lines;
+        const detail_gap: u16 = if (card.detail.len == 0) 0 else 10;
+        const label_height = label_font.line_height * card.label_lines;
+        const stack_height = label_height + detail_gap + detail_height;
+        const label_y = card.bounds.y + card.bounds.height - padding -| stack_height;
+        if (!self.paintText(card.bounds.x + padding, label_y, content_width, card.label, pack(card.style.text), label_font, "", card.label_lines, label_height, null, false, 0)) @panic("Text renderer unavailable");
+        if (card.detail.len != 0 and !self.paintText(card.bounds.x + padding, label_y + label_height + detail_gap, content_width, card.detail, pack(card.style.detail), detail_font, "", card.detail_lines, detail_height, null, false, 0)) @panic("Text renderer unavailable");
+        self.stateAffordance(card.bounds, card.state, card.style.accent, card.activity_phase, card.activity_animated, false);
+    }
+
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
-        if (!self.prepainted_overlay_rows) self.fillRounded(item.bounds, item.style.background, geometry.radius);
-        if (item.state == .pressed) self.stroke(item.bounds, item.style.border, 4);
-        self.focusRail(item.bounds, item.focus_offset_x, item.focus_offset_y, item.state, item.style.accent);
+        if (!self.prepainted_interactions) self.renderInteractionBackdrop(.{ .overlay_row = item });
         for (@import("row_layout.zig").overlay(item)) |part|
             self.drawTextBounded(part.bounds.x, part.bounds.y, part.bounds.width, part.value, part.color, part.font);
+        self.stateAffordance(item.bounds, item.state, item.style.accent, item.activity_phase, item.activity_animated, item.disclosure);
         if (item.disclosure)
             self.drawChevron(item.bounds.x + item.bounds.width - 38, item.bounds.y + (item.bounds.height - 24) / 2, item.style.text);
+    }
+
+    fn stateAffordance(self: Surface, bounds: ui.Rect, state: @import("interaction.zig").State, color: ui.Color, phase: u16, animated: bool, disclosure: bool) void {
+        if (ui.stateAffordanceWidth(state) == 0) return;
+        const disclosure_width: u16 = if (disclosure) 38 else 0;
+        const area = ui.Rect{
+            .x = bounds.x + bounds.width - geometry.row_padding - disclosure_width - 48,
+            .y = bounds.y + (bounds.height - 32) / 2,
+            .width = 48,
+            .height = 32,
+        };
+        switch (state) {
+            .busy => self.drawActivity(.{ .bounds = area, .color = color, .phase = phase, .animated = animated }),
+            .succeeded, .failed => {
+                var status_font = font.control;
+                status_font.alignment = .center;
+                status_font.ink_centered = true;
+                self.drawTextBounded(area.x, area.y, area.width, if (state == .succeeded) "✓" else "!", color, status_font);
+            },
+            else => {},
+        }
     }
 
     fn stroke(self: Surface, bounds: ui.Rect, color: ui.Color, thickness: u16) void {
@@ -266,18 +327,6 @@ pub const Surface = struct {
         self.fill(.{ .x = bounds.x, .y = bounds.y + bounds.height - edge, .width = bounds.width, .height = edge }, color);
         self.fill(.{ .x = bounds.x, .y = bounds.y, .width = edge, .height = bounds.height }, color);
         self.fill(.{ .x = bounds.x + bounds.width - edge, .y = bounds.y, .width = edge, .height = bounds.height }, color);
-    }
-
-    fn focusRail(self: Surface, bounds: ui.Rect, offset_x: i16, offset_y: i16, state: @import("interaction.zig").State, color: ui.Color) void {
-        if (!state.hasFocus() or state == .pressed or state == .activating) return;
-        const raw_x = @as(i32, bounds.x) + offset_x;
-        const raw_y = @as(i32, bounds.y) + offset_y;
-        const rail_height: u16 = @min(bounds.height, 72);
-        const centered_y = raw_y + @divTrunc(@as(i32, bounds.height - rail_height), 2);
-        const rail_width: u16 = if (state == .boundary) 10 else 6;
-        const x: u16 = @intCast(std.math.clamp(raw_x, 0, @as(i32, @intCast(width - rail_width))));
-        const y: u16 = @intCast(std.math.clamp(centered_y, 0, @as(i32, @intCast(height - rail_height))));
-        self.fill(.{ .x = x, .y = y, .width = rail_width, .height = rail_height }, color);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
@@ -612,11 +661,12 @@ pub const Surface = struct {
     }
 
     fn drawChevron(self: Surface, x: u16, y: u16, color: ui.Color) void {
-        var step: u16 = 0;
-        while (step < 11) : (step += 1) {
-            self.fill(.{ .x = x + step, .y = y + step, .width = 4, .height = 4 }, color);
-            self.fill(.{ .x = x + 10 - step, .y = y + 10 + step, .width = 4, .height = 4 }, color);
-        }
+        var glyph_font = font.control;
+        glyph_font.size = 38;
+        glyph_font.line_height = 42;
+        glyph_font.alignment = .center;
+        glyph_font.ink_centered = true;
+        if (!self.paintText(x -| 4, y -| 9, 28, "›", pack(color), glyph_font, "", 1, 42, null, false, 0)) @panic("Text renderer unavailable");
     }
 
     fn drawText(self: Surface, x: u16, y: u16, value: []const u8, color: ui.Color, text_font: design.Font) void {
@@ -812,11 +862,13 @@ test "resolved styles render identically to literal colours and ignore later the
         .selected = true,
         .state = .focused,
         .style = .{
+            .base = themes.dark.background,
             .background = themes.dark.surface,
             .text = themes.dark.text,
             .detail = themes.dark.muted,
-            .border = themes.dark.border,
+            .border = themes.dark.surface,
             .accent = themes.dark.accent,
+            .shadow = themes.dark.focus_shadow,
         },
     } };
     literal.len = 1;
@@ -852,12 +904,13 @@ test "wrapped game titles and details stay inside their row" {
     (Surface{ .pixels = pixels }).render(&tree);
     for (pixels, 0..) |pixel, index| {
         if (pixel == Surface.pack(theme.background)) continue;
-        try std.testing.expect(index / width >= 138 and index / width < 272);
+        // The focus plate owns a three-pixel depth edge below its content box.
+        try std.testing.expect(index / width >= 138 and index / width < 275);
         try std.testing.expect(index % width >= 28 and index % width < 996);
     }
 }
 
-test "menu labels are visibly centred in their selection bar" {
+test "menu labels are visibly centred in their focus plate" {
     const pixels = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(pixels);
     const theme = @import("theme.zig").light;

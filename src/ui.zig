@@ -19,6 +19,8 @@ pub const Scrim = scene.Scrim;
 pub const RowStyle = scene.RowStyle;
 pub const ArtworkStyle = scene.ArtworkStyle;
 pub const MenuRow = scene.MenuRow;
+pub const ActionCard = scene.ActionCard;
+pub const CardEmphasis = scene.CardEmphasis;
 pub const Battery = scene.Battery;
 pub const Meter = scene.Meter;
 pub const Activity = scene.Activity;
@@ -215,19 +217,14 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Brick");
     if (recent) |game| {
-        var title_font = font.body;
-        title_font.size = 50;
-        title_font.line_height = 57;
-        title_font.weight = .medium;
-        result.add(.{ .text_block = .{ .bounds = .{ .x = 48, .y = 161, .width = 566, .height = 269 }, .title = game.title, .detail = if (resumable) "Ready to resume" else "Last played", .color = theme.text, .detail_color = theme.muted, .title_font = title_font, .lines = 3, .gap = 20, .centered = true, .detail_above = true } });
-        artwork(&result, game, .{ .x = 665, .y = 161, .width = 311, .height = 269 }, false, selected == 0, null, 0, 0);
-    }
-    const items: []const []const u8 = if (recent != null) &.{ if (resumable) "Resume" else "Play again", "Games", "Settings" } else &.{ "Games", "Settings" };
-    for (items, 0..) |item, index| {
-        var row = components.selectable(.home, index, selected == index, .{ .x = 28, .y = (if (recent != null) @as(u16, 453) else 238) + @as(u16, @intCast(index)) * (if (recent != null) @as(u16, 74) else 150), .width = 968, .height = if (recent != null) 74 else 150 }, item);
-        row.label_font = if (recent == null) .{ .size = 56, .line_height = 67 } else font.body;
-        row.disclosure = false;
-        row.menu(&result);
+        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 486 }, if (resumable) "READY TO RESUME" else "LAST PLAYED", game.title, if (resumable) "Continue your last session" else "Play again", .primary, 2, 1);
+        if (game.assets.cover != null or game.assets.preview != null)
+            artwork(&result, game, .{ .x = 370, .y = 170, .width = 244, .height = 216 }, false, false, null, 0, 0);
+        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 229 }, "LIBRARY", "Games", "Browse your collection", .secondary, 1, 2);
+        components.actionCard(&result, .home, 2, selected == 2, .{ .x = 670, .y = 399, .width = 326, .height = 229 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
+    } else {
+        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 486 }, "LIBRARY", "Games", "Browse and play your collection", .primary, 1, 1);
+        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 486 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
     }
     footer(&result, &.{ .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = if (recent == null) "Open" else if (selected == 0) (if (resumable) "Resume" else "Play") else "Open" } });
     return result;

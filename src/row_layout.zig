@@ -14,13 +14,14 @@ pub fn overlay(row: ui.OverlayRow) [3]ui.Text {
     value_font.line_height = 41;
     value_font.alignment = .end;
     const disclosure_width: u16 = if (row.disclosure) 38 else 0;
+    const status_width = ui.stateAffordanceWidth(row.state);
     const value_width: u16 = if (row.value.len != 0) 320 else 0;
     const tail: u16 = if (row.detail.len != 0) detail_font.line_height + 6 else 0;
     const label_y = row.bounds.y + (row.bounds.height -| (label_font.line_height + tail)) / 2;
     return .{
-        .{ .bounds = .{ .x = row.bounds.x + padding, .y = label_y, .width = row.bounds.width - value_width - disclosure_width - 2 * padding, .height = label_font.line_height }, .value = row.label, .color = row.style.text, .font = label_font },
-        .{ .bounds = .{ .x = row.bounds.x + padding, .y = label_y + label_font.line_height + 6, .width = row.bounds.width - disclosure_width - 2 * padding, .height = detail_font.line_height }, .value = row.detail, .color = row.style.detail, .font = detail_font },
-        .{ .bounds = .{ .x = row.bounds.x + row.bounds.width - value_width - disclosure_width - padding, .y = row.bounds.y + (row.bounds.height - value_font.line_height) / 2, .width = value_width, .height = value_font.line_height }, .value = row.value, .color = row.style.text, .font = value_font },
+        .{ .bounds = .{ .x = row.bounds.x + padding, .y = label_y, .width = row.bounds.width - value_width - status_width - disclosure_width - 2 * padding, .height = label_font.line_height }, .value = row.label, .color = row.style.text, .font = label_font },
+        .{ .bounds = .{ .x = row.bounds.x + padding, .y = label_y + label_font.line_height + 6, .width = row.bounds.width - status_width - disclosure_width - 2 * padding, .height = detail_font.line_height }, .value = row.detail, .color = row.style.detail, .font = detail_font },
+        .{ .bounds = .{ .x = row.bounds.x + row.bounds.width - value_width - status_width - disclosure_width - padding, .y = row.bounds.y + (row.bounds.height - value_font.line_height) / 2, .width = value_width, .height = value_font.line_height }, .value = row.value, .color = row.style.text, .font = value_font },
     };
 }
 

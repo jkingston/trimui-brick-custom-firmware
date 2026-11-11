@@ -27,14 +27,17 @@ pub const TextBlock = struct {
 pub const Bar = struct { bounds: Rect, color: Color, radius: u16 = 0 };
 pub const Scrim = struct { bounds: Rect, color: Color, alpha: u8 };
 pub const RowStyle = struct {
+    base: Color,
     background: Color,
     text: Color,
     detail: Color,
     border: Color,
     accent: Color,
+    shadow: Color,
 };
-pub const FrameStyle = struct { background: Color, border: Color, rail: Color };
+pub const FrameStyle = struct { base: Color, background: Color, border: Color, shadow: Color };
 pub const ArtworkStyle = struct { shadow: Color, edge: Color, surface: Color, text: Color };
+pub const CardEmphasis = enum { primary, secondary };
 pub const FocusFrame = struct {
     id: interaction.Id = .none,
     state: interaction.State = .idle,
@@ -42,6 +45,12 @@ pub const FocusFrame = struct {
     bounds: Rect,
     focus_offset_x: i16 = 0,
     focus_offset_y: i16 = 0,
+    activity_phase: u16 = 0,
+    activity_animated: bool = true,
+
+    pub fn displayedBounds(self: FocusFrame) Rect {
+        return offsetBounds(self.bounds, self.focus_offset_x, self.focus_offset_y);
+    }
 };
 pub const MenuRow = struct {
     id: interaction.Id = .none,
@@ -58,6 +67,43 @@ pub const MenuRow = struct {
     // new components should set state explicitly.
     selected: bool = false,
     disclosure: bool = true,
+    activity_phase: u16 = 0,
+    activity_animated: bool = true,
+
+    pub fn displayedBounds(self: MenuRow) Rect {
+        return offsetBounds(self.bounds, self.focus_offset_x, self.focus_offset_y);
+    }
+};
+/// A spatial navigation target for landing and overview surfaces. It shares the
+/// same interaction contract as rows; only its content hierarchy is different.
+pub const ActionCard = struct {
+    id: interaction.Id = .none,
+    state: interaction.State = .idle,
+    style: RowStyle = std.mem.zeroes(RowStyle),
+    bounds: Rect,
+    eyebrow: []const u8,
+    label: []const u8,
+    detail: []const u8 = "",
+    emphasis: CardEmphasis = .secondary,
+    label_lines: u8 = 1,
+    detail_lines: u8 = 1,
+    focus_offset_x: i16 = 0,
+    focus_offset_y: i16 = 0,
+    focus_width_delta: i16 = 0,
+    focus_height_delta: i16 = 0,
+    activity_phase: u16 = 0,
+    activity_animated: bool = true,
+
+    pub fn displayedBounds(self: ActionCard) Rect {
+        const width: u16 = @intCast(std.math.clamp(@as(i32, self.bounds.width) + self.focus_width_delta, 1, @as(i32, design.geometry.width)));
+        const height: u16 = @intCast(std.math.clamp(@as(i32, self.bounds.height) + self.focus_height_delta, 1, @as(i32, design.geometry.height)));
+        return .{
+            .x = @intCast(std.math.clamp(@as(i32, self.bounds.x) + self.focus_offset_x, 0, @as(i32, design.geometry.width -| width))),
+            .y = @intCast(std.math.clamp(@as(i32, self.bounds.y) + self.focus_offset_y, 0, @as(i32, design.geometry.height -| height))),
+            .width = width,
+            .height = height,
+        };
+    }
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem.zeroes(Color), charge: Color = std.mem.zeroes(Color) };
 pub const Meter = struct { id: interaction.Id, bounds: Rect, value: u16, track: Color, fill: Color, thumb: Color };
@@ -142,7 +188,29 @@ pub const OverlayRow = struct {
     focus_offset_y: i16 = 0,
     selected: bool = false,
     disclosure: bool = true,
+    activity_phase: u16 = 0,
+    activity_animated: bool = true,
+
+    pub fn displayedBounds(self: OverlayRow) Rect {
+        return offsetBounds(self.bounds, self.focus_offset_x, self.focus_offset_y);
+    }
 };
+
+fn offsetBounds(bounds: Rect, offset_x: i16, offset_y: i16) Rect {
+    return .{
+        .x = @intCast(std.math.clamp(@as(i32, bounds.x) + offset_x, 0, @as(i32, design.geometry.width -| bounds.width))),
+        .y = @intCast(std.math.clamp(@as(i32, bounds.y) + offset_y, 0, @as(i32, design.geometry.height -| bounds.height))),
+        .width = bounds.width,
+        .height = bounds.height,
+    };
+}
+
+pub fn stateAffordanceWidth(state: interaction.State) u16 {
+    return switch (state) {
+        .busy, .succeeded, .failed => 54,
+        else => 0,
+    };
+}
 pub const Element = union(enum) {
     bar: Bar,
     scrim: Scrim,
@@ -150,6 +218,7 @@ pub const Element = union(enum) {
     text_block: TextBlock,
     focus_frame: FocusFrame,
     menu_row: MenuRow,
+    action_card: ActionCard,
     battery: Battery,
     meter: Meter,
     activity: Activity,
@@ -185,6 +254,10 @@ pub const Tree = struct {
                 row.selected = row.state.hasFocus();
                 row.style = self.rowStyle(row.state);
             },
+            .action_card => |*card| {
+                if (card.id == .none) card.id = interaction.Id.scoped(.implicit_frame, self.len);
+                card.style = self.rowStyle(card.state);
+            },
             .overlay_row => |*row| {
                 if (row.id == .none) row.id = interaction.Id.scoped(.implicit_overlay, self.len);
                 if (row.selected and row.state == .idle) row.state = .focused;
@@ -213,22 +286,27 @@ pub const Tree = struct {
         const selected = state.hasFocus();
         const pressed = state == .pressed or state == .activating;
         const disabled = state == .disabled;
+        const failed = state == .failed;
         return .{
+            .base = self.theme.background,
             .background = if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
             .text = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.text,
             .detail = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.muted,
-            .border = if (pressed) self.theme.selection else self.theme.border,
-            .accent = self.theme.accent,
+            .border = if (failed) self.theme.danger else if (state == .boundary) self.theme.accent else if (pressed) self.theme.selection else self.theme.surface,
+            .accent = if (failed) self.theme.danger else if (disabled) self.theme.muted else self.theme.accent,
+            .shadow = self.theme.focus_shadow,
         };
     }
 
     fn frameStyle(self: *const Tree, state: interaction.State) FrameStyle {
         const selected = state.hasFocus();
         const pressed = state == .pressed or state == .activating;
+        const failed = state == .failed;
         return .{
+            .base = self.theme.background,
             .background = if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
-            .border = if (pressed) self.theme.selection_text else if (selected) self.theme.accent else self.theme.background,
-            .rail = self.theme.accent,
+            .border = if (failed) self.theme.danger else if (pressed) self.theme.selection_text else if (selected) self.theme.accent else self.theme.background,
+            .shadow = self.theme.focus_shadow,
         };
     }
 
@@ -236,6 +314,7 @@ pub const Tree = struct {
         for (self.slice()) |element| switch (element) {
             .focus_frame => |frame| if (frame.state.hasFocus()) return frame.id,
             .menu_row => |row| if (row.state.hasFocus()) return row.id,
+            .action_card => |card| if (card.state.hasFocus()) return card.id,
             .cartridge => |item| if (item.state.hasFocus()) return item.id,
             .overlay_row => |row| if (row.state.hasFocus()) return row.id,
             .keyboard => |item| if (item.state.hasFocus()) return item.id,
@@ -250,6 +329,7 @@ pub const Tree = struct {
         for (self.slice()) |element| switch (element) {
             .focus_frame => |frame| if (frame.state.hasFocus()) return .{ .id = frame.id, .bounds = frame.bounds },
             .menu_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
+            .action_card => |card| if (card.state.hasFocus()) return .{ .id = card.id, .bounds = card.bounds },
             .cartridge => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.bounds },
             .overlay_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
             .keyboard => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.selectedBounds() },
@@ -273,6 +353,11 @@ pub const Tree = struct {
                 row.style = self.rowStyle(state);
                 return true;
             },
+            .action_card => |*card| if (card.id == id) {
+                card.state = state;
+                card.style = self.rowStyle(state);
+                return true;
+            },
             .overlay_row => |*row| if (row.id == id) {
                 row.state = state;
                 row.selected = state.hasFocus();
@@ -282,7 +367,7 @@ pub const Tree = struct {
             .cartridge => |*item| if (item.id == id) {
                 item.state = state;
                 item.selected = state.hasFocus();
-                item.style.edge = if (item.selected) self.theme.accent else self.theme.border;
+                item.style.edge = if (state == .failed) self.theme.danger else if (item.selected) self.theme.accent else self.theme.border;
                 return true;
             },
             .keyboard => |*item| if (item.id == id) {
@@ -306,6 +391,11 @@ pub const Tree = struct {
                 row.focus_offset_y = offset_y;
                 return true;
             },
+            .action_card => |*card| if (card.id == id) {
+                card.focus_offset_x = offset_x;
+                card.focus_offset_y = offset_y;
+                return true;
+            },
             .overlay_row => |*row| if (row.id == id) {
                 row.focus_offset_x = offset_x;
                 row.focus_offset_y = offset_y;
@@ -319,6 +409,20 @@ pub const Tree = struct {
             .keyboard => |*item| if (item.id == id) {
                 item.focus_offset_x = offset_x;
                 item.focus_offset_y = offset_y;
+                return true;
+            },
+            else => {},
+        };
+        return false;
+    }
+
+    /// Cards can change emphasis across a spatial layout. Morph the shared
+    /// focus plate instead of snapping its size at the new destination.
+    pub fn setFocusSizeOffset(self: *Tree, id: interaction.Id, width_delta: i16, height_delta: i16) bool {
+        for (self.elements[0..self.len]) |*element| switch (element.*) {
+            .action_card => |*card| if (card.id == id) {
+                card.focus_width_delta = width_delta;
+                card.focus_height_delta = height_delta;
                 return true;
             },
             else => {},
@@ -341,14 +445,40 @@ pub const Tree = struct {
     }
 
     pub fn hasActivity(self: *const Tree) bool {
-        for (self.slice()) |element| if (element == .activity) return true;
+        for (self.slice()) |element| switch (element) {
+            .activity => return true,
+            .focus_frame => |value| if (value.state == .busy) return true,
+            .menu_row => |value| if (value.state == .busy) return true,
+            .action_card => |value| if (value.state == .busy) return true,
+            .overlay_row => |value| if (value.state == .busy) return true,
+            else => {},
+        };
         return false;
     }
 
     pub fn setActivityPhase(self: *Tree, phase: u16, animated: bool) void {
-        for (self.elements[0..self.len]) |*element| if (element.* == .activity) {
-            element.activity.phase = phase % 1000;
-            element.activity.animated = animated;
+        for (self.elements[0..self.len]) |*element| switch (element.*) {
+            .activity => |*value| {
+                value.phase = phase % 1000;
+                value.animated = animated;
+            },
+            .focus_frame => |*value| if (value.state == .busy) {
+                value.activity_phase = phase % 1000;
+                value.activity_animated = animated;
+            },
+            .menu_row => |*value| if (value.state == .busy) {
+                value.activity_phase = phase % 1000;
+                value.activity_animated = animated;
+            },
+            .action_card => |*value| if (value.state == .busy) {
+                value.activity_phase = phase % 1000;
+                value.activity_animated = animated;
+            },
+            .overlay_row => |*value| if (value.state == .busy) {
+                value.activity_phase = phase % 1000;
+                value.activity_animated = animated;
+            },
+            else => {},
         };
     }
 
@@ -412,6 +542,23 @@ test "tree resolves selection into durable interaction state" {
     try std.testing.expect(tree.setFocusOffset(id, 12, -20));
     try std.testing.expectEqual(@as(i16, 12), tree.elements[0].menu_row.focus_offset_x);
     try std.testing.expectEqual(@as(i16, -20), tree.elements[0].menu_row.focus_offset_y);
+}
+
+test "semantic action states own distinct styling and shared activity" {
+    const theme = @import("theme.zig").light;
+    const id = interaction.Id.scoped(.settings, 2);
+    var tree = Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .menu_row = .{ .id = id, .state = .focused, .bounds = .{ .x = 0, .y = 0, .width = 400, .height = 88 }, .label = "Apply" } });
+    try std.testing.expect(tree.setInteraction(id, .busy));
+    try std.testing.expect(tree.hasActivity());
+    tree.setActivityPhase(740, false);
+    try std.testing.expectEqual(@as(u16, 740), tree.elements[0].menu_row.activity_phase);
+    try std.testing.expect(!tree.elements[0].menu_row.activity_animated);
+    try std.testing.expect(tree.setInteraction(id, .failed));
+    try std.testing.expect(!tree.hasActivity());
+    try std.testing.expectEqual(theme.danger, tree.elements[0].menu_row.style.accent);
+    try std.testing.expectEqual(@as(u16, 54), stateAffordanceWidth(.failed));
+    try std.testing.expectEqual(@as(u16, 0), stateAffordanceWidth(.focused));
 }
 
 test "tiles and cartridges share press state with rows" {

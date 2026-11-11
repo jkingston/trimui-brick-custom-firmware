@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Shared compile-time design rules. Appearance changes colours, never geometry.
 pub const Weight = enum { regular, medium, semibold };
+pub const Family = enum { ui, display };
 pub const Alignment = enum { start, center, end };
 pub const Font = struct {
     size: u16,
     weight: Weight = .regular,
+    family: Family = .ui,
     // Zero preserves the font's natural metrics, including script fallback.
     line_height: u16 = 0,
     alignment: Alignment = .start,
@@ -106,11 +108,11 @@ pub const Config = struct {
 };
 pub const config = Config{
     .typography = .{
-        .title = .{ .size = 41, .weight = .semibold, .line_height = 49 },
+        .title = .{ .size = 41, .weight = .semibold, .family = .display, .line_height = 49 },
         .body = .{ .size = 43, .line_height = 52 },
         .caption = .{ .size = 31, .line_height = 40 },
         .control = .{ .size = 31, .line_height = 40 },
-        .brand = .{ .size = 60, .weight = .semibold },
+        .brand = .{ .size = 60, .weight = .semibold, .family = .display },
     },
     .spacing = .{ .small = 8, .medium = 16, .large = 24, .margin = 48 },
     .geometry = .{
@@ -140,7 +142,9 @@ pub const config = Config{
         .shelf_step = 128,
         .grid_columns = 3,
         .grid_rows = 2,
-        .radius = 0,
+        // A small engineered corner softens interactive plates without turning
+        // rows into generic pills or cards.
+        .radius = 8,
         .glyph_size = 64,
         .hint_gap = 16,
     },

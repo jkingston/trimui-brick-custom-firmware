@@ -111,6 +111,21 @@ pub fn selectable(scope: interaction.Id.Scope, index: usize, focused: bool, boun
     return .{ .id = resolved.id, .state = resolved.state, .bounds = bounds, .label = label };
 }
 
+pub fn actionCard(result: *ui.Tree, scope: interaction.Id.Scope, index: usize, focused: bool, bounds: ui.Rect, eyebrow: []const u8, label: []const u8, detail: []const u8, emphasis: ui.CardEmphasis, label_lines: u8, detail_lines: u8) void {
+    const resolved = selection(scope, index, focused);
+    result.add(.{ .action_card = .{
+        .id = resolved.id,
+        .state = resolved.state,
+        .bounds = bounds,
+        .eyebrow = eyebrow,
+        .label = label,
+        .detail = detail,
+        .emphasis = emphasis,
+        .label_lines = label_lines,
+        .detail_lines = detail_lines,
+    } });
+}
+
 pub fn meter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16) void {
     result.add(.{ .meter = .{ .id = id, .bounds = bounds, .value = @min(1000, value), .track = result.theme.surface, .fill = result.theme.text, .thumb = result.theme.accent } });
 }
@@ -177,21 +192,25 @@ pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void
             glyph_font.alignment = .center;
             result.add(.{ .text = .{ .bounds = .{ .x = x, .y = y, .width = size, .height = size }, .value = symbol, .color = colour, .font = glyph_font } });
         },
-        .view, .filter, .menu => {
-            const upper = item.control != .menu;
-            const count: u16 = if (upper) 2 else 3;
-            const key_width: u16 = if (upper) 28 else 18;
-            const key_height: u16 = if (upper) 12 else 18;
-            const gap: u16 = if (upper) 8 else 5;
-            for (0..count) |index| {
-                const bounds = ui.Rect{ .x = x + @as(u16, @intCast(index)) * (key_width + gap), .y = y + (40 - key_height) / 2, .width = key_width, .height = key_height };
-                result.add(.{ .bar = .{ .bounds = bounds, .color = colour, .radius = key_height / 2 } });
+        .view, .filter => {
+            for (0..2) |index| {
+                const bounds = ui.Rect{ .x = x + @as(u16, @intCast(index)) * 36, .y = y + 14, .width = 28, .height = 12 };
+                result.add(.{ .bar = .{ .bounds = bounds, .color = colour, .radius = 6 } });
                 if (index != (if (item.control == .filter) @as(usize, 1) else 0)) result.add(.{ .bar = .{
-                    .bounds = .{ .x = bounds.x + 2, .y = bounds.y + 2, .width = key_width - 4, .height = key_height - 4 },
+                    .bounds = .{ .x = bounds.x + 2, .y = bounds.y + 2, .width = 24, .height = 8 },
                     .color = result.background,
-                    .radius = key_height / 2 - 2,
+                    .radius = 4,
                 } });
             }
+        },
+        .menu => {
+            result.add(.{ .bar = .{ .bounds = .{ .x = x + 2, .y = y + 6, .width = 58, .height = 28 }, .color = colour, .radius = 14 } });
+            result.add(.{ .bar = .{ .bounds = .{ .x = x + 4, .y = y + 8, .width = 54, .height = 24 }, .color = result.background, .radius = 12 } });
+            for (0..3) |index| result.add(.{ .bar = .{
+                .bounds = .{ .x = x + 21 + @as(u16, @intCast(index)) * 9, .y = y + 18, .width = 4, .height = 4 },
+                .color = colour,
+                .radius = 2,
+            } });
         },
     }
     text(result, .{ .x = x + size + geometry.hint_gap / 2, .y = y, .width = label_width, .height = 44 }, item.label, colour, font.control);
@@ -200,15 +219,36 @@ pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void
 pub fn footer(result: *ui.Tree, items: []const Hint) void {
     if (items.len == 0) return;
     const bounds = ui.Rect{ .x = design.spacing.margin, .y = geometry.footer_y, .width = geometry.width - 2 * design.spacing.margin, .height = 44 };
-    const slot_width = bounds.width / @as(u16, @intCast(items.len));
-    for (items, 0..) |item, index| {
-        const icon: u16 = switch (item.control) {
-            .view, .filter, .menu => geometry.glyph_size,
-            else => 40,
-        };
-        const x = bounds.x + @as(u16, @intCast(index)) * slot_width;
-        hint(result, x, bounds.y, slot_width -| icon -| 8, item);
+    result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y - 24, .width = bounds.width, .height = 1 }, .color = result.theme.border } });
+
+    const anchored_left = items[0].control == .back or items[0].control == .menu;
+    const first_right: usize = if (anchored_left) 1 else 0;
+    if (anchored_left) {
+        const width = hintWidth(items[0]);
+        hint(result, bounds.x, bounds.y, width - hintIconWidth(items[0]) - geometry.hint_gap / 2, items[0]);
     }
+
+    var cursor: u16 = bounds.x + bounds.width;
+    var index = items.len;
+    while (index > first_right) {
+        index -= 1;
+        const width = hintWidth(items[index]);
+        cursor -|= width;
+        hint(result, cursor, bounds.y, width - hintIconWidth(items[index]) - geometry.hint_gap / 2, items[index]);
+        if (index > first_right) cursor -|= 28;
+    }
+}
+
+fn hintIconWidth(item: Hint) u16 {
+    return switch (item.control) {
+        .view, .filter, .menu => geometry.glyph_size,
+        else => 40,
+    };
+}
+
+fn hintWidth(item: Hint) u16 {
+    const label_width: u16 = @intCast(@min(@as(usize, 180), item.label.len * 24));
+    return hintIconWidth(item) + geometry.hint_gap / 2 + label_width;
 }
 
 test "footer controls stay within the screen" {
@@ -259,6 +299,16 @@ test "selectable frames share row identity and state" {
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
     selectable(.library, 2, true, .{ .x = 20, .y = 40, .width = 100, .height = 80 }, "").frame(&tree);
     try @import("std").testing.expectEqual(interaction.Id.scoped(.library, 2), tree.focusedId().?);
+}
+
+test "action cards use the shared interaction contract" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    actionCard(&tree, .home, 1, true, .{ .x = 20, .y = 40, .width = 320, .height = 240 }, "Device", "Settings", "Display and audio", .secondary, 1, 1);
+    try @import("std").testing.expectEqual(interaction.Id.scoped(.home, 1), tree.focusedId().?);
+    try @import("std").testing.expect(tree.setInteraction(interaction.Id.scoped(.home, 1), .pressed));
+    try @import("std").testing.expectEqual(interaction.State.pressed, tree.elements[0].action_card.state);
+    try @import("std").testing.expectEqual(theme.selection_text, tree.elements[0].action_card.style.text);
 }
 
 test "keyboard owns the focused key identity and visible input mode" {
