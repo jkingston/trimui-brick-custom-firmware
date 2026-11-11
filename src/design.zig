@@ -13,7 +13,17 @@ pub const Font = struct {
     // Centre visible glyphs within the line box for menu controls.
     ink_centered: bool = false,
 };
-pub const Typography = struct { title: Font, body: Font, caption: Font, control: Font, brand: Font };
+pub const Typography = struct {
+    title: Font,
+    body: Font,
+    caption: Font,
+    control: Font,
+    brand: Font,
+    editorial_control: Font,
+    editorial_compact: Font,
+    editorial_row: Font,
+    editorial_action: Font,
+};
 pub const Spacing = struct { small: u16, medium: u16, large: u16, margin: u16 };
 pub const Geometry = struct {
     width: u16,
@@ -118,6 +128,11 @@ pub const config = Config{
         .caption = .{ .size = 31, .line_height = 40 },
         .control = .{ .size = 31, .line_height = 40 },
         .brand = .{ .size = 60, .weight = .semibold, .family = .display },
+        // Sparse navigation keeps these metrics fixed across focus states.
+        .editorial_control = .{ .size = 29, .line_height = 38 },
+        .editorial_compact = .{ .size = 27, .line_height = 36 },
+        .editorial_row = .{ .size = 33, .line_height = 44 },
+        .editorial_action = .{ .size = 34, .line_height = 46 },
     },
     .spacing = .{ .small = 8, .medium = 16, .large = 24, .margin = 48 },
     .geometry = .{

@@ -80,10 +80,14 @@ fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const 
     for (labels, 0..) |label, index| {
         const active = index == selected;
         const row_y = top + @as(u16, @intCast(index)) * step;
-        textLabel(&result, .{ .x = 632, .y = row_y, .width = 344, .height = 46 }, label, if (active) theme.text else theme.muted, uiFont(if (active) 37 else 25, if (active) 45 else 34, if (active) .semibold else .regular, .start));
+        components.editorialChoice(&result, scope, index, active, .{
+            .label = label,
+            .bounds = .{ .x = 632, .y = row_y, .width = 344, .height = 46 },
+            .focus_bounds = .{ .x = 616, .y = row_y -| 6, .width = 376, .height = step -| 6 },
+            .scale = .control,
+        });
         if (values.len > index and values[index].len != 0)
             textLabel(&result, .{ .x = 632, .y = row_y + 44, .width = 344, .height = 28 }, values[index], if (active) theme.accent else theme.muted, uiFont(19, 26, if (active) .semibold else .regular, .start));
-        if (active) components.focusAnchor(&result, scope, index, true, .{ .x = 616, .y = row_y -| 6, .width = 376, .height = step -| 6 });
     }
     footer(&result, &.{ .{ .control = .back, .label = back_label }, .{ .control = .confirm, .label = action_label } });
     return result;
@@ -275,8 +279,12 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
     const action_width = if (with_recent) [_]u16{ 228, 218, 218 } else [_]u16{ 310, 310, 0 };
     for (labels[0..count], 0..) |label, index| {
         const active = selected == index;
-        textLabel(&result, .{ .x = action_x[index], .y = 552, .width = action_width[index], .height = 62 }, label, if (active) theme.text else theme.muted, uiFont(if (active) 39 else 28, if (active) 50 else 40, if (active) .semibold else .regular, .start));
-        if (active) components.focusAnchor(&result, .home, index, true, .{ .x = action_x[index], .y = 546, .width = action_width[index], .height = 72 });
+        components.editorialChoice(&result, .home, index, active, .{
+            .label = label,
+            .bounds = .{ .x = action_x[index], .y = 552, .width = action_width[index], .height = 62 },
+            .focus_bounds = .{ .x = action_x[index], .y = 546, .width = action_width[index], .height = 72 },
+            .scale = .action,
+        });
     }
     footer(&result, &.{.{ .control = .confirm, .label = if (with_recent and selected == 0) (if (resumable) "Resume" else "Play") else "Open" }});
     return result;
@@ -309,8 +317,12 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 const entry = collection.at(index);
                 const active = index == selected;
                 const row_y: u16 = 126 + @as(u16, @intCast(index - first)) * 91;
-                textLabel(&result, .{ .x = 48, .y = row_y, .width = 448, .height = 68 }, entry.title, if (active) theme.text else theme.muted, uiFont(if (active) 43 else 29, if (active) 54 else 40, if (active) .semibold else .regular, .start));
-                if (active) components.focusAnchor(&result, .library, index, true, .{ .x = 48, .y = row_y, .width = 448, .height = 72 });
+                components.editorialChoice(&result, .library, index, active, .{
+                    .label = entry.title,
+                    .bounds = .{ .x = 48, .y = row_y, .width = 448, .height = 68 },
+                    .focus_bounds = .{ .x = 48, .y = row_y, .width = 448, .height = 72 },
+                    .scale = .row,
+                });
             }
             artwork(&result, game, .{ .x = 566, .y = 132, .width = 382, .height = 408 }, false, true, null, 0, 0);
             textLabel(&result, .{ .x = 566, .y = 558, .width = 382, .height = 38 }, game.system, theme.muted, uiFont(24, 32, .regular, .center));
@@ -322,9 +334,13 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 const entry = collection.at(index);
                 const active = index == selected;
                 const row_y: u16 = 116 + @as(u16, @intCast(index - first)) * 62;
-                textLabel(&result, .{ .x = 48, .y = row_y, .width = 724, .height = 52 }, entry.title, if (active) theme.text else theme.muted, uiFont(if (active) 34 else 25, if (active) 42 else 34, if (active) .semibold else .regular, .start));
+                components.editorialChoice(&result, .library, index, active, .{
+                    .label = entry.title,
+                    .bounds = .{ .x = 48, .y = row_y, .width = 724, .height = 52 },
+                    .focus_bounds = .{ .x = 48, .y = row_y, .width = 880, .height = 52 },
+                    .scale = .compact,
+                });
                 textLabel(&result, .{ .x = 792, .y = row_y, .width = 136, .height = 52 }, entry.system, if (active) theme.accent else theme.muted, uiFont(20, 30, if (active) .semibold else .regular, .end));
-                if (active) components.focusAnchor(&result, .library, index, true, .{ .x = 48, .y = row_y, .width = 880, .height = 52 });
             }
             components.continuation(&result, 116, 612, first != 0, first + visible < count);
         },
@@ -425,8 +441,13 @@ pub fn confirmation(theme: Theme, title: []const u8, subject: []const u8, detail
     for (labels, 0..) |label, index| {
         const active = selected == index;
         const x: u16 = 48 + @as(u16, @intCast(index)) * 470;
-        textLabel(&result, .{ .x = x, .y = 486, .width = 410, .height = 74 }, label, if (active) theme.text else theme.muted, uiFont(if (active) 40 else 30, if (active) 52 else 42, if (active) .semibold else .regular, .center));
-        if (active) components.focusAnchor(&result, .confirmation, index, true, .{ .x = x, .y = 486, .width = 410, .height = 78 });
+        components.editorialChoice(&result, .confirmation, index, active, .{
+            .label = label,
+            .bounds = .{ .x = x, .y = 486, .width = 410, .height = 74 },
+            .focus_bounds = .{ .x = x, .y = 486, .width = 410, .height = 78 },
+            .scale = .action,
+            .alignment = .center,
+        });
     }
     footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = "Select" } });
     return result;
@@ -442,10 +463,14 @@ pub fn choice(theme: Theme, title: []const u8, labels: []const []const u8, selec
     for (first..first + visible) |index| {
         const focused = selected == index;
         const row_y = 138 + @as(u16, @intCast(index - first)) * step;
-        textLabel(&result, .{ .x = 48, .y = row_y, .width = 700, .height = step -| 8 }, labels[index], if (focused) theme.text else theme.muted, uiFont(if (focused) 43 else 31, if (focused) 52 else 42, if (focused) .semibold else .regular, .start));
+        components.editorialChoice(&result, .choice, index, focused, .{
+            .label = labels[index],
+            .bounds = .{ .x = 48, .y = row_y, .width = 700, .height = step -| 8 },
+            .focus_bounds = .{ .x = 48, .y = row_y, .width = 880, .height = step -| 8 },
+            .scale = .row,
+        });
         if (active == index)
             textLabel(&result, .{ .x = 792, .y = row_y, .width = 136, .height = step -| 8 }, "ACTIVE", theme.accent, uiFont(21, 30, .semibold, .end));
-        if (focused) components.focusAnchor(&result, .choice, index, true, .{ .x = 48, .y = row_y, .width = 880, .height = step -| 8 });
     }
     components.continuation(&result, 138, bottom, first != 0, first + visible < labels.len);
     if (note.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 538, .width = 928, .height = 88 }, .value = note, .color = theme.muted, .font = font.caption, .lines = 2 } });
@@ -499,8 +524,12 @@ pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []
     for (items[first .. first + visible], details[first .. first + visible], first..) |item, value, index| {
         const active = index == selected;
         const row_y: u16 = 132 + @as(u16, @intCast(index - first)) * 91;
-        textLabel(&result, .{ .x = 48, .y = row_y, .width = 480, .height = 68 }, item, if (active) theme.text else theme.muted, uiFont(if (active) 43 else 29, if (active) 54 else 40, if (active) .semibold else .regular, .start));
-        if (active) components.focusAnchor(&result, .settings, index, true, .{ .x = 48, .y = row_y, .width = 480, .height = 72 });
+        components.editorialChoice(&result, .settings, index, active, .{
+            .label = item,
+            .bounds = .{ .x = 48, .y = row_y, .width = 480, .height = 68 },
+            .focus_bounds = .{ .x = 48, .y = row_y, .width = 480, .height = 72 },
+            .scale = .row,
+        });
         _ = value;
     }
     textLabel(&result, .{ .x = 602, .y = 178, .width = 330, .height = 38 }, groups[selected], theme.accent, uiFont(22, 30, .semibold, .start));

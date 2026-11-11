@@ -78,6 +78,9 @@ select a `MotionRole`; they do not construct private motion styles.
 - Hierarchy comes from scale, spacing, weight, and composition—not decorative
   markers. Selection rails, glowing edges, nested pills, and ornamental cards
   are not part of Brick's language.
+- Selection never changes text metrics. Sparse editorial choices use the shared
+  `editorialChoice` component: contrast and weight may change, while size,
+  line-height, bounds, and wrapping remain stable under rapid D-pad movement.
 - Treat the device as a compact game instrument, not a settings application.
   The exceptional foyer is a stage, the library changes density without losing
   identity, device controls pair a moving index with a stable value stage, and

@@ -124,6 +124,36 @@ pub fn focusAnchor(result: *ui.Tree, scope: interaction.Id.Scope, index: usize, 
     } });
 }
 
+/// Stable typography for sparse, editorial navigation. Focus may change
+/// contrast and weight, but never text metrics: D-pad movement must not make
+/// neighbouring labels snap, rewrap, or appear to breathe.
+pub const EditorialScale = enum { control, compact, row, action };
+pub const EditorialChoice = struct {
+    label: []const u8,
+    bounds: ui.Rect,
+    focus_bounds: ui.Rect,
+    scale: EditorialScale = .row,
+    alignment: design.Alignment = .start,
+};
+
+pub fn editorialChoice(result: *ui.Tree, scope: interaction.Id.Scope, index: usize, focused: bool, spec: EditorialChoice) void {
+    var text_font = switch (spec.scale) {
+        .control => font.editorial_control,
+        .compact => font.editorial_compact,
+        .row => font.editorial_row,
+        .action => font.editorial_action,
+    };
+    text_font.weight = if (focused) .semibold else .regular;
+    text_font.alignment = spec.alignment;
+    result.add(.{ .text = .{
+        .bounds = spec.bounds,
+        .value = spec.label,
+        .color = if (focused) result.theme.text else result.theme.muted,
+        .font = text_font,
+    } });
+    if (focused) focusAnchor(result, scope, index, true, spec.focus_bounds);
+}
+
 pub fn actionCard(result: *ui.Tree, scope: interaction.Id.Scope, index: usize, focused: bool, bounds: ui.Rect, eyebrow: []const u8, label: []const u8, detail: []const u8, emphasis: ui.CardEmphasis, label_lines: u8, detail_lines: u8) void {
     const resolved = selection(scope, index, focused);
     result.add(.{ .action_card = .{
@@ -410,6 +440,28 @@ test "selectable frames share row identity and state" {
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
     selectable(.library, 2, true, .{ .x = 20, .y = 40, .width = 100, .height = 80 }, "").frame(&tree);
     try @import("std").testing.expectEqual(interaction.Id.scoped(.library, 2), tree.focusedId().?);
+}
+
+test "editorial focus preserves text geometry" {
+    const theme = @import("theme.zig").dark;
+    const spec = EditorialChoice{
+        .label = "Library",
+        .bounds = .{ .x = 48, .y = 120, .width = 400, .height = 68 },
+        .focus_bounds = .{ .x = 48, .y = 120, .width = 440, .height = 72 },
+        .scale = .row,
+    };
+    var idle = ui.Tree{ .theme = theme, .background = theme.background };
+    editorialChoice(&idle, .library, 0, false, spec);
+    var focused = ui.Tree{ .theme = theme, .background = theme.background };
+    editorialChoice(&focused, .library, 0, true, spec);
+
+    try std.testing.expectEqual(idle.elements[0].text.bounds, focused.elements[0].text.bounds);
+    try std.testing.expectEqual(idle.elements[0].text.font.size, focused.elements[0].text.font.size);
+    try std.testing.expectEqual(idle.elements[0].text.font.line_height, focused.elements[0].text.font.line_height);
+    try std.testing.expectEqual(idle.elements[0].text.font.alignment, focused.elements[0].text.font.alignment);
+    try std.testing.expectEqual(design.Weight.regular, idle.elements[0].text.font.weight);
+    try std.testing.expectEqual(design.Weight.semibold, focused.elements[0].text.font.weight);
+    try std.testing.expectEqual(interaction.Id.scoped(.library, 0), focused.focusedId().?);
 }
 
 test "action cards use the shared interaction contract" {
