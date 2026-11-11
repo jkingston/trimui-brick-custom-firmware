@@ -396,10 +396,6 @@ fn wifiChanging(state: *const model.Model) bool {
     return state.wifi.wifi_state.snapshot.radio == .starting or state.wifi.wifi_state.snapshot.radio == .stopping;
 }
 
-fn sameFeedback(a: ui.Feedback, b: ui.Feedback) bool {
-    return a.kind == b.kind and std.mem.eql(u8, a.message, b.message);
-}
-
 fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_client: ?*wifi_ipc.Client, bluetooth_client: ?*bluetooth_ipc.Client, bluetooth_request: *u32, action: model.Action) !SessionAction {
     if (!state.apply(action)) return .{};
     state.feedback = .{};
@@ -539,7 +535,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
 
     while (true) {
         const now = nowMilliseconds(io);
-        if (!sameFeedback(feedback_lifecycle.feedback, state.feedback))
+        if (!feedback_lifecycle.feedback.eql(state.feedback))
             feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
@@ -813,6 +809,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     var repeat: input_repeat.Controller = .{};
     var navigation: navigation_motion.Controller = .{};
     var press: PressTracker = .{};
+    var feedback_lifecycle = ui_components.FeedbackLifecycle{};
     var was_animating = false;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
@@ -824,10 +821,19 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         poll_fds[max_gamepads].fd = input_monitor;
         poll_fds[max_gamepads].revents = 0;
         const now = nowMilliseconds(io);
-        const repeat_wait = repeat.timeout(now);
+        const notice = ui.Feedback{ .kind = state.notice_kind, .message = state.notice };
+        if (state.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
+            feedback_lifecycle.show(notice, now);
+        var repeat_wait = repeat.timeout(now);
+        const feedback_wait = feedback_lifecycle.timeout(now);
+        if (feedback_wait >= 0) repeat_wait = if (repeat_wait < 0) feedback_wait else @min(repeat_wait, feedback_wait);
         const animation = focus.active(now) or navigation.active(now);
         const ready = try display.poll(&poll_fds, interaction_motion.pollTimeout(animation, was_animating, repeat_wait));
         var changed = animation or was_animating;
+        if (feedback_lifecycle.tick(nowMilliseconds(io))) {
+            if (state.layer != .failure) state.notice = "";
+            changed = true;
+        }
         was_animating = animation;
         var rescan_inputs = false;
         if ((poll_fds[max_gamepads].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;

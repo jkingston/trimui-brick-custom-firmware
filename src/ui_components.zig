@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+const std = @import("std");
 const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
@@ -15,6 +16,10 @@ pub const Feedback = struct {
 
     pub fn visible(self: Feedback) bool {
         return self.message.len != 0;
+    }
+
+    pub fn eql(self: Feedback, other: Feedback) bool {
+        return self.kind == other.kind and std.mem.eql(u8, self.message, other.message);
     }
 };
 

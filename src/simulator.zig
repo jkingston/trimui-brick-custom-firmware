@@ -306,14 +306,22 @@ pub fn main(init: std.process.Init) !void {
     var motion: @import("shelf_motion.zig").Motion = .{};
     var navigation: @import("navigation_motion.zig").Controller = .{};
     var repeat: @import("input_repeat.zig").Controller = .{};
+    var feedback_lifecycle = @import("ui_components.zig").FeedbackLifecycle{};
     var pressed_id: ?@import("interaction.zig").Id = null;
     var select_armed = false;
     var was_animating = false;
     while (true) {
         const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
         motion.reduced = state.settings.reduced_motion;
+        const notice = ui.Feedback{ .kind = game_overlay.notice_kind, .message = game_overlay.notice };
+        if (overlay_visible and game_overlay.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
+            feedback_lifecycle.show(notice, now);
         const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now);
-        const repeat_timeout = repeat.timeout(now);
+        var repeat_timeout = repeat.timeout(now);
+        if (overlay_visible) {
+            const feedback_wait = feedback_lifecycle.timeout(now);
+            if (feedback_wait >= 0) repeat_timeout = if (repeat_timeout < 0) feedback_wait else @min(repeat_timeout, feedback_wait);
+        }
         const timeout = @import("motion.zig").pollTimeout(animating, was_animating, repeat_timeout);
         // SAFETY: event is inspected only when SDL reports an initialized event.
         var event: Event = undefined;
@@ -321,6 +329,10 @@ pub fn main(init: std.process.Init) !void {
         const timestamp = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
         var action: ?input.Action = repeat.due(timestamp);
         var changed = animating or was_animating;
+        if (overlay_visible and feedback_lifecycle.tick(timestamp)) {
+            if (game_overlay.layer != .failure) game_overlay.notice = "";
+            changed = true;
+        }
         was_animating = animating;
         if (received) {
             if (event.event_type == sdl_quit) break;
