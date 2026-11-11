@@ -12,6 +12,7 @@ const save_slot_count = 3;
 
 pub const Model = struct {
     appearance: @import("theme.zig").Mode = .light,
+    reduced_motion: bool = false,
     layer: Layer = .pause,
     selected: usize = 0,
     state_slot: usize = 0,
@@ -205,6 +206,22 @@ pub const Model = struct {
         }
     }
 };
+
+pub fn returnsToParent(action: input.Action, from: Layer, to: Layer) bool {
+    if (action == .back or to == .pause) return true;
+    return switch (from) {
+        .replace_confirm => to == .save_slots,
+        .load_confirm => to == .states,
+        else => false,
+    };
+}
+
+test "overlay hierarchy distinguishes opening and returning layers" {
+    try std.testing.expect(!returnsToParent(.select, .pause, .states));
+    try std.testing.expect(!returnsToParent(.select, .states, .load_confirm));
+    try std.testing.expect(returnsToParent(.back, .states, .pause));
+    try std.testing.expect(returnsToParent(.select, .load_confirm, .states));
+}
 
 test "saving an occupied slot requires confirmation; cancelling preserves it" {
     var state = Model{ .selected = 1, .available = .{ true, false, false, true } };

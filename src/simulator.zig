@@ -234,6 +234,7 @@ pub fn main(init: std.process.Init) !void {
     }
     var game_overlay = overlay.Model{};
     game_overlay.appearance = state.settings.appearance;
+    game_overlay.reduced_motion = state.settings.reduced_motion;
     var tree = if (overlay_visible) game_overlay.tree() else state.tree();
     var focus: @import("focus_motion.zig").Controller = .{};
     focus.update(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
@@ -362,10 +363,20 @@ pub fn main(init: std.process.Init) !void {
         if (action) |pressed| {
             navigation.cancel();
             if (overlay_visible) {
+                const previous_layer = game_overlay.layer;
                 changed = game_overlay.apply(pressed) or changed;
-                if (game_overlay.takeCommand()) |command| {
-                    std.log.info("Overlay command: {s}", .{@tagName(command)});
-                    switch (command) {
+                const command = game_overlay.takeCommand();
+                if (command == null and game_overlay.layer != previous_layer) {
+                    var destination = game_overlay.tree();
+                    focus = .{};
+                    focus.update(&destination, timestamp, game_overlay.reduced_motion);
+                    focus.decorate(&destination, timestamp);
+                    navigation.begin(&tree, &destination, if (overlay.returnsToParent(pressed, previous_layer, game_overlay.layer)) .back else .forward, timestamp, game_overlay.reduced_motion);
+                    tree = destination;
+                }
+                if (command) |resolved| {
+                    std.log.info("Overlay command: {s}", .{@tagName(resolved)});
+                    switch (resolved) {
                         .resume_game, .exit_game, .load_state => overlay_visible = false,
                         .save_state => {
                             game_overlay.notice = "Simulator: no save written";
@@ -404,6 +415,7 @@ pub fn main(init: std.process.Init) !void {
         }
         if (changed) {
             game_overlay.appearance = state.settings.appearance;
+            game_overlay.reduced_motion = state.settings.reduced_motion;
             tree = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
             focus.update(&tree, timestamp, state.settings.reduced_motion);
             focus.decorate(&tree, timestamp);

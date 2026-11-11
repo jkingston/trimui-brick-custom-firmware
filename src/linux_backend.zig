@@ -351,6 +351,23 @@ fn beginNavigation(
     return destination;
 }
 
+fn beginOverlayNavigation(
+    state: *overlay.Model,
+    source: *const ui.Tree,
+    from_layer: overlay.Layer,
+    action: model.Action,
+    now_ms: i64,
+    navigation: *navigation_motion.Controller,
+    focus: *focus_motion.Controller,
+) ui.Tree {
+    var destination = state.tree();
+    focus.* = .{};
+    focus.update(&destination, now_ms, state.reduced_motion);
+    focus.decorate(&destination, now_ms);
+    navigation.begin(source, &destination, if (overlay.returnsToParent(action, from_layer, state.layer)) .back else .forward, now_ms, state.reduced_motion);
+    return destination;
+}
+
 fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
     if (profile_input) return;
     const dir = std.Io.Dir.cwd().openDir(io, "/data/settings", .{}) catch return;
@@ -780,7 +797,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
 
     var focus: focus_motion.Controller = .{};
     var tree = state.tree();
-    focus.update(&tree, nowMilliseconds(io), false);
+    focus.update(&tree, nowMilliseconds(io), state.reduced_motion);
     focus.decorate(&tree, nowMilliseconds(io));
     try display.show(&tree);
     const input_monitor = try openInputMonitor(input_directory);
@@ -792,6 +809,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     if (profile_input) try markReady(io);
     var poll_fds: [max_gamepads + 1]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
+    var navigation: navigation_motion.Controller = .{};
     var press: PressTracker = .{};
     var was_animating = false;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
@@ -805,7 +823,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         poll_fds[max_gamepads].revents = 0;
         const now = nowMilliseconds(io);
         const repeat_wait = repeat.timeout(now);
-        const animation = focus.active(now);
+        const animation = focus.active(now) or navigation.active(now);
         const ready = try display.poll(&poll_fds, interaction_motion.pollTimeout(animation, was_animating, repeat_wait));
         var changed = animation or was_animating;
         was_animating = animation;
@@ -843,19 +861,25 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                     const event_action = actionForEvent(event, slot.builtin, &slot.dropped);
                     switch (press.observe(event, slot.builtin, slot.dropped, &tree)) {
                         .pressed => {
+                            navigation.cancel();
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             continue;
                         },
                         .activated => {
+                            const previous_layer = state.layer;
+                            navigation.cancel();
                             if (state.apply(.select)) changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
-                            if (state.takeCommand()) |command| {
-                                if (command == .save_state or command == .load_state) {
-                                    var status = ui.message(state.appearance.colors(), if (command == .save_state) "Save state" else "Load state", if (command == .save_state) "Saving state…" else "Loading state…", "");
+                            const command = state.takeCommand();
+                            if (command == null and state.layer != previous_layer)
+                                tree = beginOverlayNavigation(state, &tree, previous_layer, .select, nowMilliseconds(io), &navigation, &focus);
+                            if (command) |resolved| {
+                                if (resolved == .save_state or resolved == .load_state) {
+                                    var status = ui.message(state.appearance.colors(), if (resolved == .save_state) "Save state" else "Load state", if (resolved == .save_state) "Saving state…" else "Loading state…", "");
                                     try display.show(&status);
                                 }
-                                return command;
+                                return resolved;
                             }
                             continue;
                         },
@@ -863,16 +887,21 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                         .none => {},
                     }
                     if (event_action) |action| {
+                        const previous_layer = state.layer;
+                        navigation.cancel();
                         if (state.apply(action)) {
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         }
-                        if (state.takeCommand()) |command| {
-                            if (command == .save_state or command == .load_state) {
-                                var status = ui.message(state.appearance.colors(), if (command == .save_state) "Save state" else "Load state", if (command == .save_state) "Saving state…" else "Loading state…", "");
+                        const command = state.takeCommand();
+                        if (command == null and state.layer != previous_layer)
+                            tree = beginOverlayNavigation(state, &tree, previous_layer, action, nowMilliseconds(io), &navigation, &focus);
+                        if (command) |resolved| {
+                            if (resolved == .save_state or resolved == .load_state) {
+                                var status = ui.message(state.appearance.colors(), if (resolved == .save_state) "Save state" else "Load state", if (resolved == .save_state) "Saving state…" else "Loading state…", "");
                                 try display.show(&status);
                             }
-                            return command;
+                            return resolved;
                         }
                     }
                 }
@@ -889,7 +918,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         if (changed) {
             const frame_now = nowMilliseconds(io);
             tree = state.tree();
-            focus.update(&tree, frame_now, false);
+            focus.update(&tree, frame_now, state.reduced_motion);
             focus.decorate(&tree, frame_now);
             press.decorate(&tree);
             try display.requestFrame(&tree);
@@ -897,10 +926,13 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         if (display.frameDue()) {
             const frame_now = nowMilliseconds(io);
             tree = state.tree();
-            focus.update(&tree, frame_now, false);
+            focus.update(&tree, frame_now, state.reduced_motion);
             focus.decorate(&tree, frame_now);
             press.decorate(&tree);
-            try display.submit(&tree);
+            if (navigation.active(frame_now))
+                try display.submitTransition(&navigation, frame_now)
+            else
+                try display.submit(&tree);
         }
     }
 }
@@ -933,7 +965,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
         try display.show(&splash);
     }
     if (profile == .overlay) {
-        var game_overlay = overlay.Model{ .appearance = initial_settings.appearance, .title = "Input regression" };
+        var game_overlay = overlay.Model{ .appearance = initial_settings.appearance, .reduced_motion = initial_settings.reduced_motion, .title = "Input regression" };
         std.log.info("UI profile: overlay", .{});
         const command = try runOverlay(io, &game_overlay);
         std.log.info("UI overlay profile: command={s}", .{@tagName(command)});
@@ -957,6 +989,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
         const game = &state.games[game_index];
         var game_overlay = overlay.Model{
             .appearance = state.settings.appearance,
+            .reduced_motion = state.settings.reduced_motion,
             .title = game.title,
             .system = game.system,
             .performance_profile = @backingInt(state.settings.performance),

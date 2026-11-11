@@ -105,9 +105,9 @@ collapses into its restored focus. A new input finishes the current transition
 at its destination immediately and acts on that destination; input never waits
 for decoration. Reduced motion presents the destination directly.
 
-An in-game overlay preserves the game frame where possible, traps focus while
-open, and closes symmetrically. Never add a screen-specific splash between a
-source and its destination.
+In-game overlay sublayers use the same controller and reduced-motion setting as
+shell pages, trap focus while open, and return into the originating row. Never
+add a screen-specific splash between a source and its destination.
 
 ## Timing and scheduling
 
