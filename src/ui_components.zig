@@ -87,6 +87,14 @@ pub const Selectable = struct {
             .disclosure = self.disclosure,
         } });
     }
+
+    pub fn frame(self: Selectable, result: *ui.Tree) void {
+        result.add(.{ .focus_frame = .{
+            .id = self.id,
+            .state = self.state,
+            .bounds = self.bounds,
+        } });
+    }
 };
 
 pub fn selection(scope: interaction.Id.Scope, index: usize, focused: bool) struct { id: interaction.Id, state: interaction.State } {
@@ -214,6 +222,13 @@ test "selectable owns identity and interaction state" {
     const selected = selection(.test_scope, 3, true);
     (Selectable{ .id = selected.id, .state = selected.state, .bounds = .{ .x = 0, .y = 0, .width = 100, .height = 88 }, .label = "Play" }).menu(&tree);
     try @import("std").testing.expectEqual(selected.id, tree.focusedId().?);
+}
+
+test "selectable frames share row identity and state" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    selectable(.library, 2, true, .{ .x = 20, .y = 40, .width = 100, .height = 80 }, "").frame(&tree);
+    try @import("std").testing.expectEqual(interaction.Id.scoped(.library, 2), tree.focusedId().?);
 }
 
 test "feedback lifecycle does not leave completion notices indefinitely" {

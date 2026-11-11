@@ -237,6 +237,7 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .scrim => |value| value.bounds,
         .text => |value| value.bounds,
         .text_block => |value| value.bounds,
+        .focus_frame => |value| value.bounds,
         .menu_row => |value| value.bounds,
         .battery => |value| value.bounds,
         .qr_code => |value| value.bounds,

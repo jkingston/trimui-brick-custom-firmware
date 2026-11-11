@@ -5,6 +5,7 @@ const font = design.typeface;
 const geometry = design.geometry;
 const catalog = @import("catalog.zig");
 const settings_model = @import("settings.zig");
+const interaction = @import("interaction.zig");
 const bluetooth_model = @import("bluetooth.zig");
 const scene = @import("ui_scene.zig");
 pub const Color = scene.Color;
@@ -12,6 +13,7 @@ pub const Theme = scene.Theme;
 pub const Rect = scene.Rect;
 pub const Text = scene.Text;
 pub const TextBlock = scene.TextBlock;
+pub const FocusFrame = scene.FocusFrame;
 pub const Bar = scene.Bar;
 pub const Scrim = scene.Scrim;
 pub const RowStyle = scene.RowStyle;
@@ -170,7 +172,7 @@ const header = components.header;
 const hint = components.hint;
 const footer = components.footer;
 
-fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, selected: bool, dim: u8, tilt: i16) void {
+fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, selected: bool, identity: ?interaction.Id, dim: u8, tilt: i16) void {
     const sprite = if (cart) game.assets.card orelse game.assets.sprite else game.assets.cover;
     if (!cart and sprite == null and game.assets.preview == null) {
         result.add(.{ .bar = .{ .bounds = bounds, .color = if (selected) result.theme.selection else result.theme.surface, .radius = geometry.radius } });
@@ -180,6 +182,8 @@ fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, selected
         return;
     }
     result.add(.{ .cartridge = .{
+        .id = identity orelse .none,
+        .state = if (identity != null) .focused else .idle,
         .bounds = bounds,
         .platform = game.platform_id,
         .texture = game.assets.preview,
@@ -214,7 +218,7 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
         title_font.line_height = 57;
         title_font.weight = .medium;
         result.add(.{ .text_block = .{ .bounds = .{ .x = 48, .y = 161, .width = 566, .height = 269 }, .title = game.title, .detail = if (resumable) "Ready to resume" else "Last played", .color = theme.text, .detail_color = theme.muted, .title_font = title_font, .lines = 3, .gap = 20, .centered = true, .detail_above = true } });
-        artwork(&result, game, .{ .x = 665, .y = 161, .width = 311, .height = 269 }, false, selected == 0, 0, 0);
+        artwork(&result, game, .{ .x = 665, .y = 161, .width = 311, .height = 269 }, false, selected == 0, null, 0, 0);
     }
     const items: []const []const u8 = if (recent != null) &.{ if (resumable) "Resume" else "Play again", "Games", "Settings" } else &.{ "Games", "Settings" };
     for (items, 0..) |item, index| {
@@ -265,10 +269,9 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 const x: u16 = 48 + @as(u16, @intCast((index - first) % 3)) * 316;
                 const y: u16 = 136 + @as(u16, @intCast((index - first) / 3)) * 184;
                 const active = index == selected;
-                result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = y, .width = 292, .height = 172 }, .color = if (active) theme.text else theme.background } });
-                result.add(.{ .bar = .{ .bounds = .{ .x = x + 3, .y = y + 3, .width = 286, .height = 166 }, .color = theme.background } });
+                components.selectable(.library, index, active, .{ .x = x, .y = y, .width = 292, .height = 172 }, "").frame(&result);
                 // The grid cell owns focus; do not add a second artwork frame.
-                artwork(&result, collection.at(index), .{ .x = x + 12, .y = y + 10, .width = 268, .height = 152 }, false, false, 0, 0);
+                artwork(&result, collection.at(index), .{ .x = x + 12, .y = y + 10, .width = 268, .height = 152 }, false, false, null, 0, 0);
             }
             caption(&result, game);
         },
@@ -278,7 +281,8 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 const index = @as(i64, @intCast(selected)) + relative;
                 if (index < 0 or index >= count) continue;
                 const pose = shelfPose(relative, shelf_offset);
-                artwork(&result, collection.at(@intCast(index)), pose.bounds, true, relative == 0, pose.dim, pose.tilt);
+                const source_index: usize = @intCast(index);
+                artwork(&result, collection.at(source_index), pose.bounds, true, relative == 0, if (relative == 0) interaction.Id.scoped(.library, source_index) else null, pose.dim, pose.tilt);
                 if (result.elements[result.len - 1] == .cartridge) result.elements[result.len - 1].cartridge.clip_left = pose.clip_left;
             }
             caption(&result, game);
@@ -308,7 +312,7 @@ pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) 
     const failed = launch_failed != null;
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, if (failed) "Unable to start" else "Starting game");
-    artwork(&result, game, .{ .x = 48, .y = 154, .width = 348, .height = 392 }, false, true, if (failed) 28 else 0, 0);
+    artwork(&result, game, .{ .x = 48, .y = 154, .width = 348, .height = 392 }, false, true, null, if (failed) 28 else 0, 0);
 
     var title_font = font.body;
     title_font.size = 50;

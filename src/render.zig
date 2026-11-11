@@ -120,6 +120,7 @@ pub const Surface = struct {
                 if (!self.paintText(text.bounds.x, text.bounds.y, @min(text.bounds.width, width -| text.bounds.x), text.value, pack(text.color), text.font, text.language, text.lines, text.bounds.height, null, false, 0)) @panic("Text renderer unavailable");
             },
             .text_block => |block| self.textBlock(block),
+            .focus_frame => |frame| self.focusFrame(frame),
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .qr_code => |qr| self.drawQr(qr),
@@ -211,10 +212,16 @@ pub const Surface = struct {
         if (!self.paintText(block.bounds.x, detail_y, block.bounds.width, block.detail, pack(block.detail_color), block.detail_font, "", block.detail_lines, block.detail_font.line_height * block.detail_lines, null, false, 0)) @panic("Text renderer unavailable");
     }
 
+    fn focusFrame(self: Surface, frame: ui.FocusFrame) void {
+        self.fill(frame.bounds, frame.style.background);
+        if (frame.state.hasFocus()) self.stroke(frame.bounds, frame.style.border, if (frame.state == .pressed) 5 else 3);
+        self.focusRail(frame.bounds, frame.focus_offset_x, frame.focus_offset_y, frame.state, frame.style.rail);
+    }
+
     fn menuRow(self: Surface, row: ui.MenuRow) void {
         self.fillRounded(row.bounds, row.style.background, geometry.radius);
         if (row.state == .pressed) self.stroke(row.bounds, row.style.border, 4);
-        self.focusRail(row.bounds, row.focus_offset_y, row.state, row.style.accent);
+        self.focusRail(row.bounds, row.focus_offset_x, row.focus_offset_y, row.state, row.style.accent);
         var title_font = row.label_font;
         title_font.ink_centered = true;
         var detail_font = font.caption;
@@ -234,7 +241,7 @@ pub const Surface = struct {
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
         if (!self.prepainted_overlay_rows) self.fillRounded(item.bounds, item.style.background, geometry.radius);
         if (item.state == .pressed) self.stroke(item.bounds, item.style.border, 4);
-        self.focusRail(item.bounds, item.focus_offset_y, item.state, item.style.accent);
+        self.focusRail(item.bounds, item.focus_offset_x, item.focus_offset_y, item.state, item.style.accent);
         for (@import("row_layout.zig").overlay(item)) |part|
             self.drawTextBounded(part.bounds.x, part.bounds.y, part.bounds.width, part.value, part.color, part.font);
         if (item.disclosure)
@@ -249,13 +256,15 @@ pub const Surface = struct {
         self.fill(.{ .x = bounds.x + bounds.width - edge, .y = bounds.y, .width = edge, .height = bounds.height }, color);
     }
 
-    fn focusRail(self: Surface, bounds: ui.Rect, offset_y: i16, state: @import("interaction.zig").State, color: ui.Color) void {
+    fn focusRail(self: Surface, bounds: ui.Rect, offset_x: i16, offset_y: i16, state: @import("interaction.zig").State, color: ui.Color) void {
         if (!state.hasFocus() or state == .pressed or state == .activating) return;
+        const raw_x = @as(i32, bounds.x) + offset_x;
         const raw_y = @as(i32, bounds.y) + offset_y;
         const rail_height: u16 = @min(bounds.height, 72);
         const centered_y = raw_y + @divTrunc(@as(i32, bounds.height - rail_height), 2);
+        const x: u16 = @intCast(std.math.clamp(raw_x, 0, @as(i32, @intCast(width - 6))));
         const y: u16 = @intCast(std.math.clamp(centered_y, 0, @as(i32, @intCast(height - rail_height))));
-        self.fill(.{ .x = bounds.x, .y = y, .width = 6, .height = rail_height }, color);
+        self.fill(.{ .x = x, .y = y, .width = 6, .height = rail_height }, color);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
@@ -315,11 +324,13 @@ pub const Surface = struct {
         const bounds = cartridge.bounds;
         if (cartridge.sprite) |sprite| {
             self.drawTextureDimmed(sprite, bounds, cartridge.dim, cartridge.tilt, cartridge.clip_left);
+            if (cartridge.state == .pressed) self.stroke(bounds, cartridge.style.edge, 6);
             return;
         }
         if (cartridge.plain_fallback) {
             self.fill(bounds, cartridge.style.surface);
             self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", cartridge.style.text, font.caption);
+            if (cartridge.state == .pressed) self.stroke(bounds, cartridge.style.edge, 6);
             return;
         }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
@@ -360,7 +371,7 @@ pub const Surface = struct {
             ui.Color{ .r = 0x24, .g = 0x27, .b = 0x29 };
         self.fill(.{ .x = body.x + 8, .y = body.y + 10, .width = body.width, .height = body.height }, cartridge.style.shadow);
         self.fill(body, shell);
-        const edge: u16 = if (cartridge.selected) 5 else 2;
+        const edge: u16 = if (cartridge.state == .pressed) 8 else if (cartridge.selected) 5 else 2;
         const edge_color = cartridge.style.edge;
         self.fill(.{ .x = body.x, .y = body.y, .width = body.width, .height = edge }, edge_color);
         self.fill(.{ .x = body.x, .y = body.y + body.height - edge, .width = body.width, .height = edge }, edge_color);

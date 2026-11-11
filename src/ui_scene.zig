@@ -33,7 +33,16 @@ pub const RowStyle = struct {
     border: Color,
     accent: Color,
 };
+pub const FrameStyle = struct { background: Color, border: Color, rail: Color };
 pub const ArtworkStyle = struct { shadow: Color, edge: Color, surface: Color, text: Color };
+pub const FocusFrame = struct {
+    id: interaction.Id = .none,
+    state: interaction.State = .idle,
+    style: FrameStyle = std.mem.zeroes(FrameStyle),
+    bounds: Rect,
+    focus_offset_x: i16 = 0,
+    focus_offset_y: i16 = 0,
+};
 pub const MenuRow = struct {
     id: interaction.Id = .none,
     state: interaction.State = .idle,
@@ -43,6 +52,7 @@ pub const MenuRow = struct {
     bounds: Rect,
     label: []const u8,
     detail: []const u8 = "",
+    focus_offset_x: i16 = 0,
     focus_offset_y: i16 = 0,
     // Compatibility input for existing views. Tree.add resolves it into state;
     // new components should set state explicitly.
@@ -56,6 +66,8 @@ pub const KeyboardKey = struct { keyboard: Keyboard, index: u8, bounds: Rect };
 pub const CoverKind = @import("cover_kind.zig").Kind;
 pub const Cover = struct { bounds: Rect, kind: CoverKind };
 pub const Cartridge = struct {
+    id: interaction.Id = .none,
+    state: interaction.State = .idle,
     style: ArtworkStyle = std.mem.zeroes(ArtworkStyle),
     bounds: Rect,
     platform: []const u8,
@@ -75,6 +87,7 @@ pub const OverlayRow = struct {
     label: []const u8,
     detail: []const u8,
     value: []const u8 = "",
+    focus_offset_x: i16 = 0,
     focus_offset_y: i16 = 0,
     selected: bool = false,
     disclosure: bool = true,
@@ -84,6 +97,7 @@ pub const Element = union(enum) {
     scrim: Scrim,
     text: Text,
     text_block: TextBlock,
+    focus_frame: FocusFrame,
     menu_row: MenuRow,
     battery: Battery,
     qr_code: QrCode,
@@ -108,6 +122,10 @@ pub const Tree = struct {
         if (self.len == self.elements.len) @panic("UI scene capacity exceeded");
         var resolved = element;
         switch (resolved) {
+            .focus_frame => |*frame| {
+                if (frame.id == .none) frame.id = interaction.Id.scoped(.implicit_frame, self.len);
+                frame.style = self.frameStyle(frame.state);
+            },
             .menu_row => |*row| {
                 if (row.id == .none) row.id = interaction.Id.scoped(.implicit_menu, self.len);
                 if (row.selected and row.state == .idle) row.state = .focused;
@@ -120,7 +138,10 @@ pub const Tree = struct {
                 row.selected = row.state.hasFocus();
                 row.style = self.rowStyle(row.state);
             },
-            .cartridge => |*item| item.style = .{ .shadow = self.theme.shadow, .edge = if (item.selected) self.theme.accent else self.theme.border, .surface = self.theme.surface, .text = self.theme.muted },
+            .cartridge => |*item| {
+                item.selected = item.selected or item.state.hasFocus();
+                item.style = .{ .shadow = self.theme.shadow, .edge = if (item.selected) self.theme.accent else self.theme.border, .surface = self.theme.surface, .text = self.theme.muted };
+            },
             .battery => |*item| {
                 item.outline = self.theme.text;
                 item.charge = self.theme.accent;
@@ -144,9 +165,21 @@ pub const Tree = struct {
         };
     }
 
+    fn frameStyle(self: *const Tree, state: interaction.State) FrameStyle {
+        const selected = state.hasFocus();
+        const pressed = state == .pressed or state == .activating;
+        return .{
+            .background = if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
+            .border = if (pressed) self.theme.selection_text else if (selected) self.theme.accent else self.theme.background,
+            .rail = self.theme.accent,
+        };
+    }
+
     pub fn focusedId(self: *const Tree) ?interaction.Id {
         for (self.slice()) |element| switch (element) {
+            .focus_frame => |frame| if (frame.state.hasFocus()) return frame.id,
             .menu_row => |row| if (row.state.hasFocus()) return row.id,
+            .cartridge => |item| if (item.state.hasFocus()) return item.id,
             .overlay_row => |row| if (row.state.hasFocus()) return row.id,
             else => {},
         };
@@ -157,7 +190,9 @@ pub const Tree = struct {
 
     pub fn focus(self: *const Tree) ?Focus {
         for (self.slice()) |element| switch (element) {
+            .focus_frame => |frame| if (frame.state.hasFocus()) return .{ .id = frame.id, .bounds = frame.bounds },
             .menu_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
+            .cartridge => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.bounds },
             .overlay_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
             else => {},
         };
@@ -168,6 +203,11 @@ pub const Tree = struct {
     /// This keeps press/busy styling out of individual screen builders.
     pub fn setInteraction(self: *Tree, id: interaction.Id, state: interaction.State) bool {
         for (self.elements[0..self.len]) |*element| switch (element.*) {
+            .focus_frame => |*frame| if (frame.id == id) {
+                frame.state = state;
+                frame.style = self.frameStyle(state);
+                return true;
+            },
             .menu_row => |*row| if (row.id == id) {
                 row.state = state;
                 row.selected = state.hasFocus();
@@ -178,6 +218,12 @@ pub const Tree = struct {
                 row.state = state;
                 row.selected = state.hasFocus();
                 row.style = self.rowStyle(state);
+                return true;
+            },
+            .cartridge => |*item| if (item.id == id) {
+                item.state = state;
+                item.selected = state.hasFocus();
+                item.style.edge = if (item.selected) self.theme.accent else self.theme.border;
                 return true;
             },
             else => {},
@@ -185,13 +231,20 @@ pub const Tree = struct {
         return false;
     }
 
-    pub fn setFocusOffset(self: *Tree, id: interaction.Id, offset_y: i16) bool {
+    pub fn setFocusOffset(self: *Tree, id: interaction.Id, offset_x: i16, offset_y: i16) bool {
         for (self.elements[0..self.len]) |*element| switch (element.*) {
+            .focus_frame => |*frame| if (frame.id == id) {
+                frame.focus_offset_x = offset_x;
+                frame.focus_offset_y = offset_y;
+                return true;
+            },
             .menu_row => |*row| if (row.id == id) {
+                row.focus_offset_x = offset_x;
                 row.focus_offset_y = offset_y;
                 return true;
             },
             .overlay_row => |*row| if (row.id == id) {
+                row.focus_offset_x = offset_x;
                 row.focus_offset_y = offset_y;
                 return true;
             },
@@ -247,6 +300,24 @@ test "tree resolves selection into durable interaction state" {
     try std.testing.expect(tree.setInteraction(id, .pressed));
     try std.testing.expectEqual(interaction.State.pressed, tree.elements[0].menu_row.state);
     try std.testing.expect(tree.elements[0].menu_row.selected);
-    try std.testing.expect(tree.setFocusOffset(id, -20));
+    try std.testing.expect(tree.setFocusOffset(id, 12, -20));
+    try std.testing.expectEqual(@as(i16, 12), tree.elements[0].menu_row.focus_offset_x);
     try std.testing.expectEqual(@as(i16, -20), tree.elements[0].menu_row.focus_offset_y);
+}
+
+test "tiles and cartridges share press state with rows" {
+    const theme = @import("theme.zig").light;
+    const tile_id = interaction.Id.scoped(.library, 2);
+    var tile = Tree{ .theme = theme, .background = theme.background };
+    tile.add(.{ .focus_frame = .{ .id = tile_id, .state = .focused, .bounds = .{ .x = 20, .y = 40, .width = 100, .height = 80 } } });
+    try std.testing.expectEqual(tile_id, tile.focusedId().?);
+    try std.testing.expect(tile.setInteraction(tile_id, .pressed));
+    try std.testing.expectEqual(interaction.State.pressed, tile.elements[0].focus_frame.state);
+
+    const shelf_id = interaction.Id.scoped(.library, 4);
+    var shelf = Tree{ .theme = theme, .background = theme.background };
+    shelf.add(.{ .cartridge = .{ .id = shelf_id, .state = .focused, .bounds = .{ .x = 200, .y = 100, .width = 200, .height = 300 }, .platform = "nes", .texture = null, .sprite = null } });
+    try std.testing.expectEqual(shelf_id, shelf.focusedId().?);
+    try std.testing.expect(shelf.setInteraction(shelf_id, .pressed));
+    try std.testing.expectEqual(interaction.State.pressed, shelf.elements[0].cartridge.state);
 }

@@ -8,6 +8,7 @@ pub const Id = enum(u64) {
     pub const Scope = enum(u32) {
         implicit_menu,
         implicit_overlay,
+        implicit_frame,
         home,
         settings,
         library,

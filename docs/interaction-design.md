@@ -59,7 +59,7 @@ as unrelated booleans in a view.
 
 Use `ui_components.selectable(scope, index, focused, bounds, label)`. Add a
 stable `interaction.Id.Scope` and use the logical item index, then set fields and call
-`menu()` or `overlay()`. The logical index must identify the item, not its
+`menu()`, `overlay()`, or `frame()` for artwork tiles. The logical index must identify the item, not its
 temporary visible slot in a scrolling window.
 
 ```zig
