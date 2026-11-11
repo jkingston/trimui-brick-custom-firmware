@@ -135,7 +135,11 @@ pub const Surface = struct {
 
     fn renderInteractionBackdrop(self: Surface, element: ui.Element) void {
         switch (element) {
-            .focus_frame => |frame| self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
+            .focus_frame => |frame| switch (frame.presentation) {
+                .plate => self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
+                .quiet => if (frame.state == .pressed or frame.state == .activating)
+                    self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
+            },
             .menu_row => |row| self.interactionPlate(row.bounds, row.displayedBounds(), row.state, row.style.base, row.style.background, row.style.border, row.style.shadow),
             .action_card => |card| self.interactionPlate(card.bounds, card.displayedBounds(), card.state, card.style.base, card.style.background, card.style.border, card.style.shadow),
             .overlay_row => |row| self.interactionPlate(row.bounds, row.displayedBounds(), row.state, row.style.base, row.style.background, row.style.border, row.style.shadow),
@@ -553,6 +557,28 @@ pub const Surface = struct {
     }
 
     fn drawMeter(self: Surface, meter: ui.Meter) void {
+        if (meter.presentation == .stepped and meter.steps >= 2) {
+            const count: u16 = meter.steps;
+            const gap: u16 = 8;
+            const total_gap = gap * (count - 1);
+            if (meter.bounds.width <= total_gap) return;
+            const segment_width = (meter.bounds.width - total_gap) / count;
+            const value = @min(1000, meter.value);
+            const current: u16 = @intCast((@as(u32, value) * (count - 1) + 500) / 1000);
+            for (0..count) |index_usize| {
+                const index: u16 = @intCast(index_usize);
+                const selected = index == current;
+                const segment_height: u16 = if (selected) @min(28, meter.bounds.height) else @min(8, meter.bounds.height);
+                const color = if (selected) meter.thumb else if (index < current) meter.fill else meter.track;
+                self.fillRounded(.{
+                    .x = meter.bounds.x + index * (segment_width + gap),
+                    .y = meter.bounds.y + (meter.bounds.height - segment_height) / 2,
+                    .width = segment_width,
+                    .height = segment_height,
+                }, color, @min(4, segment_height / 2));
+            }
+            return;
+        }
         const track_height: u16 = @min(12, meter.bounds.height);
         const thumb_size: u16 = @min(30, meter.bounds.height);
         const track = ui.Rect{ .x = meter.bounds.x + thumb_size / 2, .y = meter.bounds.y + (meter.bounds.height - track_height) / 2, .width = meter.bounds.width - thumb_size, .height = track_height };
@@ -863,12 +889,12 @@ test "resolved styles render identically to literal colours and ignore later the
         .state = .focused,
         .style = .{
             .base = themes.dark.background,
-            .background = themes.dark.surface,
+            .background = themes.dark.background,
             .text = themes.dark.text,
             .detail = themes.dark.muted,
-            .border = themes.dark.surface,
+            .border = themes.dark.background,
             .accent = themes.dark.accent,
-            .shadow = themes.dark.focus_shadow,
+            .shadow = themes.dark.background,
         },
     } };
     literal.len = 1;

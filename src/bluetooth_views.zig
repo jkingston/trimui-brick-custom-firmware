@@ -5,44 +5,50 @@ const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
 const scene = @import("ui_scene.zig");
+const radio_surface = @import("radio_surface.zig");
 
 const Theme = scene.Theme;
 const Tree = scene.Tree;
 
 pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
     const snapshot = &state.snapshot;
+    if (!state.initialized) return radio_surface.status(theme, .{
+        .title = "Bluetooth",
+        .subject = "Checking Bluetooth",
+        .detail = "This will only take a moment.",
+        .scope = .bluetooth_list,
+        .progress = true,
+    });
+    if (snapshot.radio != .ready) return switch (snapshot.radio) {
+        .off => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Bluetooth is off", .detail = "Turn it on to connect controllers and audio.", .scope = .bluetooth_list, .action_label = "Turn on" }),
+        .starting => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Turning Bluetooth on", .detail = "Controllers and audio will appear when the radio is ready.", .scope = .bluetooth_list, .progress = true, .action_label = "Cancel" }),
+        .stopping => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Turning Bluetooth off", .detail = "This will only take a moment.", .scope = .bluetooth_list, .progress = true, .action_label = "Cancel" }),
+        .unavailable => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Bluetooth isn't available", .detail = "You can keep using the device without it.", .scope = .bluetooth_list }),
+        .failed => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Bluetooth unavailable", .detail = "Try again, or continue without it.", .scope = .bluetooth_list, .action_label = "Try again" }),
+        .ready => unreachable,
+    };
+
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, "Bluetooth");
-    var radio = components.selectable(.bluetooth_list, 0, state.selected == 0, .{ .x = 28, .y = 116, .width = 968, .height = 92 }, "Bluetooth");
-    radio.value = if (!state.initialized) "Checking…" else switch (snapshot.radio) {
-        .off => "Off",
-        .stopping => "Stopping…",
-        .unavailable => "Unavailable",
-        .failed => "Failed",
-        .starting => "Starting…",
-        .ready => "On",
-    };
-    radio.disclosure = false;
-    radio.overlay(&result);
-    components.text(&result, .{ .x = 48, .y = 218, .width = 928, .height = 40 }, state.status(), if (snapshot.radio == .failed or snapshot.discovery == .failed) theme.text else theme.muted, font.caption);
+    components.text(&result, .{ .x = 780, .y = 42, .width = 196, .height = 42 }, "On", if (state.selected == 0) theme.accent else theme.muted, .{ .size = 25, .line_height = 34, .weight = if (state.selected == 0) .semibold else .regular, .alignment = .end });
+    components.focusAnchor(&result, .bluetooth_list, 0, state.selected == 0, .{ .x = 720, .y = 28, .width = 272, .height = 64 });
+    components.text(&result, .{ .x = 48, .y = 104, .width = 928, .height = 40 }, state.status(), if (snapshot.discovery == .failed) theme.text else theme.muted, font.caption);
 
-    if (!state.initialized) {
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Waiting for the Bluetooth service to start.", theme.text, font.body);
-    } else if (snapshot.radio == .ready) {
+    {
         const visible: usize = 3;
         const first = @min(state.selected -| 2, @as(usize, snapshot.device_count + 1) -| visible);
         const total = snapshot.device_count + 1;
         for (0..@min(visible, total - first)) |row| {
             const item = first + row;
             if (item == snapshot.device_count) {
-                var action = components.selectable(.bluetooth_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.single_row_height }, if (snapshot.discovery == .idle) "Find devices" else "Stop searching");
+                var action = components.selectable(.bluetooth_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = 164 + @as(u16, @intCast(row)) * 118, .width = 968, .height = components.single_row_height }, if (snapshot.discovery == .idle) "Find devices" else "Stop searching");
                 action.disclosure = false;
                 action.overlay(&result);
                 continue;
             }
             const device = &snapshot.devices[item];
             const operating = snapshot.operation_device.len != 0 and bluetooth_model.Identity.eql(snapshot.operation_device, device.id);
-            var device_row = components.selectable(.bluetooth_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.supporting_row_height }, device.name.slice());
+            var device_row = components.selectable(.bluetooth_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = 164 + @as(u16, @intCast(row)) * 118, .width = 968, .height = components.supporting_row_height }, device.name.slice());
             device_row.detail = if (operating) switch (snapshot.operation) {
                 .pairing => "Pairing…",
                 .connection => "Connecting…",
@@ -50,17 +56,14 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
                 .forget => "Forgetting…",
                 else => device.detail(),
             } else device.detail();
-            device_row.value = device.battery_label.slice();
+            device_row.value = "";
             device_row.disclosure = device.state == .connected or device.state == .preparing_audio or device.state == .ready;
+            if (operating) device_row.state = .busy;
             device_row.overlay(&result);
+            if (!operating) if (device.battery) |percent|
+                components.batteryLevel(&result, .{ .x = 792, .y = device_row.bounds.y + 38, .width = 114, .height = 28 }, percent);
         }
-        components.continuation(&result, 258, 582, first != 0, first + visible < total);
-    } else if (snapshot.radio == .off) {
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Turn Bluetooth on to connect devices.", theme.text, font.body);
-    } else if (snapshot.radio == .unavailable) {
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Bluetooth is unavailable on this device.", theme.text, font.body);
-    } else if (snapshot.radio == .failed) {
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Try again. If it still fails, restart the device.", theme.text, font.body);
+        components.continuation(&result, 164, 518, first != 0, first + visible < total);
     }
     if (snapshot.operation != .none and snapshot.operation != .discovery)
         components.footer(&result, &.{.{ .control = .back, .label = "Cancel" }})
@@ -119,4 +122,20 @@ pub fn displayCode(theme: Theme, state: *const bluetooth_model.Model) Tree {
     components.text(&result, .{ .x = 80, .y = 392, .width = 864, .height = 84 }, "Enter this code on the other device.", theme.muted, note_font);
     components.footer(&result, &.{.{ .control = .back, .label = "Cancel" }});
     return result;
+}
+
+test "recoverable Bluetooth failure retains back and retry actions" {
+    const std = @import("std");
+    var state = bluetooth_model.Model{};
+    state.initialized = true;
+    state.snapshot.radio = .failed;
+    const tree = list(@import("theme.zig").dark, &state);
+    var has_back = false;
+    var has_retry = false;
+    for (tree.slice()) |element| if (element == .text) {
+        has_back = has_back or std.mem.eql(u8, element.text.value, "Settings");
+        has_retry = has_retry or std.mem.eql(u8, element.text.value, "Try again");
+    };
+    try std.testing.expect(has_back);
+    try std.testing.expect(has_retry);
 }

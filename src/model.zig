@@ -13,7 +13,6 @@ const bluetooth_model = @import("bluetooth.zig");
 pub const Action = input.Action;
 pub const Page = enum { home, games, game, settings, setting, wifi, wifi_fallback, bluetooth, systems, views, power, power_confirm };
 pub const Power = enum { screen_off, suspend_device, shutdown };
-const columns = @import("design.zig").geometry.grid_columns;
 const settings_count = @typeInfo(settings_model.Setting).@"enum".field_names.len;
 
 /// Describes the page hierarchy once so every renderer can use the same
@@ -39,11 +38,12 @@ test "page hierarchy gives every renderer the same transition direction" {
 }
 
 test "direction support follows each component layout" {
-    var state = Model{ .page = .games, .library_view = .shelf };
+    var state = Model{ .page = .games, .library_view = .browse };
     try std.testing.expect(state.supportsDirection(.left));
     try std.testing.expect(!state.supportsDirection(.up));
-    state.library_view = .grid;
+    state.library_view = .all;
     try std.testing.expect(state.supportsDirection(.up));
+    try std.testing.expect(!state.supportsDirection(.left));
     state.page = .setting;
     state.active_setting = .brightness;
     try std.testing.expect(state.supportsDirection(.right));
@@ -58,11 +58,14 @@ test "direction support follows each component layout" {
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
     page: Page = .home,
-    library_view: ui.LibraryView = .list,
+    library_view: ui.LibraryView = .recent,
     system: ?usize = null,
     selected: usize = 0,
     game_index: usize = 0,
     library_selection: usize = 0,
+    // Rich library content may settle after a held skim while focus and title
+    // continue to track `selected` on every repeat.
+    library_preview: usize = 0,
     // Source-library indices, distinct from filtered positions.
     last_played: ?usize = null,
     resumable: bool = false,
@@ -84,14 +87,29 @@ pub const Model = struct {
         return .{ .games = self.games, .system = self.system };
     }
 
+    /// Resolve the cold-start destination after preferences and automatic-save
+    /// availability are known. A valid resumable session bypasses shell
+    /// navigation; otherwise the library is the root and Home remains only the
+    /// empty/recovery foyer.
+    pub fn bootTarget(self: *Model) ?usize {
+        if (self.resumable) if (self.last_played) |index| if (index < self.games.len) {
+            self.game_index = index;
+            return index;
+        };
+        if (self.games.len != 0) self.browse() else {
+            self.page = .home;
+            self.selected = 0;
+        }
+        return null;
+    }
+
     pub fn supportsDirection(self: *const Model, action: Action) bool {
         const vertical = action == .up or action == .down;
         const horizontal = action == .left or action == .right;
         return switch (self.page) {
             .games => switch (self.library_view) {
-                .list => vertical,
-                .shelf => horizontal,
-                .grid => vertical or horizontal,
+                .recent, .all => vertical,
+                .browse => horizontal,
             },
             .setting => if (self.active_setting == .brightness) horizontal else vertical,
             .wifi => switch (self.wifi.page) {
@@ -104,7 +122,8 @@ pub const Model = struct {
                 .forget_confirm, .confirmation, .code_entry => vertical or horizontal,
                 .code_display => false,
             },
-            .home, .settings, .systems, .views, .power, .power_confirm => vertical,
+            .home => horizontal,
+            .settings, .systems, .views, .power, .power_confirm => vertical,
             .game, .wifi_fallback => false,
         };
     }
@@ -121,6 +140,14 @@ pub const Model = struct {
     fn browse(self: *Model) void {
         self.page = .games;
         self.selected = @min(self.library_selection, self.collection().len() -| 1);
+        self.library_preview = self.selected;
+    }
+
+    pub fn settleLibraryPreview(self: *Model) bool {
+        if (self.page != .games or self.library_preview == self.selected) return false;
+        self.library_preview = self.selected;
+        self.revision += 1;
+        return true;
     }
 
     fn settingIndex(self: *const Model) usize {
@@ -199,20 +226,23 @@ pub const Model = struct {
         switch (action) {
             .up, .down => {
                 const up = action == .up;
-                if (self.page == .games and self.library_view == .shelf) return false;
+                if (self.page == .home) return false;
+                if (self.page == .games and self.library_view == .browse) return false;
                 if (self.page == .setting and self.active_setting == .brightness) return false;
-                const step: usize = if (self.page == .games and self.library_view == .grid) columns else 1;
+                const step: usize = 1;
                 if (up) {
                     if (step == 1 or self.selected >= step) self.selected -|= step;
-                } else if (self.page != .games or self.library_view != .grid or (self.selected / columns + 1) * columns < self.itemCount()) {
+                } else {
                     self.selected = @min(self.selected + step, self.itemCount() -| 1);
                 }
             },
             .left, .right => {
                 const left = action == .left;
-                if (self.page == .games and self.library_view != .list) {
-                    if (left and (self.library_view == .shelf or self.selected % columns != 0)) self.selected -|= 1;
-                    if (!left and (self.library_view == .shelf or self.selected % columns + 1 < columns)) self.selected = @min(self.selected + 1, self.itemCount() -| 1);
+                if (self.page == .home) {
+                    self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, self.itemCount() -| 1);
+                } else if (self.page == .games and self.library_view == .browse) {
+                    if (left) self.selected -|= 1;
+                    if (!left) self.selected = @min(self.selected + 1, self.itemCount() -| 1);
                 } else if (self.page == .setting and self.active_setting == .brightness) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, 10);
                     if (self.selected != before_selected) self.chooseSetting();
@@ -285,16 +315,15 @@ pub const Model = struct {
                 .home => {},
                 .games => {
                     self.remember();
-                    self.page = .home;
-                    self.selected = 0;
+                    // The library is the shell root. Back never detours through
+                    // a dashboard before the player can choose another game.
                 },
                 .game => {
                     self.browse();
                     self.launch_failed = null;
                 },
                 .settings => {
-                    self.page = .home;
-                    self.selected = if (self.last_played != null) 2 else 1;
+                    self.browse();
                 },
                 .setting => {
                     self.page = .settings;
@@ -305,7 +334,7 @@ pub const Model = struct {
                 .bluetooth => unreachable,
                 .systems, .views => self.browse(),
                 .power => {
-                    self.page = .home;
+                    self.page = .settings;
                     self.selected = 0;
                 },
                 .power_confirm => {
@@ -315,14 +344,24 @@ pub const Model = struct {
             },
             .menu => {
                 self.remember();
-                self.page = if (self.page == .home) .power else .home;
+                self.page = switch (self.page) {
+                    .games, .home => .settings,
+                    .settings => .power,
+                    .power => .settings,
+                    else => .games,
+                };
                 self.selected = 0;
                 self.launch_failed = null;
             },
             .view => if (self.page == .games) {
                 self.remember();
-                self.page = .views;
-                self.selected = @backingInt(self.library_view);
+                self.library_view = switch (self.library_view) {
+                    .recent => .browse,
+                    .browse => .all,
+                    .all => .recent,
+                };
+                self.selected = @min(self.library_selection, self.collection().len() -| 1);
+                self.library_preview = self.selected;
             },
             .filter => if (self.page == .games) {
                 self.remember();
@@ -330,6 +369,7 @@ pub const Model = struct {
                 self.selected = 0;
             },
         }
+        if (self.page == .games and before_selected != self.selected) self.library_preview = self.selected;
         const changed = before_page != self.page or before_selected != self.selected or before_view != self.library_view or before_system != self.system or before_error != self.launch_failed or self.pending_launch != null or self.pending_setting != null or self.pending_power != null;
         if (changed) self.revision += 1;
         return changed;
@@ -483,14 +523,14 @@ pub const Model = struct {
         const theme = self.settings.appearance.colors();
         var result = switch (self.page) {
             .home => ui.homeSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
-            .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_view, shelf_offset),
+            .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_preview, self.library_view, shelf_offset),
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
             .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.summary(), self.bluetooth.summary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
             .wifi => self.wifiTree(theme),
             .wifi_fallback => ui.wifiFallback(theme, self.wifi_fallback.url(), &self.wifi_fallback.qr),
             .bluetooth => ui.bluetooth(theme, &self.bluetooth),
-            .views => ui.choice(theme, "View", &.{ "List", "Cartridge flow", "Grid" }, self.selected, @backingInt(self.library_view), "", "Games"),
+            .views => ui.choice(theme, "Library density", &.{ "Recent", "Browse", "All games" }, self.selected, @backingInt(self.library_view), "One collection, tuned for returning, exploring, or locating precisely.", "Library"),
             .systems => blk: {
                 var labels: [catalog.systems.len + 1][]const u8 = undefined;
                 labels[0] = "All systems";
@@ -545,6 +585,17 @@ test "Home opens Games and returns without losing browsing position" {
     try std.testing.expectEqual(@as(usize, 1), state.selected);
 }
 
+test "boot resumes valid play and otherwise enters the library" {
+    var state = Model{ .last_played = 2, .resumable = true };
+    try std.testing.expectEqual(@as(?usize, 2), state.bootTarget());
+    state = .{ .last_played = 2, .resumable = false };
+    try std.testing.expect(state.bootTarget() == null);
+    try std.testing.expectEqual(Page.games, state.page);
+    state = .{ .games = &.{} };
+    try std.testing.expect(state.bootTarget() == null);
+    try std.testing.expectEqual(Page.home, state.page);
+}
+
 test "filtered launch uses source identity and restores each system position" {
     var state = Model{ .page = .games, .selected = 4 };
     _ = state.apply(.filter);
@@ -560,21 +611,37 @@ test "filtered launch uses source identity and restores each system position" {
     try std.testing.expectEqual(@as(usize, 4), state.selected);
 }
 
-test "view picker retains selection and grid navigation respects row edges" {
+test "density control changes the collection in place and retains selection" {
     var state = Model{ .page = .games, .selected = 2 };
     _ = state.apply(.view);
-    _ = state.apply(.down);
-    _ = state.apply(.down);
-    _ = state.apply(.select);
-    try std.testing.expectEqual(ui.LibraryView.grid, state.library_view);
+    try std.testing.expectEqual(ui.LibraryView.browse, state.library_view);
+    try std.testing.expectEqual(Page.games, state.page);
+    _ = state.apply(.view);
+    try std.testing.expectEqual(ui.LibraryView.all, state.library_view);
     try std.testing.expectEqual(@as(usize, 2), state.selected);
     try std.testing.expect(!state.apply(.right));
     _ = state.apply(.down);
+    try std.testing.expectEqual(@as(usize, 3), state.selected);
+    _ = state.apply(.down);
     try std.testing.expectEqual(@as(usize, 4), state.selected);
     try std.testing.expect(!state.apply(.down));
-    _ = state.apply(.left);
-    try std.testing.expectEqual(@as(usize, 3), state.selected);
-    try std.testing.expect(!state.apply(.left));
+}
+
+test "library is the root and device controls are intentional" {
+    var state = Model{ .page = .games, .selected = 2 };
+    try std.testing.expect(!state.apply(.back));
+    try std.testing.expectEqual(Page.games, state.page);
+    _ = state.apply(.menu);
+    try std.testing.expectEqual(Page.settings, state.page);
+    _ = state.apply(.back);
+    try std.testing.expectEqual(Page.games, state.page);
+}
+
+test "library preview can trail a skim and settle on release" {
+    var state = Model{ .page = .games, .selected = 3, .library_preview = 1 };
+    try std.testing.expect(state.settleLibraryPreview());
+    try std.testing.expectEqual(@as(usize, 3), state.library_preview);
+    try std.testing.expect(!state.settleLibraryPreview());
 }
 
 test "empty collections and absent history cannot launch" {

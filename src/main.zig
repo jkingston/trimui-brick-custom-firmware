@@ -48,14 +48,15 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         state.games = library;
         if (library.len > 0) {
             state.selected = @min(selected, library.len - 1);
+            state.library_preview = state.selected;
             state.game_index = state.selected;
         }
     }
     if (std.mem.eql(u8, screen, "games") or std.mem.eql(u8, screen, "games-empty") or std.mem.eql(u8, screen, "games-shelf") or std.mem.eql(u8, screen, "games-grid")) {
         state.page = .games;
         if (std.mem.eql(u8, screen, "games-empty")) state.games = &.{};
-        if (std.mem.eql(u8, screen, "games-shelf")) state.library_view = .shelf;
-        if (std.mem.eql(u8, screen, "games-grid")) state.library_view = .grid;
+        if (std.mem.eql(u8, screen, "games-shelf")) state.library_view = .browse;
+        if (std.mem.eql(u8, screen, "games-grid")) state.library_view = .all;
     } else if (std.mem.eql(u8, screen, "game") or std.mem.eql(u8, screen, "game-failed")) {
         state.page = .game;
         if (games == null) state.game_index = 1;
@@ -358,6 +359,8 @@ test {
     _ = @import("asset_manifest.zig");
     _ = @import("input_repeat.zig");
     _ = @import("framebuffer_pages.zig");
+    _ = @import("game_object.zig");
+    _ = @import("radio_surface.zig");
     _ = @import("damage.zig");
     _ = @import("damage_render_test.zig");
     _ = @import("composition.zig");

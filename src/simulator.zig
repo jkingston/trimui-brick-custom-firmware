@@ -324,7 +324,7 @@ pub fn main(init: std.process.Init) !void {
         const notice = ui.Feedback{ .kind = game_overlay.notice_kind, .message = game_overlay.notice };
         if (overlay_visible and game_overlay.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
             feedback_lifecycle.show(notice, now);
-        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or meter.active(now) or activity.active() or navigation.active(now) or layout.active(now);
+        const animating = (!overlay_visible and state.page == .games and state.library_view == .browse and motion.active(now)) or focus.active(now) or meter.active(now) or activity.active() or navigation.active(now) or layout.active(now);
         var repeat_timeout = repeat.timeout(now);
         if (overlay_visible) {
             const feedback_wait = feedback_lifecycle.timeout(now);
@@ -336,6 +336,7 @@ pub fn main(init: std.process.Init) !void {
         const received = sdl.waitEvent(&event, timeout) != 0;
         const timestamp = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
         var action: ?input.Action = repeat.due(timestamp);
+        var repeated = action != null;
         var changed = animating or was_animating;
         if (overlay_visible and feedback_lifecycle.tick(timestamp)) {
             if (game_overlay.layer != .failure) game_overlay.notice = "";
@@ -346,7 +347,9 @@ pub fn main(init: std.process.Init) !void {
             if (event.event_type == sdl_quit) break;
             if (event.event_type == sdl_key_release) {
                 if (actionForKey(event.key.keysym.sym)) |released| {
+                    const settle_preview = repeat.repeats != 0 and (released == .up or released == .down or released == .left or released == .right);
                     repeat.release(released);
+                    if (!overlay_visible and settle_preview) changed = state.settleLibraryPreview() or changed;
                     if (released == .select and select_armed) {
                         select_armed = false;
                         pressed_id = null;
@@ -377,6 +380,7 @@ pub fn main(init: std.process.Init) !void {
                         changed = true;
                     } else {
                         action = pressed;
+                        repeated = false;
                         if (pressed == .up or pressed == .down or pressed == .left or pressed == .right) repeat.press(pressed, timestamp);
                     }
                 }
@@ -420,9 +424,11 @@ pub fn main(init: std.process.Init) !void {
                 }
             } else {
                 const previous = state.selected;
+                const retained_preview = state.library_preview;
                 const previous_page = state.page;
                 const previous_appearance = state.settings.appearance;
                 const applied = state.apply(pressed);
+                if (repeated and state.page == .games) state.library_preview = retained_preview;
                 if (state.takeSetting()) |setting|
                     std.log.info("Setting intent: {s}", .{@tagName(setting)});
                 if (state.takeWifiRequest()) |pending| {
@@ -441,7 +447,7 @@ pub fn main(init: std.process.Init) !void {
                 }
                 const boundary = !applied and state.supportsDirection(pressed) and focus.boundary(pressed, timestamp, state.settings.reduced_motion);
                 changed = applied or boundary or changed;
-                if (state.page == .games and state.library_view == .shelf and previous != state.selected)
+                if (state.page == .games and state.library_view == .browse and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), timestamp);
                 const launch = state.takeLaunch();
                 if (launch) |index| {
@@ -463,7 +469,7 @@ pub fn main(init: std.process.Init) !void {
                     navigation.begin(&tree, &destination, .forward, timestamp, state.settings.reduced_motion);
                     tree = destination;
                 }
-                layout_pending = layout_pending or (applied and state.page == previous_page and (pressed == .up or pressed == .down or pressed == .left or pressed == .right) and !(state.page == .games and state.library_view == .shelf));
+                layout_pending = layout_pending or (applied and state.page == previous_page and (pressed == .up or pressed == .down or pressed == .left or pressed == .right) and !(state.page == .games and state.library_view == .browse));
             }
         }
         if (changed) {

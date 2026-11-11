@@ -3,7 +3,14 @@ const std = @import("std");
 const model = @import("model.zig");
 const ui = @import("ui.zig");
 
-const Preferences = struct { view: ui.LibraryView, rom: []const u8, system: ?[]const u8 = null, last_rom: []const u8 = "" };
+const Preferences = struct { view: []const u8, rom: []const u8, system: ?[]const u8 = null, last_rom: []const u8 = "" };
+
+fn viewFromName(name: []const u8) ?ui.LibraryView {
+    if (std.mem.eql(u8, name, "recent") or std.mem.eql(u8, name, "list")) return .recent;
+    if (std.mem.eql(u8, name, "browse") or std.mem.eql(u8, name, "shelf")) return .browse;
+    if (std.mem.eql(u8, name, "all") or std.mem.eql(u8, name, "grid")) return .all;
+    return null;
+}
 
 pub fn load(io: std.Io, dir: std.Io.Dir, state: *model.Model) void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -11,7 +18,7 @@ pub fn load(io: std.Io, dir: std.Io.Dir, state: *model.Model) void {
     const allocator = arena.allocator();
     const contents = dir.readFileAlloc(io, "library.json", allocator, .limited(16384)) catch return;
     const saved = std.json.parseFromSliceLeaky(Preferences, allocator, contents, .{}) catch return;
-    state.library_view = saved.view;
+    if (viewFromName(saved.view)) |view| state.library_view = view;
     if (saved.system) |label| {
         for (@import("catalog.zig").systems, 0..) |system, index| {
             if (std.mem.eql(u8, label, system.label) and state.hasSystem(index)) state.system = index;
@@ -22,7 +29,10 @@ pub fn load(io: std.Io, dir: std.Io.Dir, state: *model.Model) void {
         if (std.mem.eql(u8, game.rom_path, saved.rom)) {
             if (state.collection().positionOf(index)) |position| {
                 state.library_selection = position;
-                if (state.page == .games) state.selected = position;
+                if (state.page == .games) {
+                    state.selected = position;
+                    state.library_preview = position;
+                }
             }
         }
     }
@@ -30,7 +40,7 @@ pub fn load(io: std.Io, dir: std.Io.Dir, state: *model.Model) void {
 
 pub fn save(io: std.Io, dir: std.Io.Dir, state: *const model.Model) !void {
     const saved = Preferences{
-        .view = state.library_view,
+        .view = @tagName(state.library_view),
         .rom = if (state.librarySource()) |index| state.games[index].rom_path else "",
         .system = if (state.system != null) state.collection().label() else null,
         .last_rom = if (state.last_played) |index| state.games[index].rom_path else "",
@@ -44,15 +54,24 @@ pub fn save(io: std.Io, dir: std.Io.Dir, state: *const model.Model) !void {
 test "library preferences restore by path after the library is reordered" {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
-    var state = model.Model{ .page = .games, .selected = 1, .library_view = .shelf };
+    var state = model.Model{ .page = .games, .selected = 1, .library_view = .browse };
     try save(std.testing.io, temporary.dir, &state);
     const original = state.games[1];
     const reordered = [_]@import("catalog.zig").Game{original};
     state = .{ .games = &reordered };
     load(std.testing.io, temporary.dir, &state);
-    try std.testing.expectEqual(ui.LibraryView.shelf, state.library_view);
+    try std.testing.expectEqual(ui.LibraryView.browse, state.library_view);
     try std.testing.expectEqual(@as(usize, 0), state.selected);
     try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "library.json", .data = "broken" });
     load(std.testing.io, temporary.dir, &state);
     try std.testing.expectEqual(@as(usize, 0), state.selected);
+}
+
+test "legacy widget names migrate to product density names" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "library.json", .data = "{\"view\":\"grid\",\"rom\":\"\"}" });
+    var state = model.Model{};
+    load(std.testing.io, temporary.dir, &state);
+    try std.testing.expectEqual(ui.LibraryView.all, state.library_view);
 }

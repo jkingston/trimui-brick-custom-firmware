@@ -107,7 +107,7 @@ pub const Snapshot = struct {
     pub fn settingsSummary(self: Snapshot) []const u8 {
         return switch (self.radio) {
             .unavailable => "Unavailable",
-            .failed => "Failed",
+            .failed => "Needs attention",
             .off => "Off",
             .stopping => "Stopping…",
             .starting => "Starting…",
@@ -125,7 +125,7 @@ pub const Snapshot = struct {
             .off => "Wi-Fi off",
             .starting => "Turning Wi-Fi on\xe2\x80\xa6",
             .stopping => "Turning Wi-Fi off\xe2\x80\xa6",
-            .failed => "Wi-Fi could not start",
+            .failed => "Wi-Fi unavailable",
             .ready => self.currentStatus(),
         };
     }
@@ -263,7 +263,7 @@ test "failed radio is distinct from unavailable radio" {
     var snapshot = Snapshot{ .radio = .unavailable };
     try std.testing.expectEqualStrings("Unavailable", snapshot.settingsSummary());
     snapshot.radio = .failed;
-    try std.testing.expectEqualStrings("Failed", snapshot.settingsSummary());
+    try std.testing.expectEqualStrings("Needs attention", snapshot.settingsSummary());
 }
 
 test "startup is checking until the authority supplies a snapshot" {

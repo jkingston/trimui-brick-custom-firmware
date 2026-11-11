@@ -154,10 +154,13 @@ const DescriptionEntry = struct {
     family: design.Family = .ui,
     value: ?*FontDescription = null,
 };
-var descriptions: [24]DescriptionEntry = @splat(.{});
+// Editorial surfaces use a deliberately wider type scale than dense utility
+// screens. Keep descriptions retained so changing scale never makes rendering
+// contingent on traversal order.
+var descriptions: [48]DescriptionEntry = @splat(.{});
 
 const AttributeEntry = struct { line_height: u16 = 0, value: ?*Object = null };
-var attributes: [16]AttributeEntry = @splat(.{});
+var attributes: [32]AttributeEntry = @splat(.{});
 
 fn current() ?*Engine {
     if (!attempted) {

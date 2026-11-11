@@ -111,6 +111,19 @@ pub fn selectable(scope: interaction.Id.Scope, index: usize, focused: bool, boun
     return .{ .id = resolved.id, .state = resolved.state, .bounds = bounds, .label = label };
 }
 
+/// A focus target for typography- and artwork-led surfaces. The screen owns
+/// resting hierarchy; this component supplies identity, press feedback and
+/// boundary response without adding a rail, underline or glow.
+pub fn focusAnchor(result: *ui.Tree, scope: interaction.Id.Scope, index: usize, focused: bool, bounds: ui.Rect) void {
+    const resolved = selection(scope, index, focused);
+    result.add(.{ .focus_frame = .{
+        .id = resolved.id,
+        .state = resolved.state,
+        .bounds = bounds,
+        .presentation = .quiet,
+    } });
+}
+
 pub fn actionCard(result: *ui.Tree, scope: interaction.Id.Scope, index: usize, focused: bool, bounds: ui.Rect, eyebrow: []const u8, label: []const u8, detail: []const u8, emphasis: ui.CardEmphasis, label_lines: u8, detail_lines: u8) void {
     const resolved = selection(scope, index, focused);
     result.add(.{ .action_card = .{
@@ -130,8 +143,37 @@ pub fn meter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16) 
     result.add(.{ .meter = .{ .id = id, .bounds = bounds, .value = @min(1000, value), .track = result.theme.surface, .fill = result.theme.text, .thumb = result.theme.accent } });
 }
 
+/// Discrete-value evidence for D-pad settings. The current stop is taller,
+/// completed stops carry magnitude, and exact text remains optional context.
+pub fn steppedMeter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16, steps: u8) void {
+    std.debug.assert(steps >= 2);
+    result.add(.{ .meter = .{
+        .id = id,
+        .bounds = bounds,
+        .value = @min(1000, value),
+        .track = result.theme.surface,
+        .fill = result.theme.text,
+        .thumb = result.theme.accent,
+        .presentation = .stepped,
+        .steps = steps,
+    } });
+}
+
 pub fn activity(result: *ui.Tree, bounds: ui.Rect, color: ui.Color) void {
     result.add(.{ .activity = .{ .bounds = bounds, .color = color } });
+}
+
+/// Compact battery evidence for a device row. The shape carries the glanceable
+/// level; the percentage remains secondary for players who need precision.
+pub fn batteryLevel(result: *ui.Tree, bounds: ui.Rect, percent: u8) void {
+    var value: [5]u8 = undefined;
+    const label = std.fmt.bufPrint(&value, "{d}%", .{percent}) catch return;
+    var value_font = font.caption;
+    value_font.size = 20;
+    value_font.line_height = 28;
+    value_font.alignment = .end;
+    text(result, .{ .x = bounds.x, .y = bounds.y, .width = 50, .height = 28 }, label, result.theme.muted, value_font);
+    result.add(.{ .battery = .{ .bounds = .{ .x = bounds.x + 62, .y = bounds.y + 2, .width = 52, .height = 24 }, .percent = percent } });
 }
 
 /// Shared transient or terminal status surface. Meaning is carried by a
@@ -245,7 +287,6 @@ pub fn footer(result: *ui.Tree, items: []const Hint) void {
     if (items.len == 0) return;
     std.debug.assert(items.len <= 8);
     const bounds = ui.Rect{ .x = design.spacing.margin, .y = geometry.footer_y, .width = geometry.width - 2 * design.spacing.margin, .height = geometry.footer_height };
-    result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = geometry.footer_rule_y, .width = bounds.width, .height = 1 }, .color = result.theme.border } });
 
     const anchored_left = items[0].control == .back or items[0].control == .menu;
     const first_right: usize = if (anchored_left) 1 else 0;

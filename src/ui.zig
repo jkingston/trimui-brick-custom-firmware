@@ -8,6 +8,7 @@ const settings_model = @import("settings.zig");
 const interaction = @import("interaction.zig");
 const bluetooth_model = @import("bluetooth.zig");
 const scene = @import("ui_scene.zig");
+const game_object = @import("game_object.zig");
 pub const Color = scene.Color;
 pub const Theme = scene.Theme;
 pub const Rect = scene.Rect;
@@ -28,35 +29,66 @@ pub const QrCode = scene.QrCode;
 pub const Keyboard = scene.Keyboard;
 pub const KeyboardKey = scene.KeyboardKey;
 pub const Cover = scene.Cover;
-pub const LibraryView = enum { list, shelf, grid };
+/// One library with progressively denser ways to move through it. Names encode
+/// the player's intent rather than the widget used to render the collection.
+pub const LibraryView = enum { recent, browse, all };
 pub const Cartridge = scene.Cartridge;
 pub const OverlayRow = scene.OverlayRow;
 pub const Element = scene.Element;
 pub const Tree = scene.Tree;
 
-const menu = struct {
-    fn overlayRow(index: usize) Rect {
-        return .{ .x = 28, .y = geometry.overlay_row_top + @as(u16, @intCast(index)) * geometry.overlay_row_step, .width = 968, .height = geometry.overlay_row_height };
-    }
-};
+fn controlTheme(source: Theme) Theme {
+    var result = source;
+    result.background = source.scrim;
+    result.surface = .{ .r = 0x17, .g = 0x1c, .b = 0x1c };
+    result.text = source.on_scrim;
+    result.muted = .{ .r = 0x92, .g = 0x9b, .b = 0x99 };
+    result.accent = .{ .r = 0x59, .g = 0xd4, .b = 0xcf };
+    result.border = .{ .r = 0x34, .g = 0x3c, .b = 0x3b };
+    result.focus_shadow = source.scrim;
+    return result;
+}
 
-fn overlayFrame(result: *Tree, title: []const u8, game_title: []const u8) void {
-    header(result, title);
-    textLabel(result, .{ .x = 48, .y = 106, .width = 928, .height = 42 }, game_title, result.theme.muted, font.caption);
+fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const u8, context: []const u8, labels: []const []const u8, values: []const []const u8, selected: usize, back_label: []const u8, action_label: []const u8) Tree {
+    const theme = controlTheme(source_theme);
+    var result = Tree{ .theme = theme, .background = theme.background };
+    // Receding-room fallback: the game remains the dominant subject even when
+    // no compositor-owned last frame is available. A future retained texture
+    // can replace this left stage without changing control geometry or focus.
+    textLabel(&result, .{ .x = 48, .y = 42, .width = 520, .height = 34 }, "QUICK SYSTEM", theme.muted, uiFont(21, 28, .semibold, .start));
+    result.add(.{ .text_block = .{
+        .bounds = .{ .x = 48, .y = 154, .width = 500, .height = 330 },
+        .title = context,
+        .detail = title,
+        .color = theme.text,
+        .detail_color = theme.accent,
+        .title_font = displayFont(58, 68, .semibold, .start),
+        .detail_font = uiFont(22, 30, .semibold, .start),
+        .lines = 3,
+        .detail_lines = 1,
+        .gap = 24,
+    } });
+    textLabel(&result, .{ .x = 48, .y = 548, .width = 500, .height = 70 }, "Paused. Ready to continue.", theme.muted, uiFont(24, 34, .regular, .start));
+
+    const step: u16 = if (labels.len > 5) 82 else 94;
+    const top: u16 = if (labels.len > 5) 94 else 120;
+    for (labels, 0..) |label, index| {
+        const active = index == selected;
+        const row_y = top + @as(u16, @intCast(index)) * step;
+        textLabel(&result, .{ .x = 632, .y = row_y, .width = 344, .height = 46 }, label, if (active) theme.text else theme.muted, uiFont(if (active) 37 else 25, if (active) 45 else 34, if (active) .semibold else .regular, .start));
+        if (values.len > index and values[index].len != 0)
+            textLabel(&result, .{ .x = 632, .y = row_y + 44, .width = 344, .height = 28 }, values[index], if (active) theme.accent else theme.muted, uiFont(19, 26, if (active) .semibold else .regular, .start));
+        if (active) components.focusAnchor(&result, scope, index, true, .{ .x = 616, .y = row_y -| 6, .width = 376, .height = step -| 6 });
+    }
+    footer(&result, &.{ .{ .control = .back, .label = back_label }, .{ .control = .confirm, .label = action_label } });
+    return result;
 }
 
 pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state_slot: usize, performance: []const u8, notice: []const u8) Tree {
     const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
-    var result = Tree{ .theme = theme, .background = theme.background };
-    overlayFrame(&result, "Game menu", game_title);
-    for (labels, 0..) |label, index| {
-        var row = components.selectable(.game_menu, index, index == selected, menu.overlayRow(index), label);
-        row.value = if (index == 1) slots[state_slot] else if (index == 3) performance else "";
-        row.disclosure = index == 2;
-        row.overlay(&result);
-    }
-    footer(&result, &.{ .{ .control = .back, .label = "Continue" }, .{ .control = .confirm, .label = "Select" } });
+    const values = [_][]const u8{ "", slots[state_slot], "", performance, "" };
+    var result = controlDeck(theme, .game_menu, "PAUSED", game_title, &labels, &values, selected, "Continue", "Select");
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -67,15 +99,7 @@ pub fn overlayPauseWithNetwork(theme: Theme, game_title: []const u8, selected: u
     const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Network", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
     const values = [_][]const u8{ "", slots[state_slot], "", performance, network_status, "" };
-    var result = Tree{ .theme = theme, .background = theme.background };
-    overlayFrame(&result, "Game menu", game_title);
-    for (labels, values, 0..) |label, value, index| {
-        var row = components.selectable(.game_menu_network, index, index == selected, .{ .x = 28, .y = 148 + @as(u16, @intCast(index)) * 80, .width = 968, .height = 78 }, label);
-        row.value = value;
-        row.disclosure = index == 2 or index == 4;
-        row.overlay(&result);
-    }
-    footer(&result, &.{ .{ .control = .back, .label = "Continue" }, .{ .control = .confirm, .label = "Open" } });
+    var result = controlDeck(theme, .game_menu_network, "PAUSED", game_title, &labels, &values, selected, "Continue", "Open");
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -147,14 +171,13 @@ pub fn overlayStates(theme: Theme, game_title: []const u8, selected: usize, noti
         if (notice.len != 0) showNotice(&result, notice);
         return result;
     }
-    overlayFrame(&result, "Load state", game_title);
-    for (labels, details, 0..) |label, detail, index| {
-        var row = components.selectable(.overlay_states, index, index == selected, .{ .x = 28, .y = 160 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 112 }, label);
-        row.detail = if (available[index]) detail else "Empty";
-        row.disclosure = false;
-        row.overlay(&result);
-    }
-    footer(&result, &.{ .{ .control = .back, .label = "Game menu" }, .{ .control = .confirm, .label = if (available[selected]) "Load" else "Empty" } });
+    const values = [_][]const u8{
+        if (available[0]) details[0] else "Empty",
+        if (available[1]) details[1] else "Empty",
+        if (available[2]) details[2] else "Empty",
+        if (available[3]) details[3] else "Empty",
+    };
+    result = controlDeck(theme, .overlay_states, "LOAD STATE", game_title, &labels, &values, selected, "Game menu", if (available[selected]) "Load" else "Empty");
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -164,46 +187,36 @@ const layout = struct {
     const margin = design.spacing.margin;
     const footer_y = geometry.footer_y;
 };
-const home_layout = struct {
-    const primary = Rect{ .x = 28, .y = 142, .width = 614, .height = 468 };
-    const upper = Rect{ .x = 670, .y = 142, .width = 326, .height = 220 };
-    const lower = Rect{ .x = 670, .y = 390, .width = 326, .height = 220 };
-
-    comptime {
-        if (primary.y + primary.height > geometry.feedback_y or
-            lower.y + lower.height > geometry.feedback_y)
-            @compileError("Home cards intrude into the shared feedback band");
-    }
-};
 pub const Hint = components.Hint;
 pub const Feedback = components.Feedback;
 pub const FeedbackKind = components.FeedbackKind;
 const textLabel = components.text;
 const header = components.header;
-const hint = components.hint;
 const footer = components.footer;
 
+fn displayFont(size: u16, line_height: u16, weight: design.Weight, alignment: design.Alignment) design.Font {
+    return .{ .size = size, .line_height = line_height, .weight = weight, .family = .display, .alignment = alignment };
+}
+
+fn uiFont(size: u16, line_height: u16, weight: design.Weight, alignment: design.Alignment) design.Font {
+    return .{ .size = size, .line_height = line_height, .weight = weight, .alignment = alignment };
+}
+
+fn editorialHeader(result: *Tree, section: []const u8, context: []const u8) void {
+    textLabel(result, .{ .x = 48, .y = 35, .width = 300, .height = 40 }, section, result.theme.text, uiFont(25, 32, .semibold, .start));
+    if (context.len != 0)
+        textLabel(result, .{ .x = 540, .y = 35, .width = 436, .height = 40 }, context, result.theme.muted, uiFont(25, 32, .regular, .end));
+}
+
 fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, selected: bool, identity: ?interaction.Id, dim: u8, tilt: i16) void {
-    const sprite = if (cart) game.assets.card orelse game.assets.sprite else game.assets.cover;
-    if (!cart and sprite == null and game.assets.preview == null) {
-        result.add(.{ .bar = .{ .bounds = bounds, .color = if (selected) result.theme.selection else result.theme.surface, .radius = geometry.radius } });
-        const inset: u16 = if (selected) 4 else 0;
-        if (selected) result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x + inset, .y = bounds.y + inset, .width = bounds.width - 2 * inset, .height = bounds.height - 2 * inset }, .color = result.theme.surface, .radius = geometry.radius } });
-        result.add(.{ .text = .{ .bounds = .{ .x = bounds.x + 16, .y = bounds.y + bounds.height / 4, .width = bounds.width -| 32, .height = @min(120, bounds.height / 2) }, .value = game.system, .color = result.theme.muted, .font = font.caption, .lines = 2 } });
-        return;
-    }
-    result.add(.{ .cartridge = .{
-        .id = identity orelse .none,
-        .state = if (identity != null) .focused else .idle,
+    game_object.add(result, game, .{
         .bounds = bounds,
-        .platform = game.platform_id,
-        .texture = game.assets.preview,
-        .sprite = sprite,
-        .selected = selected,
+        .presentation = if (cart) .spatial else .cover,
+        .id = identity orelse .none,
+        .focused = selected,
         .dim = dim,
         .tilt = tilt,
-        .plain_fallback = !cart,
-    } });
+    });
 }
 
 fn caption(result: *Tree, game: catalog.Game) void {
@@ -222,32 +235,51 @@ pub fn home(theme: Theme, selected: usize) Tree {
 
 pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumable: bool) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, "Brick");
-    if (recent) |game| {
-        components.actionCard(&result, .home, 0, selected == 0, home_layout.primary, if (resumable) "READY TO RESUME" else "LAST PLAYED", game.title, if (resumable) "Continue your last session" else "Play again", .primary, 2, 1);
-        if (game.assets.cover != null or game.assets.preview != null)
-            artwork(&result, game, .{ .x = 370, .y = 170, .width = 244, .height = 216 }, false, false, null, 0, 0);
-        components.actionCard(&result, .home, 1, selected == 1, home_layout.upper, "LIBRARY", "Games", "Browse your collection", .secondary, 1, 2);
-        components.actionCard(&result, .home, 2, selected == 2, home_layout.lower, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
-    } else {
-        components.actionCard(&result, .home, 0, selected == 0, home_layout.primary, "LIBRARY", "Games", "Browse and play your collection", .primary, 1, 1);
-        components.actionCard(&result, .home, 1, selected == 1, .{ .x = home_layout.upper.x, .y = home_layout.upper.y, .width = home_layout.upper.width, .height = home_layout.primary.height }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
+    const with_recent = recent != null;
+    textLabel(&result, .{ .x = 48, .y = 38, .width = 500, .height = 34 }, if (with_recent) "RETURN TO PLAY" else "BRICK", theme.muted, uiFont(22, 30, .semibold, .start));
+    const labels = if (with_recent) [_][]const u8{ "Continue", "Library", "Device" } else [_][]const u8{ "Library", "Device", "" };
+    const count: usize = if (with_recent) 3 else 2;
+    const title: []const u8 = if (with_recent) recent.?.title else "Choose a game";
+    const detail: []const u8 = if (with_recent)
+        (if (resumable) "Your last session is ready." else "Start the last game again.")
+    else
+        "Your library is the shortest path from power-on to play.";
+    result.add(.{ .text_block = .{
+        .bounds = .{ .x = 48, .y = 142, .width = if (with_recent) 510 else 820, .height = 300 },
+        .title = title,
+        .detail = detail,
+        .color = theme.text,
+        .detail_color = theme.muted,
+        .title_font = displayFont(if (with_recent) 66 else 78, if (with_recent) 76 else 90, .semibold, .start),
+        .detail_font = uiFont(30, 42, .regular, .start),
+        .lines = 2,
+        .detail_lines = 2,
+        .gap = 22,
+    } });
+    if (recent) |game| artwork(&result, game, .{ .x = 652, .y = 126, .width = 296, .height = 356 }, false, false, null, 0, 0);
+
+    const action_x = if (with_recent) [_]u16{ 48, 332, 606 } else [_]u16{ 48, 414, 0 };
+    const action_width = if (with_recent) [_]u16{ 228, 218, 218 } else [_]u16{ 310, 310, 0 };
+    for (labels[0..count], 0..) |label, index| {
+        const active = selected == index;
+        textLabel(&result, .{ .x = action_x[index], .y = 552, .width = action_width[index], .height = 62 }, label, if (active) theme.text else theme.muted, uiFont(if (active) 39 else 28, if (active) 50 else 40, if (active) .semibold else .regular, .start));
+        if (active) components.focusAnchor(&result, .home, index, true, .{ .x = action_x[index], .y = 546, .width = action_width[index], .height = 72 });
     }
-    footer(&result, &.{ .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = if (recent == null) "Open" else if (selected == 0) (if (resumable) "Resume" else "Play") else "Open" } });
+    footer(&result, &.{.{ .control = .confirm, .label = if (with_recent and selected == 0) (if (resumable) "Resume" else "Play") else "Open" }});
     return result;
 }
 
 pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
-    return libraryCollection(theme, .{ .games = games }, selected, view, shelf_offset);
+    return libraryCollection(theme, .{ .games = games }, selected, selected, view, shelf_offset);
 }
 
-pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
+pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected: usize, preview_selected: usize, view: LibraryView, shelf_offset: i16) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, "Games");
-    var right_font = font.caption;
-    right_font.alignment = .end;
-    textLabel(&result, .{ .x = 480, .y = 41, .width = 420, .height = 44 }, collection.label(), theme.muted, right_font);
-    hint(&result, 912, 41, 0, .{ .control = .filter, .label = "" });
+    editorialHeader(&result, switch (view) {
+        .recent => "Recent",
+        .browse => "Browse",
+        .all => "All games",
+    }, collection.label());
     const count = collection.len();
     if (count == 0) {
         textLabel(&result, .{ .x = 48, .y = 224, .width = 928, .height = 64 }, "No games yet", theme.text, font.title);
@@ -255,34 +287,36 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
         footer(&result, &.{.{ .control = .back, .label = "Home" }});
         return result;
     }
-    const game = collection.at(selected);
+    const game = collection.at(@min(preview_selected, count - 1));
     switch (view) {
-        .list => {
-            const visible = @min(count, 4);
-            const first = if (selected > 1) @min(selected - 1, count - visible) else 0;
+        .recent => {
+            const visible = @min(count, 5);
+            const first = @min(selected -| 2, count - visible);
             for (first..first + visible) |index| {
                 const entry = collection.at(index);
-                var row = components.selectable(.library, index, index == selected, .{ .x = 28, .y = 138 + @as(u16, @intCast(index - first)) * 134, .width = 968, .height = 134 }, entry.title);
-                row.detail = if (collection.system == null) entry.system else "";
-                row.disclosure = false;
-                row.lines = if (index == selected) 2 else 1;
-                row.menu(&result);
-            }
-        },
-        .grid => {
-            const first = (selected / 6) * 6;
-            for (first..@min(first + 6, count)) |index| {
-                const x: u16 = 48 + @as(u16, @intCast((index - first) % 3)) * 316;
-                const y: u16 = 136 + @as(u16, @intCast((index - first) / 3)) * 184;
                 const active = index == selected;
-                components.selectable(.library, index, active, .{ .x = x, .y = y, .width = 292, .height = 172 }, "").frame(&result);
-                // The grid cell owns focus; do not add a second artwork frame.
-                artwork(&result, collection.at(index), .{ .x = x + 12, .y = y + 10, .width = 268, .height = 152 }, false, false, null, 0, 0);
+                const row_y: u16 = 126 + @as(u16, @intCast(index - first)) * 91;
+                textLabel(&result, .{ .x = 48, .y = row_y, .width = 448, .height = 68 }, entry.title, if (active) theme.text else theme.muted, uiFont(if (active) 43 else 29, if (active) 54 else 40, if (active) .semibold else .regular, .start));
+                if (active) components.focusAnchor(&result, .library, index, true, .{ .x = 48, .y = row_y, .width = 448, .height = 72 });
             }
-            caption(&result, game);
+            artwork(&result, game, .{ .x = 566, .y = 132, .width = 382, .height = 408 }, false, true, null, 0, 0);
+            textLabel(&result, .{ .x = 566, .y = 558, .width = 382, .height = 38 }, game.system, theme.muted, uiFont(24, 32, .regular, .center));
         },
-        .shelf => {
-            const order = [_]i8{ -4, 4, -3, 3, -2, 2, -1, 1, 0 };
+        .all => {
+            const visible = @min(count, 8);
+            const first = @min(selected -| 3, count - visible);
+            for (first..first + visible) |index| {
+                const entry = collection.at(index);
+                const active = index == selected;
+                const row_y: u16 = 116 + @as(u16, @intCast(index - first)) * 62;
+                textLabel(&result, .{ .x = 48, .y = row_y, .width = 724, .height = 52 }, entry.title, if (active) theme.text else theme.muted, uiFont(if (active) 34 else 25, if (active) 42 else 34, if (active) .semibold else .regular, .start));
+                textLabel(&result, .{ .x = 792, .y = row_y, .width = 136, .height = 52 }, entry.system, if (active) theme.accent else theme.muted, uiFont(20, 30, if (active) .semibold else .regular, .end));
+                if (active) components.focusAnchor(&result, .library, index, true, .{ .x = 48, .y = row_y, .width = 880, .height = 52 });
+            }
+            components.continuation(&result, 116, 612, first != 0, first + visible < count);
+        },
+        .browse => {
+            const order = [_]i8{ -1, 1, 0 };
             for (order) |relative| {
                 const index = @as(i64, @intCast(selected)) + relative;
                 if (index < 0 or index >= count) continue;
@@ -291,10 +325,11 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 artwork(&result, collection.at(source_index), pose.bounds, true, relative == 0, if (relative == 0) interaction.Id.scoped(.library, source_index) else null, pose.dim, pose.tilt);
                 if (result.elements[result.len - 1] == .cartridge) result.elements[result.len - 1].cartridge.clip_left = pose.clip_left;
             }
-            caption(&result, game);
+            if (game.assets.card != null or game.assets.sprite != null or game.assets.preview != null)
+                caption(&result, game);
         },
     }
-    footer(&result, &.{ .{ .control = .back, .label = "Home" }, .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = "View" }, .{ .control = .confirm, .label = "Play" } });
+    footer(&result, &.{ .{ .control = .menu, .label = "Device" }, .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = "Density" }, .{ .control = .confirm, .label = "Play" } });
     return result;
 }
 
@@ -303,11 +338,11 @@ const ShelfPose = struct { bounds: Rect, dim: u8, tilt: i16, clip_left: u16 };
 fn shelfPose(relative: i8, offset: i16) ShelfPose {
     const position = @as(i32, relative) * 1000 + offset;
     const distance = @abs(position);
-    // The fourth neighbour enters from outside the viewport during navigation.
-    const center = 512 + @divTrunc(position * 184, 1000);
-    const width: i32 = if (distance < 1000) 389 - @as(i32, @intCast(distance * 133 / 1000)) else 256;
+    const center = 512 + @divTrunc(position * 278, 1000);
+    const width: i32 = if (distance < 1000) 390 - @as(i32, @intCast(distance * 170 / 1000)) else 220;
+    const height: i32 = if (distance < 1000) 330 - @as(i32, @intCast(distance * 70 / 1000)) else 260;
     return .{
-        .bounds = .{ .x = @intCast(@max(0, center - @divTrunc(width, 2))), .y = 154, .width = @intCast(width), .height = 330 },
+        .bounds = .{ .x = @intCast(@max(0, center - @divTrunc(width, 2))), .y = @intCast(154 + @divTrunc(330 - height, 2)), .width = @intCast(width), .height = @intCast(height) },
         .clip_left = @intCast(@max(0, @divTrunc(width, 2) - center)),
         .dim = @intCast(@min(71, distance * 71 / 1000)),
         .tilt = 0,
@@ -359,11 +394,26 @@ pub fn message(theme: Theme, title: []const u8, subject: []const u8, detail: []c
 }
 
 pub fn confirmation(theme: Theme, title: []const u8, subject: []const u8, detail: []const u8, action: []const u8, selected: usize) Tree {
-    var result = message(theme, title, subject, detail);
-    for ([_][]const u8{ "Cancel", action }, 0..) |label, index| {
-        var row = components.selectable(.confirmation, index, selected == index, .{ .x = 28, .y = 492 + @as(u16, @intCast(index)) * 88, .width = 968, .height = 88 }, label);
-        row.disclosure = false;
-        row.menu(&result);
+    var result = Tree{ .theme = theme, .background = theme.background };
+    editorialHeader(&result, "CONFIRM", title);
+    result.add(.{ .text_block = .{
+        .bounds = .{ .x = 48, .y = 158, .width = 880, .height = 226 },
+        .title = subject,
+        .detail = detail,
+        .color = theme.text,
+        .detail_color = theme.muted,
+        .title_font = displayFont(53, 63, .semibold, .start),
+        .detail_font = uiFont(28, 40, .regular, .start),
+        .lines = 2,
+        .detail_lines = 2,
+        .gap = 22,
+    } });
+    const labels = [_][]const u8{ "Cancel", action };
+    for (labels, 0..) |label, index| {
+        const active = selected == index;
+        const x: u16 = 48 + @as(u16, @intCast(index)) * 470;
+        textLabel(&result, .{ .x = x, .y = 486, .width = 410, .height = 74 }, label, if (active) theme.text else theme.muted, uiFont(if (active) 40 else 30, if (active) 52 else 42, if (active) .semibold else .regular, .center));
+        if (active) components.focusAnchor(&result, .confirmation, index, true, .{ .x = x, .y = 486, .width = 410, .height = 78 });
     }
     footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = "Select" } });
     return result;
@@ -371,16 +421,18 @@ pub fn confirmation(theme: Theme, title: []const u8, subject: []const u8, detail
 
 pub fn choice(theme: Theme, title: []const u8, labels: []const []const u8, selected: usize, active: ?usize, note: []const u8, back: []const u8) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, title);
+    editorialHeader(&result, "CONTROL", title);
     const visible = @min(labels.len, if (note.len != 0) @as(usize, 4) else 6);
     const first = @min(selected -| 2, labels.len - visible);
     const bottom: u16 = if (note.len != 0 or @import("std").mem.eql(u8, title, "Appearance")) 530 else 676;
     const step = (bottom - 138) / @as(u16, @intCast(@max(1, visible)));
     for (first..first + visible) |index| {
-        var row = components.selectable(.choice, index, selected == index, .{ .x = 28, .y = 138 + @as(u16, @intCast(index - first)) * step, .width = 968, .height = step }, labels[index]);
-        row.value = if (active == index) "✓" else "";
-        row.disclosure = false;
-        row.overlay(&result);
+        const focused = selected == index;
+        const row_y = 138 + @as(u16, @intCast(index - first)) * step;
+        textLabel(&result, .{ .x = 48, .y = row_y, .width = 700, .height = step -| 8 }, labels[index], if (focused) theme.text else theme.muted, uiFont(if (focused) 43 else 31, if (focused) 52 else 42, if (focused) .semibold else .regular, .start));
+        if (active == index)
+            textLabel(&result, .{ .x = 792, .y = row_y, .width = 136, .height = step -| 8 }, "ACTIVE", theme.accent, uiFont(21, 30, .semibold, .end));
+        if (focused) components.focusAnchor(&result, .choice, index, true, .{ .x = 48, .y = row_y, .width = 880, .height = step -| 8 });
     }
     components.continuation(&result, 138, bottom, first != 0, first + visible < labels.len);
     if (note.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 538, .width = 928, .height = 88 }, .value = note, .color = theme.muted, .font = font.caption, .lines = 2 } });
@@ -393,16 +445,12 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
     if (item == .brightness) {
         var result = Tree{ .theme = theme, .background = theme.background };
         header(&result, "Brightness");
-        var large = font.brand;
-        large.alignment = .center;
-        large.size = 112;
-        large.line_height = 135;
-        large.weight = .regular;
-        textLabel(&result, .{ .x = 82, .y = 223, .width = 860, .height = 135 }, values.value(.brightness), theme.text, large);
-        components.meter(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 96, .y = 394, .width = 832, .height = 40 }, @as(u16, values.brightness) * 100);
+        textLabel(&result, .{ .x = 96, .y = 236, .width = 500, .height = 44 }, "Panel output", theme.muted, uiFont(28, 38, .regular, .start));
+        textLabel(&result, .{ .x = 760, .y = 236, .width = 168, .height = 40 }, values.value(.brightness), theme.muted, uiFont(22, 30, .regular, .end));
+        components.steppedMeter(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 96, .y = 326, .width = 832, .height = 48 }, @as(u16, values.brightness) * 100, 11);
         var note_font = font.caption;
         note_font.alignment = .center;
-        textLabel(&result, .{ .x = 82, .y = 502, .width = 860, .height = 40 }, "Left / right to adjust", theme.muted, note_font);
+        textLabel(&result, .{ .x = 82, .y = 442, .width = 860, .height = 40 }, "Left / right to adjust", theme.muted, note_font);
         footer(&result, &.{.{ .control = .back, .label = "Settings" }});
         return result;
     }
@@ -420,17 +468,54 @@ pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []
     const theme = values.appearance.colors();
     const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Reduced motion", "Wi-Fi", "Bluetooth" };
     const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), values.value(.reduced_motion), wifi_summary, bluetooth_summary };
+    const groups = [_][]const u8{ "DISPLAY", "SYSTEM", "DISPLAY", "POWER", "INTERFACE", "INTERFACE", "CONNECTION", "CONNECTION" };
+    const descriptions = [_][]const u8{
+        "Set the panel output.",
+        "Balance speed and battery life.",
+        "Choose when the screen rests.",
+        "Choose when the device sleeps.",
+        "Select the visual environment.",
+        "Settle movement immediately.",
+        "Join and manage networks.",
+        "Pair controllers and audio.",
+    };
     var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, "Settings");
+    editorialHeader(&result, "DEVICE", groups[selected]);
     const visible: usize = 5;
     const first = @min(selected -| 2, items.len - visible);
     for (items[first .. first + visible], details[first .. first + visible], first..) |item, value, index| {
-        var row = components.selectable(.settings, index, index == selected, .{ .x = 28, .y = geometry.settings_top + @as(u16, @intCast(index - first)) * geometry.settings_step, .width = 968, .height = geometry.settings_height }, item);
-        row.value = value;
-        row.overlay(&result);
+        const active = index == selected;
+        const row_y: u16 = 132 + @as(u16, @intCast(index - first)) * 91;
+        textLabel(&result, .{ .x = 48, .y = row_y, .width = 480, .height = 68 }, item, if (active) theme.text else theme.muted, uiFont(if (active) 43 else 29, if (active) 54 else 40, if (active) .semibold else .regular, .start));
+        if (active) components.focusAnchor(&result, .settings, index, true, .{ .x = 48, .y = row_y, .width = 480, .height = 72 });
+        _ = value;
     }
-    components.continuation(&result, geometry.settings_top, geometry.settings_top + @as(u16, @intCast(visible)) * geometry.settings_step, first != 0, first + visible < items.len);
-    footer(&result, &.{ .{ .control = .back, .label = "Home" }, .{ .control = .confirm, .label = "Open" } });
+    textLabel(&result, .{ .x = 602, .y = 178, .width = 330, .height = 38 }, groups[selected], theme.accent, uiFont(22, 30, .semibold, .start));
+    const brightness_selected = selected == @backingInt(settings_model.Setting.brightness);
+    result.add(.{ .text_block = .{
+        .bounds = .{ .x = 602, .y = 234, .width = 330, .height = 244 },
+        .title = details[selected],
+        .detail = descriptions[selected],
+        .color = if (brightness_selected) theme.muted else theme.text,
+        .detail_color = theme.muted,
+        .title_font = if (brightness_selected) uiFont(22, 30, .regular, .end) else displayFont(58, 68, .semibold, .start),
+        .detail_font = uiFont(27, 39, .regular, .start),
+        .lines = 2,
+        .detail_lines = 3,
+        .gap = if (brightness_selected) 100 else 24,
+    } });
+    result.add(.{ .meter = .{
+        .id = interaction.Id.scoped(.brightness_meter, 0),
+        .bounds = .{ .x = 602, .y = 320, .width = 330, .height = 36 },
+        .value = if (brightness_selected) @as(u16, values.brightness) * 100 else 0,
+        .track = if (brightness_selected) theme.surface else theme.background,
+        .fill = if (brightness_selected) theme.text else theme.background,
+        .thumb = if (brightness_selected) theme.accent else theme.background,
+        .presentation = .stepped,
+        .steps = 11,
+    } });
+    components.continuation(&result, 132, 587, first != 0, first + visible < items.len);
+    footer(&result, &.{ .{ .control = .back, .label = "Library" }, .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = "Open" } });
     return result;
 }
 
@@ -514,8 +599,8 @@ pub fn showNotice(tree: *Tree, notice: []const u8) void {
 
 test "light and dark appearances preserve component geometry and typography" {
     const themes = @import("theme.zig");
-    const light_screens = [_]Tree{ home(themes.light, 0), library(themes.light, &catalog.games, 0, .list, 0), library(themes.light, &catalog.games, 0, .shelf, 0), library(themes.light, &catalog.games, 0, .grid, 0), settings(0, .{}, "Unavailable", "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
-    const dark_screens = [_]Tree{ home(themes.dark, 0), library(themes.dark, &catalog.games, 0, .list, 0), library(themes.dark, &catalog.games, 0, .shelf, 0), library(themes.dark, &catalog.games, 0, .grid, 0), settings(0, .{ .appearance = .dark }, "Unavailable", "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
+    const light_screens = [_]Tree{ home(themes.light, 0), library(themes.light, &catalog.games, 0, .recent, 0), library(themes.light, &catalog.games, 0, .browse, 0), library(themes.light, &catalog.games, 0, .all, 0), settings(0, .{}, "Unavailable", "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
+    const dark_screens = [_]Tree{ home(themes.dark, 0), library(themes.dark, &catalog.games, 0, .recent, 0), library(themes.dark, &catalog.games, 0, .browse, 0), library(themes.dark, &catalog.games, 0, .all, 0), settings(0, .{ .appearance = .dark }, "Unavailable", "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
     for (&light_screens, &dark_screens) |*light_screen, *dark_screen| {
         try std.testing.expectEqual(light_screen.len, dark_screen.len);
         for (light_screen.slice(), dark_screen.slice()) |a, b| {
@@ -596,14 +681,11 @@ test "game launch owns activity while launch failure remains terminal" {
 }
 
 pub fn saveSlots(theme: Theme, title: []const u8, selected: usize, available: [4]bool) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    overlayFrame(&result, "Save state", title);
-    for ([_][]const u8{ "Slot 1", "Slot 2", "Slot 3" }, 0..) |label, index| {
-        var row = components.selectable(.save_slots, index, selected == index, .{ .x = 28, .y = 160 + @as(u16, @intCast(index)) * 150, .width = 968, .height = 140 }, label);
-        row.detail = if (available[index]) "Saved state" else "Empty";
-        row.disclosure = false;
-        row.overlay(&result);
-    }
-    footer(&result, &.{ .{ .control = .back, .label = "Game menu" }, .{ .control = .confirm, .label = "Save" } });
-    return result;
+    const labels = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
+    const values = [_][]const u8{
+        if (available[0]) "Replace saved state" else "Empty",
+        if (available[1]) "Replace saved state" else "Empty",
+        if (available[2]) "Replace saved state" else "Empty",
+    };
+    return controlDeck(theme, .save_slots, "SAVE STATE", title, &labels, &values, selected, "Game menu", "Save");
 }

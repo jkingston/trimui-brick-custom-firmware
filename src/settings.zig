@@ -5,7 +5,7 @@ pub const Setting = enum { brightness, performance, display_timeout, suspend_tim
 pub const Performance = enum { battery, balanced, performance };
 
 pub const Values = struct {
-    appearance: @import("theme.zig").Mode = .light,
+    appearance: @import("theme.zig").Mode = .dark,
     brightness: u8 = 10,
     performance: Performance = .balanced,
     display_timeout: u8 = 4,
@@ -140,13 +140,13 @@ test "appearance saves atomically without affecting device settings" {
     defer temporary.cleanup();
     var values = Values{};
     values.adjust(.appearance, 1);
-    try std.testing.expectEqual(@import("theme.zig").Mode.dark, values.appearance);
+    try std.testing.expectEqual(@import("theme.zig").Mode.light, values.appearance);
     try saveAppearance(std.testing.io, temporary.dir, values.appearance);
     var buffer: [8]u8 = undefined;
-    try std.testing.expectEqualStrings("1\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
+    try std.testing.expectEqualStrings("0\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
     values.adjust(.appearance, -1);
     try saveAppearance(std.testing.io, temporary.dir, values.appearance);
-    try std.testing.expectEqualStrings("0\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
+    try std.testing.expectEqualStrings("1\n", try temporary.dir.readFile(std.testing.io, "appearance", &buffer));
     try std.testing.expectEqual(@as(u8, 10), values.brightness);
 }
 

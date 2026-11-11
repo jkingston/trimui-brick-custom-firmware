@@ -5,6 +5,7 @@ const font = design.typeface;
 const geometry = design.geometry;
 const scene = @import("ui_scene.zig");
 const wifi_model = @import("wifi.zig");
+const radio_surface = @import("radio_surface.zig");
 
 const Theme = scene.Theme;
 const Tree = scene.Tree;
@@ -67,20 +68,27 @@ fn wifiValue(network: *const wifi_model.Network) []const u8 {
 }
 
 pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
+    if (!state.initialized) return radio_surface.status(theme, .{
+        .title = "Wi-Fi",
+        .subject = "Checking Wi-Fi",
+        .detail = "This will only take a moment.",
+        .scope = .wifi_list,
+        .progress = true,
+    });
+    if (state.snapshot.radio != .ready) return switch (state.snapshot.radio) {
+        .off => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Wi-Fi is off", .detail = "Turn it on to find networks.", .scope = .wifi_list, .action_label = "Turn on" }),
+        .starting => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Turning Wi-Fi on", .detail = "This usually takes a moment.", .scope = .wifi_list, .progress = true, .action_label = "Cancel" }),
+        .stopping => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Turning Wi-Fi off", .detail = "This will only take a moment.", .scope = .wifi_list, .progress = true }),
+        .unavailable => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Wi-Fi isn't available", .detail = "You can keep using the device without it.", .scope = .wifi_list }),
+        .failed => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Wi-Fi unavailable", .detail = "Try again, or continue without it.", .scope = .wifi_list, .action_label = "Try again" }),
+        .ready => unreachable,
+    };
+
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, "Wi-Fi");
-    var radio = components.selectable(.wifi_list, 0, state.selected == 0, .{ .x = 28, .y = 116, .width = 968, .height = 92 }, "Wi-Fi");
-    radio.value = if (!state.initialized) "Checking…" else switch (state.snapshot.radio) {
-        .off => "Off",
-        .stopping => "Stopping…",
-        .starting => "Starting…",
-        .ready => "On",
-        .unavailable => "Unavailable",
-        .failed => "Failed",
-    };
-    radio.disclosure = false;
-    radio.overlay(&result);
-    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 218, .width = 928, .height = 40 }, .value = state.status(), .color = theme.muted, .font = font.caption } });
+    components.text(&result, .{ .x = 780, .y = 42, .width = 196, .height = 42 }, "On", if (state.selected == 0) theme.accent else theme.muted, .{ .size = 25, .line_height = 34, .weight = if (state.selected == 0) .semibold else .regular, .alignment = .end });
+    components.focusAnchor(&result, .wifi_list, 0, state.selected == 0, .{ .x = 720, .y = 28, .width = 272, .height = 64 });
+    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 104, .width = 928, .height = 40 }, .value = state.status(), .color = theme.muted, .font = font.caption } });
 
     const visible: usize = 3;
     const total = state.itemCount() - 1;
@@ -88,7 +96,7 @@ pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
     const first: usize = @min(logical -| 2, total -| visible);
     for (0..@min(visible, total - first)) |row_index| {
         const item = first + row_index;
-        const y: u16 = 258 + @as(u16, @intCast(row_index)) * 108;
+        const y: u16 = 164 + @as(u16, @intCast(row_index)) * 118;
         if (item < state.snapshot.network_count) {
             const network = &state.snapshot.networks[item];
             var row = components.selectable(.wifi_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = y, .width = 968, .height = components.supporting_row_height }, network.name.slice());
@@ -100,21 +108,13 @@ pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
             components.selectable(.wifi_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = y, .width = 968, .height = components.single_row_height }, "Add hidden network").overlay(&result);
         }
     }
-    components.continuation(&result, 258, 582, first != 0, first + visible < total);
-    if (!state.initialized)
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Waiting for the Wi-Fi service to start.", theme.text, font.body)
-    else if (state.snapshot.radio == .off)
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Turn Wi-Fi on to find and connect to networks.", theme.text, font.body)
-    else if (state.snapshot.radio == .unavailable)
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Wi-Fi is unavailable on this device.", theme.text, font.body)
-    else if (state.snapshot.radio == .failed)
-        components.text(&result, .{ .x = 48, .y = 318, .width = 864, .height = 112 }, "Try again. If it still fails, restart the device.", theme.text, font.body);
+    components.continuation(&result, 164, 518, first != 0, first + visible < total);
     var controls = [_]components.Hint{ .{ .control = .back, .label = "Settings" }, .{ .control = .confirm, .label = if (state.selected == 0) switch (state.snapshot.radio) {
         .off => "Turn on",
         .failed => "Retry",
         else => "Turn off",
     } else "Open" }, .{ .control = .filter, .label = "Refresh" } };
-    const actionable = state.initialized and state.snapshot.radio != .unavailable and state.snapshot.radio != .stopping;
+    const actionable = state.snapshot.radio != .unavailable and state.snapshot.radio != .stopping;
     components.footer(&result, controls[0..if (state.snapshot.can_scan) 3 else if (actionable) 2 else 1]);
     return result;
 }

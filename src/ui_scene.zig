@@ -38,11 +38,15 @@ pub const RowStyle = struct {
 pub const FrameStyle = struct { base: Color, background: Color, border: Color, shadow: Color };
 pub const ArtworkStyle = struct { shadow: Color, edge: Color, surface: Color, text: Color };
 pub const CardEmphasis = enum { primary, secondary };
+/// Focus is not synonymous with a filled card. Editorial surfaces use content
+/// hierarchy plus an interaction anchor; dense utility views may use a plate.
+pub const FocusPresentation = enum { plate, quiet };
 pub const FocusFrame = struct {
     id: interaction.Id = .none,
     state: interaction.State = .idle,
     style: FrameStyle = std.mem.zeroes(FrameStyle),
     bounds: Rect,
+    presentation: FocusPresentation = .plate,
     focus_offset_x: i16 = 0,
     focus_offset_y: i16 = 0,
     activity_phase: u16 = 0,
@@ -106,7 +110,17 @@ pub const ActionCard = struct {
     }
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem.zeroes(Color), charge: Color = std.mem.zeroes(Color) };
-pub const Meter = struct { id: interaction.Id, bounds: Rect, value: u16, track: Color, fill: Color, thumb: Color };
+pub const MeterPresentation = enum { continuous, stepped };
+pub const Meter = struct {
+    id: interaction.Id,
+    bounds: Rect,
+    value: u16,
+    track: Color,
+    fill: Color,
+    thumb: Color,
+    presentation: MeterPresentation = .continuous,
+    steps: u8 = 0,
+};
 pub const Activity = struct { bounds: Rect, color: Color, phase: u16 = 0, animated: bool = true };
 pub const QrCode = struct { bounds: Rect, cells: []const u8, width: u16, foreground: Color, background: Color };
 pub const Keyboard = struct {
@@ -266,7 +280,7 @@ pub const Tree = struct {
             },
             .cartridge => |*item| {
                 item.selected = item.selected or item.state.hasFocus();
-                item.style = .{ .shadow = self.theme.shadow, .edge = if (item.selected) self.theme.accent else self.theme.border, .surface = self.theme.surface, .text = self.theme.muted };
+                item.style = .{ .shadow = self.theme.shadow, .edge = self.theme.border, .surface = self.theme.surface, .text = self.theme.muted };
             },
             .battery => |*item| {
                 item.outline = self.theme.text;
@@ -283,18 +297,20 @@ pub const Tree = struct {
     }
 
     fn rowStyle(self: *const Tree, state: interaction.State) RowStyle {
-        const selected = state.hasFocus();
         const pressed = state == .pressed or state == .activating;
         const disabled = state == .disabled;
         const failed = state == .failed;
         return .{
             .base = self.theme.background,
-            .background = if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
+            // Focus changes hierarchy; it does not turn every control into a
+            // card. The renderer adds one shared baseline. Press is the only
+            // momentary filled state.
+            .background = if (pressed) self.theme.selection else self.theme.background,
             .text = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.text,
             .detail = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.muted,
-            .border = if (failed) self.theme.danger else if (state == .boundary) self.theme.accent else if (pressed) self.theme.selection else self.theme.surface,
+            .border = if (failed) self.theme.danger else if (state == .boundary) self.theme.accent else if (pressed) self.theme.selection else self.theme.background,
             .accent = if (failed) self.theme.danger else if (disabled) self.theme.muted else self.theme.accent,
-            .shadow = self.theme.focus_shadow,
+            .shadow = self.theme.background,
         };
     }
 
@@ -367,7 +383,7 @@ pub const Tree = struct {
             .cartridge => |*item| if (item.id == id) {
                 item.state = state;
                 item.selected = state.hasFocus();
-                item.style.edge = if (state == .failed) self.theme.danger else if (item.selected) self.theme.accent else self.theme.border;
+                item.style.edge = if (state == .failed) self.theme.danger else self.theme.border;
                 return true;
             },
             .keyboard => |*item| if (item.id == id) {

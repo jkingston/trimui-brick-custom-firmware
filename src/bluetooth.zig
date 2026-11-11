@@ -90,7 +90,7 @@ pub const Snapshot = struct {
     pub fn summary(self: Snapshot) []const u8 {
         return switch (self.radio) {
             .unavailable => "Unavailable",
-            .failed => "Failed",
+            .failed => "Needs attention",
             .off => "Off",
             .stopping => "Stopping…",
             .starting => "Starting…",
@@ -103,7 +103,7 @@ pub const Snapshot = struct {
             .off => "Bluetooth off",
             .starting => "Turning Bluetooth on…",
             .stopping => "Turning Bluetooth off…",
-            .failed => "Bluetooth could not start",
+            .failed => "Bluetooth unavailable",
             .ready => switch (self.operation) {
                 .pairing => "Pairing device…",
                 .connection => "Connecting device…",
@@ -421,7 +421,7 @@ test "failed radio is distinct from unavailable radio" {
     var snapshot = Snapshot{ .radio = .unavailable };
     try std.testing.expectEqualStrings("Unavailable", snapshot.summary());
     snapshot.radio = .failed;
-    try std.testing.expectEqualStrings("Failed", snapshot.summary());
+    try std.testing.expectEqualStrings("Needs attention", snapshot.summary());
 }
 
 test "startup is checking until the authority supplies a snapshot" {

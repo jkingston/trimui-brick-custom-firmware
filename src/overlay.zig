@@ -11,7 +11,7 @@ const state_count = 4;
 const save_slot_count = 3;
 
 pub const Model = struct {
-    appearance: @import("theme.zig").Mode = .light,
+    appearance: @import("theme.zig").Mode = .dark,
     reduced_motion: bool = false,
     layer: Layer = .pause,
     selected: usize = 0,

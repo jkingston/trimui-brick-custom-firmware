@@ -56,7 +56,7 @@ make -C "$base" O="$output" EXTERNALS="$externals" configure
 "$buildroot/utils/config" --file "$output/.config" --enable BR2_PACKAGE_BRICK_SHELL
 "$buildroot/utils/config" --file "$output/.config" --set-str \
     BR2_PACKAGE_GOOGLEFONTDIRECTORY_FONTS \
-    'ofl/inter ofl/notosans ofl/notosansarabic ofl/notosanshebrew ofl/notosansdevanagari ofl/notosansbengali ofl/notosansgurmukhi ofl/notosansgujarati ofl/notosansoriya ofl/notosanstamil ofl/notosanstelugu ofl/notosanskannada ofl/notosansmalayalam ofl/notosanssinhala ofl/notosansthai ofl/notosanslao ofl/notosanskhmer ofl/notosanssc ofl/notosansarmenian ofl/notosansgeorgian ofl/notosansethiopic ofl/notosansmyanmar ofl/notosanssymbols2 ofl/notoemoji'
+    'ofl/inter ofl/notosans ofl/notosansarabic ofl/notosanshebrew ofl/notosansdevanagari ofl/notosansbengali ofl/notosansgurmukhi ofl/notosansgujarati ofl/notosansoriya ofl/notosanstamil ofl/notosanstelugu ofl/notosanskannada ofl/notosansmalayalam ofl/notosanssinhala ofl/notosansthai ofl/notosanslao ofl/notosanskhmer ofl/notosanssc ofl/notosanstc ofl/notosansjp ofl/notosanskr ofl/notosansarmenian ofl/notosansgeorgian ofl/notosansethiopic ofl/notosansmyanmar ofl/notosanssymbols2 ofl/notoemoji'
 "$buildroot/utils/config" --file "$output/.config" --set-str BR2_ROOTFS_POST_BUILD_SCRIPT \
     '$(BR2_EXTERNAL_BRICK_PATH)/board/trimui/brick/post-build.sh $(BR2_EXTERNAL_BRICK_UI_PATH)/board/trimui/brick/post-build.sh'
 make -C "$buildroot" O="$output" BR2_EXTERNAL="$externals" \

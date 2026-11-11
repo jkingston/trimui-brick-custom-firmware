@@ -1,8 +1,36 @@
-# Brick interaction design
+# Brick product interface contract
 
 This is the minimum product contract for new shell UI. It is deliberately
 short: values live in code, behavior lives in reusable components, and this
 document explains the decisions they enforce.
+
+## Product model
+
+Brick is a game that can reveal a system, not a system that happens to launch
+games. There is no routine universal home screen.
+
+1. A resumable game is the boot destination. The automatic state is loaded by
+   the emulator before the shell asks the player to navigate anything.
+2. Menu from a game reveals the **Quick system** over a retained representation
+   of that game. Resume is the first focus and Menu closes the layer from every
+   depth.
+3. Leaving a game enters one **Library** whose density changes progressively:
+   **Recent** is editorial and immediate, **Browse** is spatial, and **All
+   games** is a compact typographic index. These are modes of one collection,
+   not separately themed screens.
+4. Device settings are entered intentionally from the library or quick system.
+5. A foyer is permitted only when no game can be resumed, the library is empty,
+   or recovery is required. It must not become the normal navigation hub.
+
+The current emulator owns DRM while running and exits before the shell opens
+Quick system. Therefore the component accepts a retained game representation;
+today its guaranteed fallback is authored game identity. A future framebuffer
+capture or compositor may supply the actual last frame without changing the
+component or its interaction model.
+
+Cross-device accounts, transfer, conflicts, and remote handoff are outside this
+contract. Do not let speculative continuity add latency or hierarchy to local
+play.
 
 ## Product principles
 
@@ -33,6 +61,8 @@ document explains the decisions they enforce.
 | Identity, control lifecycle, focus boundaries | `src/interaction.zig` |
 | Sound/haptic event policy | `src/feedback.zig` |
 | Selectable controls and notice lifecycle | `src/ui_components.zig` |
+| Game identity across every library density | `src/game_object.zig` |
+| Wi-Fi/Bluetooth initialization and recovery | `src/radio_surface.zig` |
 | Renderer-neutral state and post-build interaction | `src/ui_scene.zig` |
 | Input collection and device integration | `src/linux_backend.zig` |
 
@@ -44,14 +74,20 @@ select a `MotionRole`; they do not construct private motion styles.
 - Hierarchy comes from scale, spacing, weight, and composition—not decorative
   markers. Selection rails, glowing edges, nested pills, and ornamental cards
   are not part of Brick's language.
-- Resting controls live on the page. The focused control alone gains a quiet
-  matte surface and depth; press contracts and inverts that same surface.
-- Use warm paper and deep ink in light mode, near-black and warm white in dark
-  mode. Status colour is reserved for actual warning or failure state.
+- Treat the device as a compact game instrument, not a settings application.
+  The exceptional foyer is a stage, the library changes density without losing
+  identity, device controls pair a moving index with a stable value stage, and
+  Quick system makes the game recede without pretending it disappeared.
+- Resting controls live directly on the page. Focus is expressed by type scale,
+  weight, position, contrast, and artwork emphasis. Do not add a baseline,
+  leading bar, rail, glow, or outline merely to make focus visible. Filled
+  surfaces are reserved for momentary press acknowledgement.
+- Use bone and carbon neutrals. Signal cyan echoes the hardware LEDs and means
+  current position, active control, or live state; it is not decoration.
 - Inter establishes titles, high-emphasis actions, and UI copy through the
   shared type scale. Noto Sans remains the multilingual fallback. Do not choose
   typefaces in a screen.
-- Footers are one hairline action rail: navigation/context at the left,
+- Footers are one quiet action line: navigation/context at the left,
   immediate actions grouped at the right. Keep labels short and action-led.
   The shared footer preserves the primary action and collapses supporting
   labels toward icon-only before controls can collide; screens never assign
@@ -77,7 +113,111 @@ as unrelated booleans in a view.
 
 ## Component recipes
 
-### Selectable row or tile
+### Focus object
+
+For a typography- or artwork-led surface, draw the content at its intended
+hierarchy and use `ui_components.focusAnchor()` for stable identity, press,
+boundary, and navigation anchoring. The component is intentionally visually
+quiet at rest: the content owns focus presentation. A screen must not implement
+its own rail, pill, glow, underline, or focus animation.
+
+Focused and active are separate. Focus answers “what will I operate?”; active
+answers “what is running or already selected?”. An active game or setting may
+remain marked when focus moves elsewhere.
+
+The reusable composition patterns are:
+
+| Pattern | Use | Structure |
+| --- | --- | --- |
+| Stage | Foyer, empty state, launch | One dominant subject and one obvious next action |
+| Receding room | Quick system | Retained game left/back + compact controls right/front |
+| Progressive density | Library | Recent editorial → Browse spatial → All games index |
+| Index + value stage | Settings, device controls | Navigable labels left + stable value/context right |
+| Decision pair | Confirmation | Clear consequence + two balanced actions |
+
+### Game object
+
+Every density uses the same logical game identity and state. `GameObject`
+composition consists of artwork when available, an authored typographic
+identity when it is not, title, system, stable interaction ID, focus state, and
+an independent `active` state. Density changes geometry and information amount;
+it must not swap to a different selection metaphor.
+
+Missing artwork is not an empty grey card. Use system name, title typography,
+and the same proportions as real artwork so a collection remains authored when
+metadata is incomplete.
+
+### Values and visual evidence
+
+A number is not automatically the most important representation of a value.
+Use spatial level, shape, position, or state first when that is how the player
+judges the result; keep exact text as secondary evidence when precision remains
+useful. Brightness is primarily a meter with a subordinate percentage. Device
+battery is primarily a compact battery level with a small percentage. Do not
+make `100%` larger than the control, device, or consequence it describes.
+
+### Control grammar
+
+Choose a control by behavior, not by the visual convention a screen happens to
+resemble:
+
+| Behavior | Representation | Rule |
+| --- | --- | --- |
+| Continuous value | Continuous meter | Use only when intermediate values are real and useful |
+| Discrete numeric value | Stepped meter | Show every reachable stop; exact text is secondary |
+| Ordered qualitative value | Magnitude or named choice | Prefer meaning such as Quiet / Balanced / Strong over invented percentages |
+| Immediate reversible boolean | State word | Show `On` / `Off` at the row; confirm changes it |
+| Asynchronous or fallible boolean | Stateful verb | Use `Turn on`, `Cancel`, and `Try again`; never present an operation as a switch |
+| Small safe enumeration | Current value then choice list | Direct cycling is allowed only when every change is reversible and immediately legible |
+| Committed selection | `ACTIVE` text | Active and focused remain independent; do not add radio circles or checkmark cards |
+| Unknown-duration work | Shared activity cadence | No fake percentage or spinner chosen by the screen |
+| Measurable work | Determinate meter | Show progress only when the underlying operation reports it truthfully |
+
+Phone-style switches, segmented pills, and generic slider thumbs are not the
+default Brick vocabulary. `ui_components.meter()` owns continuous values;
+`ui_components.steppedMeter()` owns discrete values. Both keep a stable ID so
+motion retargets rather than restarting.
+
+### Radio initialization
+
+Wi-Fi and Bluetooth checking, starting, stopping, unavailable, and failure
+states use `radio_surface.status()`. They are page-scale device states, not
+disabled toggle rows. State copy is concrete, one shared activity cadence shows
+unfinished work, cancellation appears only when the operation accepts it, and
+successful initialization returns to the actual list. Completion is confirmed
+in place through the shared feedback lifecycle; it does not open a celebratory
+modal.
+
+Copy describes device availability and the user's next choice, never the
+service lifecycle. Say “unavailable” and offer “Try again”; do not
+expose daemons, initialization, startup failure, or recovery implementation.
+
+### Quick system / receding room
+
+Quick system contains only actions useful while a game is paused: Continue,
+Save state, Load state, Performance, Network, and Save and exit. The retained
+game representation remains the largest object, but loses contrast and scale;
+the control column gains contrast without becoming a floating stack of cards.
+Opening and closing are one reversible transform. Reduced motion applies the
+same spatial result immediately and preserves the contrast change.
+
+### Progressive density
+
+The library modes are named by intent, never by widget:
+
+| Density | Job | Navigation | Settlement |
+| --- | --- | --- | --- |
+| Recent | return quickly | vertical editorial sequence | art and detail visible immediately |
+| Browse | explore | horizontal spatial sequence | selected object settles after movement |
+| All games | locate precisely | vertical compact index | title responds immediately; rich preview may wait |
+
+A held direction enters skim behavior through `input_repeat.Controller`.
+Selection and title feedback update on every repeat. Expensive preview/artwork
+work must not delay navigation and should settle only after the hold releases or
+the shared content dwell expires. Screens do not implement private debounce
+timers.
+
+### Dense selectable row or tile
 
 Use `ui_components.selectable(scope, index, focused, bounds, label)`. Add a
 stable `interaction.Id.Scope` and use the logical item index, then set fields and call
@@ -91,13 +231,11 @@ row.value = value;
 row.overlay(&tree);
 ```
 
-### Landing action card
+### Legacy landing action card
 
-Use `ui_components.actionCard()` when a landing or overview surface needs
-spatial hierarchy rather than another list. `primary` is the dominant next
-action; `secondary` is supporting navigation. Cards own the same stable ID,
-state styling, press response, activity feedback, focus motion, and damage
-contract as rows. Never assemble a card from an unrelated focus frame and text.
+`ui_components.actionCard()` remains for genuinely object-like tiles, not page
+navigation. New landing and overview surfaces should normally use Stage or
+Deck composition. A group of generic dashboard cards is not Brick's language.
 
 When focus moves between differently sized cards, `focus_motion.Controller`
 morphs the shared plate's position and size from its visible geometry. Screen
@@ -110,11 +248,11 @@ is distinct from `moved` and `empty`; route it to semantic boundary feedback.
 Grid navigation may calculate its spatial destination, but must preserve the
 same result contract and held-input controller.
 
-`focus_motion.Controller` owns the visible focus plate. Feed each rebuilt scene
-to it before presentation; it retargets from the plate's currently visible
-position and size. Focus uses one restrained moving surface, quiet depth, and a full
-perimeter keyline; press settles inward into the stronger inversion. Do not add
-selection rails, pills, or screen-specific focus ornaments.
+`focus_motion.Controller` owns focus geometry. Feed each rebuilt
+scene to it before presentation; it retargets from its currently visible
+position and size. Content hierarchy presents resting focus; press settles into
+a brief filled acknowledgement. Do not add selection rails, underlines, pills,
+or screen-specific focus ornaments.
 
 When a supported direction cannot move farther, call the controller's
 `boundary()` response. It nudges toward the attempted direction and strengthens
