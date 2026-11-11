@@ -22,7 +22,11 @@ pub const Spec = struct {
 
 pub fn add(tree: *scene.Tree, game: catalog.Game, spec: Spec) void {
     const sprite = switch (spec.presentation) {
-        .cover => game.assets.cover orelse game.assets.preview orelse game.assets.card orelse game.assets.sprite,
+        // A loose front label is not a cover. Prefer complete editorial art,
+        // then the authentic physical-media object that owns that label. This
+        // keeps horizontal GBA labels and disc faces from floating in a large
+        // portrait stage when an authored cartridge or disc is available.
+        .cover => game.assets.cover orelse game.assets.card orelse game.assets.sprite orelse game.assets.preview,
         .cartridge, .spatial => game.assets.card orelse game.assets.sprite,
     };
 
@@ -87,4 +91,19 @@ test "missing artwork remains an authored focus object" {
     try std.testing.expectEqual(@as(usize, 2), tree.len);
     try std.testing.expectEqual(game.cover, tree.elements[0].cover.kind);
     try tree.validate();
+}
+
+test "cover presentation prefers complete media over a loose front label" {
+    const label_pixels = [_]u32{0xff010203};
+    const media_pixels = [_]u32{0xff040506};
+    const texture = @import("asset_manifest.zig").Texture;
+    var game = catalog.games[0];
+    game.assets = .{
+        .preview = texture{ .width = 1, .height = 1, .pixels = &label_pixels, .content_x = 0, .content_y = 0, .content_width = 1, .content_height = 1 },
+        .sprite = texture{ .width = 1, .height = 1, .pixels = &media_pixels, .content_x = 0, .content_y = 0, .content_width = 1, .content_height = 1 },
+    };
+    const theme = @import("theme.zig").dark;
+    var tree = scene.Tree{ .theme = theme, .background = theme.background };
+    add(&tree, game, .{ .bounds = .{ .x = 48, .y = 120, .width = 320, .height = 360 } });
+    try std.testing.expectEqual(@as(u32, 0xff040506), tree.elements[0].cartridge.sprite.?.pixels[0]);
 }

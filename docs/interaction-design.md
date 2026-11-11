@@ -151,6 +151,9 @@ Missing artwork is not an empty grey card. Use system name, title typography,
 or an authentic physical-media form so a collection remains authored when
 metadata is incomplete. Bundled titles use authored covers. Browse preserves
 cover proportions and depth; it does not stretch art into a generic card.
+`GameObject` treats a loose label or disc face as material for its physical
+object, not as a complete cover: editorial cover/card art comes first, the
+authentic cartridge or disc comes next, and the loose texture is a last resort.
 
 ### Values and visual evidence
 
