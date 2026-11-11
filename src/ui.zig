@@ -170,10 +170,12 @@ const header = components.header;
 const hint = components.hint;
 const footer = components.footer;
 
-fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, dim: u8, tilt: i16) void {
+fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, selected: bool, dim: u8, tilt: i16) void {
     const sprite = if (cart) game.assets.card orelse game.assets.sprite else game.assets.cover;
     if (!cart and sprite == null and game.assets.preview == null) {
-        result.add(.{ .bar = .{ .bounds = bounds, .color = result.theme.surface, .radius = geometry.radius } });
+        result.add(.{ .bar = .{ .bounds = bounds, .color = if (selected) result.theme.selection else result.theme.surface, .radius = geometry.radius } });
+        const inset: u16 = if (selected) 4 else 0;
+        if (selected) result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x + inset, .y = bounds.y + inset, .width = bounds.width - 2 * inset, .height = bounds.height - 2 * inset }, .color = result.theme.surface, .radius = geometry.radius } });
         result.add(.{ .text = .{ .bounds = .{ .x = bounds.x + 16, .y = bounds.y + bounds.height / 4, .width = bounds.width -| 32, .height = @min(120, bounds.height / 2) }, .value = game.system, .color = result.theme.muted, .font = font.caption, .lines = 2 } });
         return;
     }
@@ -182,7 +184,7 @@ fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, dim: u8,
         .platform = game.platform_id,
         .texture = game.assets.preview,
         .sprite = sprite,
-        .selected = false,
+        .selected = selected,
         .dim = dim,
         .tilt = tilt,
         .plain_fallback = !cart,
@@ -212,7 +214,7 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
         title_font.line_height = 57;
         title_font.weight = .medium;
         result.add(.{ .text_block = .{ .bounds = .{ .x = 48, .y = 161, .width = 566, .height = 269 }, .title = game.title, .detail = if (resumable) "Ready to resume" else "Last played", .color = theme.text, .detail_color = theme.muted, .title_font = title_font, .lines = 3, .gap = 20, .centered = true, .detail_above = true } });
-        artwork(&result, game, .{ .x = 665, .y = 161, .width = 311, .height = 269 }, false, 0, 0);
+        artwork(&result, game, .{ .x = 665, .y = 161, .width = 311, .height = 269 }, false, selected == 0, 0, 0);
     }
     const items: []const []const u8 = if (recent != null) &.{ if (resumable) "Resume" else "Play again", "Games", "Settings" } else &.{ "Games", "Settings" };
     for (items, 0..) |item, index| {
@@ -265,7 +267,8 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 const active = index == selected;
                 result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = y, .width = 292, .height = 172 }, .color = if (active) theme.text else theme.background } });
                 result.add(.{ .bar = .{ .bounds = .{ .x = x + 3, .y = y + 3, .width = 286, .height = 166 }, .color = theme.background } });
-                artwork(&result, collection.at(index), .{ .x = x + 12, .y = y + 10, .width = 268, .height = 152 }, false, 0, 0);
+                // The grid cell owns focus; do not add a second artwork frame.
+                artwork(&result, collection.at(index), .{ .x = x + 12, .y = y + 10, .width = 268, .height = 152 }, false, false, 0, 0);
             }
             caption(&result, game);
         },
@@ -275,7 +278,7 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 const index = @as(i64, @intCast(selected)) + relative;
                 if (index < 0 or index >= count) continue;
                 const pose = shelfPose(relative, shelf_offset);
-                artwork(&result, collection.at(@intCast(index)), pose.bounds, true, pose.dim, pose.tilt);
+                artwork(&result, collection.at(@intCast(index)), pose.bounds, true, relative == 0, pose.dim, pose.tilt);
                 if (result.elements[result.len - 1] == .cartridge) result.elements[result.len - 1].cartridge.clip_left = pose.clip_left;
             }
             caption(&result, game);
@@ -302,8 +305,34 @@ fn shelfPose(relative: i8, offset: i16) ShelfPose {
 }
 
 pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) Tree {
-    var result = message(theme, if (launch_failed != null) "Unable to start" else "Starting game", game.title, launch_failed orelse "Opening emulator…");
-    if (launch_failed != null) footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Retry" } });
+    const failed = launch_failed != null;
+    var result = Tree{ .theme = theme, .background = theme.background };
+    header(&result, if (failed) "Unable to start" else "Starting game");
+    artwork(&result, game, .{ .x = 48, .y = 154, .width = 348, .height = 392 }, false, true, if (failed) 28 else 0, 0);
+
+    var title_font = font.body;
+    title_font.size = 50;
+    title_font.weight = .medium;
+    title_font.line_height = 58;
+    result.add(.{ .text_block = .{
+        .bounds = .{ .x = 452, .y = 180, .width = 524, .height = 220 },
+        .title = game.title,
+        .detail = game.system,
+        .color = theme.text,
+        .detail_color = theme.muted,
+        .title_font = title_font,
+        .lines = 3,
+        .gap = 18,
+    } });
+    if (failed) {
+        result.add(.{ .bar = .{ .bounds = .{ .x = 452, .y = 438, .width = 6, .height = 84 }, .color = theme.danger } });
+        result.add(.{ .text = .{ .bounds = .{ .x = 478, .y = 438, .width = 498, .height = 84 }, .value = launch_failed.?, .color = theme.text, .font = font.caption, .lines = 2 } });
+        footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Retry" } });
+    } else {
+        textLabel(&result, .{ .x = 452, .y = 454, .width = 524, .height = 42 }, "Preparing game", theme.muted, font.caption);
+        result.add(.{ .bar = .{ .bounds = .{ .x = 452, .y = 516, .width = 524, .height = 4 }, .color = theme.surface } });
+        result.add(.{ .bar = .{ .bounds = .{ .x = 452, .y = 516, .width = 168, .height = 4 }, .color = theme.accent } });
+    }
     return result;
 }
 

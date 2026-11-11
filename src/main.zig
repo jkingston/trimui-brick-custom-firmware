@@ -328,6 +328,7 @@ test {
     _ = @import("interaction.zig");
     _ = @import("motion.zig");
     _ = @import("feedback.zig");
+    _ = @import("focus_motion.zig");
     _ = @import("texture_batch.zig");
     _ = @import("battery_trials.zig");
     _ = @import("bluetooth.zig");

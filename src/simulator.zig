@@ -226,6 +226,9 @@ pub fn main(init: std.process.Init) !void {
     var game_overlay = overlay.Model{};
     game_overlay.appearance = state.settings.appearance;
     var tree = if (overlay_visible) game_overlay.tree() else state.tree();
+    var focus: @import("focus_motion.zig").Controller = .{};
+    focus.update(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
+    focus.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds());
     try drawTree(&sdl, renderer, texture, pixels, &tree);
 
     if (library_check) |directory| {
@@ -298,7 +301,7 @@ pub fn main(init: std.process.Init) !void {
     while (true) {
         const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
         motion.reduced = state.settings.reduced_motion;
-        const animating = !overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now);
+        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now);
         const repeat_timeout = repeat.timeout(now);
         const timeout = @import("motion.zig").pollTimeout(animating, was_animating, repeat_timeout);
         // SAFETY: event is inspected only when SDL reports an initialized event.
@@ -379,6 +382,8 @@ pub fn main(init: std.process.Init) !void {
         if (changed) {
             game_overlay.appearance = state.settings.appearance;
             tree = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
+            focus.update(&tree, timestamp, state.settings.reduced_motion);
+            focus.decorate(&tree, timestamp);
             if (pressed_id) |id| _ = tree.setInteraction(id, .pressed);
             try drawTree(&sdl, renderer, texture, pixels, &tree);
         }

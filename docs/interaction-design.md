@@ -76,6 +76,11 @@ is distinct from `moved` and `empty`; route it to semantic boundary feedback.
 Grid navigation may calculate its spatial destination, but must preserve the
 same result contract and held-input controller.
 
+`focus_motion.Controller` owns the visible focus rail. Feed each rebuilt scene
+to it before presentation; it retargets from the rail's currently visible
+position. Focus uses the restrained surface treatment and rail, while press is
+the stronger inversion. Do not reproduce either treatment inside a screen.
+
 ### Motion
 
 Use `motion.Scalar`. Call `retarget()` on every new destination, including a

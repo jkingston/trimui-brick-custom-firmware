@@ -43,6 +43,7 @@ pub const MenuRow = struct {
     bounds: Rect,
     label: []const u8,
     detail: []const u8 = "",
+    focus_offset_y: i16 = 0,
     // Compatibility input for existing views. Tree.add resolves it into state;
     // new components should set state explicitly.
     selected: bool = false,
@@ -74,6 +75,7 @@ pub const OverlayRow = struct {
     label: []const u8,
     detail: []const u8,
     value: []const u8 = "",
+    focus_offset_y: i16 = 0,
     selected: bool = false,
     disclosure: bool = true,
 };
@@ -131,12 +133,12 @@ pub const Tree = struct {
 
     fn rowStyle(self: *const Tree, state: interaction.State) RowStyle {
         const selected = state.hasFocus();
-        const pressed = state == .pressed;
+        const pressed = state == .pressed or state == .activating;
         const disabled = state == .disabled;
         return .{
-            .background = if (pressed) self.theme.background else if (selected) self.theme.selection else self.theme.background,
-            .text = if (disabled) self.theme.muted else if (pressed) self.theme.text else if (selected) self.theme.selection_text else self.theme.text,
-            .detail = if (disabled) self.theme.muted else if (pressed) self.theme.muted else if (selected) self.theme.selection_text else self.theme.muted,
+            .background = if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
+            .text = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.text,
+            .detail = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.muted,
             .border = if (pressed) self.theme.selection else self.theme.border,
             .accent = self.theme.accent,
         };
@@ -146,6 +148,17 @@ pub const Tree = struct {
         for (self.slice()) |element| switch (element) {
             .menu_row => |row| if (row.state.hasFocus()) return row.id,
             .overlay_row => |row| if (row.state.hasFocus()) return row.id,
+            else => {},
+        };
+        return null;
+    }
+
+    pub const Focus = struct { id: interaction.Id, bounds: Rect };
+
+    pub fn focus(self: *const Tree) ?Focus {
+        for (self.slice()) |element| switch (element) {
+            .menu_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
+            .overlay_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
             else => {},
         };
         return null;
@@ -165,6 +178,21 @@ pub const Tree = struct {
                 row.state = state;
                 row.selected = state.hasFocus();
                 row.style = self.rowStyle(state);
+                return true;
+            },
+            else => {},
+        };
+        return false;
+    }
+
+    pub fn setFocusOffset(self: *Tree, id: interaction.Id, offset_y: i16) bool {
+        for (self.elements[0..self.len]) |*element| switch (element.*) {
+            .menu_row => |*row| if (row.id == id) {
+                row.focus_offset_y = offset_y;
+                return true;
+            },
+            .overlay_row => |*row| if (row.id == id) {
+                row.focus_offset_y = offset_y;
                 return true;
             },
             else => {},
@@ -219,4 +247,6 @@ test "tree resolves selection into durable interaction state" {
     try std.testing.expect(tree.setInteraction(id, .pressed));
     try std.testing.expectEqual(interaction.State.pressed, tree.elements[0].menu_row.state);
     try std.testing.expect(tree.elements[0].menu_row.selected);
+    try std.testing.expect(tree.setFocusOffset(id, -20));
+    try std.testing.expectEqual(@as(i16, -20), tree.elements[0].menu_row.focus_offset_y);
 }

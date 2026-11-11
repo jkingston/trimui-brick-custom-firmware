@@ -4,6 +4,7 @@ const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
 const display_scheduler = @import("display_scheduler.zig");
+const focus_motion = @import("focus_motion.zig");
 const input_repeat = @import("input_repeat.zig");
 const interaction = @import("interaction.zig");
 const interaction_motion = @import("motion.zig");
@@ -464,7 +465,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
 
     state.battery_percent = batteryPercent(io);
     var battery_deadline = nowMilliseconds(io) + 60000;
+    var focus: focus_motion.Controller = .{};
     var tree = state.tree();
+    focus.update(&tree, nowMilliseconds(io), state.settings.reduced_motion);
+    focus.decorate(&tree, nowMilliseconds(io));
     try display.show(&tree);
 
     var wifi_client: ?wifi_ipc.Client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
@@ -499,7 +503,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
-        const animation = state.page == .games and state.library_view == .shelf and motion.active(now);
+        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now);
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
@@ -711,12 +715,18 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
         }
         if (changed) {
-            tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
+            const frame_now = nowMilliseconds(io);
+            tree = state.treeWithShelfOffset(motion.offset(frame_now));
+            focus.update(&tree, frame_now, state.settings.reduced_motion);
+            focus.decorate(&tree, frame_now);
             press.decorate(&tree);
             try display.requestFrame(&tree);
         }
         if (display.frameDue()) {
-            tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
+            const frame_now = nowMilliseconds(io);
+            tree = state.treeWithShelfOffset(motion.offset(frame_now));
+            focus.update(&tree, frame_now, state.settings.reduced_motion);
+            focus.decorate(&tree, frame_now);
             press.decorate(&tree);
             try display.submit(&tree);
         }
@@ -729,7 +739,10 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     var display = try Display.open(io, profile_input);
     defer display.close();
 
+    var focus: focus_motion.Controller = .{};
     var tree = state.tree();
+    focus.update(&tree, nowMilliseconds(io), false);
+    focus.decorate(&tree, nowMilliseconds(io));
     try display.show(&tree);
     const input_monitor = try openInputMonitor(input_directory);
     defer closeFd(io, input_monitor, true);
@@ -741,6 +754,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     var poll_fds: [max_gamepads + 1]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var press: PressTracker = .{};
+    var was_animating = false;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
@@ -752,8 +766,10 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         poll_fds[max_gamepads].revents = 0;
         const now = nowMilliseconds(io);
         const repeat_wait = repeat.timeout(now);
-        const ready = try display.poll(&poll_fds, repeat_wait);
-        var changed = false;
+        const animation = focus.active(now);
+        const ready = try display.poll(&poll_fds, interaction_motion.pollTimeout(animation, was_animating, repeat_wait));
+        var changed = animation or was_animating;
+        was_animating = animation;
         var rescan_inputs = false;
         if ((poll_fds[max_gamepads].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;
         if ((poll_fds[max_gamepads].revents & std.posix.POLL.IN) != 0) {
@@ -832,12 +848,18 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
             if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
         }
         if (changed) {
+            const frame_now = nowMilliseconds(io);
             tree = state.tree();
+            focus.update(&tree, frame_now, false);
+            focus.decorate(&tree, frame_now);
             press.decorate(&tree);
             try display.requestFrame(&tree);
         }
         if (display.frameDue()) {
+            const frame_now = nowMilliseconds(io);
             tree = state.tree();
+            focus.update(&tree, frame_now, false);
+            focus.decorate(&tree, frame_now);
             press.decorate(&tree);
             try display.submit(&tree);
         }

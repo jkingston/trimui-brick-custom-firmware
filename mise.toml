@@ -29,8 +29,9 @@ rm -rf output/check
 zig build -Dtarget=aarch64-linux-gnu -Dcpu=cortex_a53 -Doptimize=ReleaseSmall \
     --prefix output/check --summary all
 # Includes three retained layer pairs, the deterministic screen oracle, and the
-# shared interaction-state, press, feedback-lifecycle and latency runtime.
-test "$(stat -c %s output/check/bin/brick-shell)" -le 935936
+# shared interaction-state, press, feedback-lifecycle, focus-motion,
+# contextual-launch and latency runtime.
+test "$(stat -c %s output/check/bin/brick-shell)" -le 940032
 '''
 
 [tasks.check]

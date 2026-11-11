@@ -214,6 +214,7 @@ pub const Surface = struct {
     fn menuRow(self: Surface, row: ui.MenuRow) void {
         self.fillRounded(row.bounds, row.style.background, geometry.radius);
         if (row.state == .pressed) self.stroke(row.bounds, row.style.border, 4);
+        self.focusRail(row.bounds, row.focus_offset_y, row.state, row.style.accent);
         var title_font = row.label_font;
         title_font.ink_centered = true;
         var detail_font = font.caption;
@@ -233,6 +234,7 @@ pub const Surface = struct {
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
         if (!self.prepainted_overlay_rows) self.fillRounded(item.bounds, item.style.background, geometry.radius);
         if (item.state == .pressed) self.stroke(item.bounds, item.style.border, 4);
+        self.focusRail(item.bounds, item.focus_offset_y, item.state, item.style.accent);
         for (@import("row_layout.zig").overlay(item)) |part|
             self.drawTextBounded(part.bounds.x, part.bounds.y, part.bounds.width, part.value, part.color, part.font);
         if (item.disclosure)
@@ -245,6 +247,15 @@ pub const Surface = struct {
         self.fill(.{ .x = bounds.x, .y = bounds.y + bounds.height - edge, .width = bounds.width, .height = edge }, color);
         self.fill(.{ .x = bounds.x, .y = bounds.y, .width = edge, .height = bounds.height }, color);
         self.fill(.{ .x = bounds.x + bounds.width - edge, .y = bounds.y, .width = edge, .height = bounds.height }, color);
+    }
+
+    fn focusRail(self: Surface, bounds: ui.Rect, offset_y: i16, state: @import("interaction.zig").State, color: ui.Color) void {
+        if (!state.hasFocus() or state == .pressed or state == .activating) return;
+        const raw_y = @as(i32, bounds.y) + offset_y;
+        const rail_height: u16 = @min(bounds.height, 72);
+        const centered_y = raw_y + @divTrunc(@as(i32, bounds.height - rail_height), 2);
+        const y: u16 = @intCast(std.math.clamp(centered_y, 0, @as(i32, @intCast(height - rail_height))));
+        self.fill(.{ .x = bounds.x, .y = y, .width = 6, .height = rail_height }, color);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
@@ -658,10 +669,11 @@ test "resolved styles render identically to literal colours and ignore later the
         .bounds = .{ .x = 40, .y = 140, .width = 944, .height = 92 },
         .label = "Selected game",
         .selected = true,
+        .state = .focused,
         .style = .{
-            .background = themes.dark.selection,
-            .text = themes.dark.selection_text,
-            .detail = themes.dark.selection_text,
+            .background = themes.dark.surface,
+            .text = themes.dark.text,
+            .detail = themes.dark.muted,
             .border = themes.dark.border,
             .accent = themes.dark.accent,
         },
