@@ -114,6 +114,20 @@ test "focus rail preserves horizontal continuity for grids" {
     try std.testing.expectEqual(@as(i16, 0), second.elements[0].focus_frame.focus_offset_y);
 }
 
+test "keyboard focus retargets between stable key identities" {
+    const theme = @import("theme.zig").light;
+    var first = ui.Tree{ .theme = theme, .background = theme.background };
+    first.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = 10 } });
+    var second = ui.Tree{ .theme = theme, .background = theme.background };
+    second.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = 11 } });
+    var controller = Controller{};
+    controller.update(&first, 0, false);
+    controller.update(&second, 10, false);
+    controller.decorate(&second, 10);
+    try std.testing.expectEqual(@as(i16, -93), second.elements[0].keyboard.focus_offset_x);
+    try std.testing.expect(controller.active(10));
+}
+
 test "reduced motion keeps focus state without scheduling movement" {
     const theme = @import("theme.zig").light;
     var tree = ui.Tree{ .theme = theme, .background = theme.background };

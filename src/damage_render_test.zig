@@ -85,9 +85,9 @@ test "buffer-age damage rendering is pixel-identical across dissimilar screens" 
     try harness.show(&next);
     next = ui.overlayPause(theme.light, "A long game title", 4, 2, "Performance", "Saved");
     try harness.show(&next);
-    next = ui.wifiPassword(theme.light, "Test network", 0, "hunter2", false);
+    next = ui.wifiPassword(theme.light, "Test network", .{ .selected = 0 }, "hunter2", false);
     try harness.show(&next);
-    next = ui.wifiPassword(theme.light, "Test network", 31, "hunter2", true);
+    next = ui.wifiPassword(theme.light, "Test network", .{ .selected = 31 }, "hunter2", true);
     try harness.show(&next);
     next = ui.confirmation(theme.light, "Remove game?", "Example", "This cannot be undone.", "Remove", 0);
     try harness.show(&next);
@@ -235,10 +235,23 @@ test "keyboard navigation damages two keys and redraws changed character sets" {
     const count = render.width * render.height;
     const pixels = try std.testing.allocator.alloc(u32, count * 3);
     defer std.testing.allocator.free(pixels);
-    var tree = ui.wifiPassword(theme.light, "Example", 0, "", false);
+    var tree = ui.wifiPassword(theme.light, "Example", .{ .selected = 0 }, "", false);
     var harness = try Harness.init(.{ pixels[0..count], pixels[count .. count * 2] }, pixels[count * 2 ..], &tree);
     for (0..40) |index| {
-        tree = ui.wifiPassword(theme.light, "Example", @intCast(index), "", false);
+        tree = ui.wifiPassword(theme.light, "Example", .{ .selected = @intCast(index) }, "", false);
+        try harness.show(&tree);
+        var area: usize = 0;
+        for (harness.last_damage.slice()) |rect| if (damage.intersection(rect, .{ .x = 48, .y = 260, .width = 928, .height = 328 })) |part| {
+            area += @as(usize, part.width) * part.height;
+        };
+        try std.testing.expect(area < 20000);
+    }
+    for (0..8) |step| {
+        tree = ui.wifiPassword(theme.light, "Example", .{ .selected = 17 }, "", false);
+        for (tree.elements[0..tree.len]) |*element| if (element.* == .keyboard) {
+            element.keyboard.focus_offset_x = @intCast(step * 8);
+            element.keyboard.state = if (step % 2 == 0) .focused else .pressed;
+        };
         try harness.show(&tree);
         var area: usize = 0;
         for (harness.last_damage.slice()) |rect| if (damage.intersection(rect, .{ .x = 48, .y = 260, .width = 928, .height = 328 })) |part| {
@@ -247,7 +260,7 @@ test "keyboard navigation damages two keys and redraws changed character sets" {
         try std.testing.expect(area < 20000);
     }
     for (0..8) |index| {
-        tree = ui.wifiPassword(theme.light, "Example", @intCast(index), "", index % 3 == 0);
+        tree = ui.wifiPassword(theme.light, "Example", .{ .selected = @intCast(index) }, "", index % 3 == 0);
         for (tree.elements[0..tree.len]) |*element| if (element.* == .keyboard) {
             element.keyboard.symbols = index % 3 == 1;
         };

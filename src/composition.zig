@@ -59,8 +59,8 @@ test "keyboard navigation remains a full primary scene and reproduces pixels" {
     const damage = @import("damage.zig");
     const render = @import("render.zig");
     const theme = @import("theme.zig").dark;
-    var first = views.wifiPassword(theme, "Network", 0, "", false);
-    var second = views.wifiPassword(theme, "Network", 17, "", false);
+    var first = views.wifiPassword(theme, "Network", .{ .selected = 0 }, "", false);
+    var second = views.wifiPassword(theme, "Network", .{ .selected = 17 }, "", false);
     const a = split(&first);
     const b = split(&second);
     try std.testing.expect(!std.meta.eql(damage.Scene.capture(&a.base), damage.Scene.capture(&b.base)));

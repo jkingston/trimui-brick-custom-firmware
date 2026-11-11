@@ -98,6 +98,13 @@ Feed rebuilt scenes through `meter_motion.Controller`; repeated adjustments
 retarget the thumb from its visible value. Screens must not draw private tracks,
 thumbs, or raw value bars. Reduced motion updates the meter immediately.
 
+### On-screen keyboard
+
+Use `ui_components.keyboard()` with `KeyboardInput`; do not draw keys directly.
+The component owns stable per-key identity, focus travel, boundary response, and
+press depression. Always pass `uppercase` and `symbols` from the input model so
+the visible key labels match the characters that activation will produce.
+
 ### Motion
 
 Use `motion.Scalar`. Call `retarget()` on every new destination, including a

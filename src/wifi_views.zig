@@ -167,7 +167,7 @@ pub fn wifiNetworkDetails(theme: Theme, network: *const wifi_model.Network, sele
     return result;
 }
 
-pub fn wifiPassword(theme: Theme, network_name: []const u8, selected_key: u8, password: []const u8, show: bool) Tree {
+pub fn wifiPassword(theme: Theme, network_name: []const u8, keyboard: components.KeyboardInput, password: []const u8, show: bool) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, network_name);
     result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 112, .width = 928, .height = 42 }, .value = "Enter the Wi-Fi password", .color = theme.muted, .font = font.caption } });
@@ -175,19 +175,19 @@ pub fn wifiPassword(theme: Theme, network_name: []const u8, selected_key: u8, pa
     const count = @min(password.len, mask.len);
     result.add(.{ .bar = .{ .bounds = .{ .x = 48, .y = 166, .width = 928, .height = 72 }, .color = theme.surface, .radius = geometry.radius } });
     result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 178, .width = 880, .height = 48 }, .value = if (show) password[0..count] else mask[0..count], .color = theme.text, .font = font.body } });
-    result.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = selected_key } });
-    components.footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .view, .label = if (show) "Hide" else "Show" }, .{ .control = .confirm, .label = if (selected_key == 39) "Connect" else "Type" } });
+    components.keyboard(&result, .{ .x = 48, .y = 260, .width = 928, .height = 328 }, keyboard);
+    components.footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .view, .label = if (show) "Hide" else "Show" }, .{ .control = .confirm, .label = if (keyboard.selected == 39) "Connect" else "Type" } });
     return result;
 }
 
-pub fn wifiHiddenName(theme: Theme, selected_key: u8, name: []const u8) Tree {
+pub fn wifiHiddenName(theme: Theme, keyboard: components.KeyboardInput, name: []const u8) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, "Hidden network");
     result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 112, .width = 928, .height = 42 }, .value = "Enter the exact network name", .color = theme.muted, .font = font.caption } });
     result.add(.{ .bar = .{ .bounds = .{ .x = 48, .y = 166, .width = 928, .height = 72 }, .color = theme.surface, .radius = geometry.radius } });
     result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 178, .width = 880, .height = 48 }, .value = name, .color = theme.text, .font = font.body } });
-    result.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = selected_key } });
-    components.footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = if (selected_key == 39) "Continue" else "Type" } });
+    components.keyboard(&result, .{ .x = 48, .y = 260, .width = 928, .height = 328 }, keyboard);
+    components.footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = if (keyboard.selected == 39) "Continue" else "Type" } });
     return result;
 }
 

@@ -521,8 +521,8 @@ pub const Model = struct {
                 ui.wifiNetworkDetails(theme, network, flow.detail_selected)
             else
                 ui.wifiPicker(theme, &flow.wifi_state),
-            .password => ui.wifiPassword(theme, if (flow.activeNetwork()) |network| network.name.slice() else "Hidden network", flow.field.selected, flow.field.slice(), flow.show_password),
-            .hidden_name => ui.wifiHiddenName(theme, flow.field.selected, flow.field.slice()),
+            .password => ui.wifiPassword(theme, if (flow.activeNetwork()) |network| network.name.slice() else "Hidden network", .{ .selected = flow.field.selected, .uppercase = flow.field.uppercase, .symbols = flow.field.symbols }, flow.field.slice(), flow.show_password),
+            .hidden_name => ui.wifiHiddenName(theme, .{ .selected = flow.field.selected, .uppercase = flow.field.uppercase, .symbols = flow.field.symbols }, flow.field.slice()),
             .hidden_security => ui.wifiHiddenSecurity(theme, @backingInt(flow.hidden_security)),
             .info => if (flow.activeNetwork()) |network|
                 ui.wifiConnectionInfo(theme, network)
@@ -670,6 +670,22 @@ test "Wi-Fi settings row ignores setting adjustment shortcuts" {
     try std.testing.expect(!state.apply(.right));
     try std.testing.expectEqualDeep(before, state.settings);
     try std.testing.expectEqual(@as(?settings_model.Setting, null), state.takeSetting());
+}
+
+test "Wi-Fi input tree preserves the active keyboard character set" {
+    var state = Model{ .page = .wifi };
+    state.wifi.page = .password;
+    state.wifi.field.selected = 22;
+    state.wifi.field.uppercase = true;
+    state.wifi.field.symbols = true;
+    const tree = state.tree();
+    for (tree.slice()) |element| if (element == .keyboard) {
+        try std.testing.expectEqual(@as(u8, 22), element.keyboard.selected);
+        try std.testing.expect(element.keyboard.uppercase);
+        try std.testing.expect(element.keyboard.symbols);
+        return;
+    };
+    return error.MissingKeyboard;
 }
 
 test "radio and device snapshot transitions produce positive feedback" {

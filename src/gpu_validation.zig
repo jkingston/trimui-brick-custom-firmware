@@ -42,7 +42,7 @@ pub fn fineDamage(io: std.Io, display: *gpu.Display, expected: []u32) !void {
             try display.verify(expected);
         }
         for (0..40) |frame| {
-            var tree = ui.wifiPassword(theme, "Example", @intCast(frame), "", frame >= 20);
+            var tree = ui.wifiPassword(theme, "Example", .{ .selected = @intCast(frame) }, "", frame >= 20);
             try display.show(io, &tree);
             (render.Surface{ .pixels = expected }).render(&tree);
             try display.verify(expected);
@@ -172,7 +172,7 @@ fn benchTree(workload: Workload, frame: usize) ui.Tree {
         .navigation => ui.settings(if (frame % 12 <= 6) frame % 12 else 12 - frame % 12, .{}, "On", "Off"),
         .scrolling => ui.settings(2 + frame % 4, .{}, "On", "Off"),
         .value => ui.overlayPause(@import("theme.zig").light, "Example", 1, frame % 3, "Balanced", ""),
-        .keyboard => ui.wifiPassword(@import("theme.zig").light, "Example", @intCast(frame % 36), "", false),
+        .keyboard => ui.wifiPassword(@import("theme.zig").light, "Example", .{ .selected = @intCast(frame % 36) }, "", false),
         .shelf => ui.library(@import("theme.zig").light, &@import("catalog.zig").games, 2, .shelf, @as(i16, @intCast(frame % 20)) * 100 - 1000),
         .shelf_dynamic, .shelf_prepared => ui.library(@import("theme.zig").light, &@import("catalog.zig").games, 2, .shelf, @as(i16, @intCast(frame * 37 % 2001)) - 1000),
         .unchanged => ui.settings(0, .{}, "On", "Off"),

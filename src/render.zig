@@ -27,7 +27,7 @@ test "text preparation warms the next paint without changing its tree" {
     const views = @import("ui.zig");
     const pixels = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(pixels);
-    var tree = views.wifiPassword(@import("theme.zig").light, "Example", 17, "", false);
+    var tree = views.wifiPassword(@import("theme.zig").light, "Example", .{ .selected = 17 }, "", false);
     const before = damage.Scene.capture(&tree);
     prepareText(&tree);
     const misses = text_pango.cacheMissCount();
@@ -137,7 +137,7 @@ pub const Surface = struct {
             .activity => |activity| self.drawActivity(activity),
             .qr_code => |qr| self.drawQr(qr),
             .keyboard => |keyboard| self.drawKeyboard(keyboard, theme),
-            .keyboard_key => |key| self.drawKeyboardKey(key.keyboard, theme, key.index, true),
+            .keyboard_key => |key| self.drawKeyboardKey(key.keyboard, theme, key.index, true, false, 0, 0),
             .cover => |cover| self.drawCover(cover),
             .cartridge => |cartridge| self.drawCartridge(cartridge),
             .overlay_row => |item| self.drawOverlayRow(item),
@@ -561,19 +561,35 @@ pub const Surface = struct {
 
     fn drawKeyboard(self: Surface, keyboard: ui.Keyboard, theme: ui.Theme) void {
         for (0..@import("keyboard_layout.zig").count) |index|
-            self.drawKeyboardKey(keyboard, theme, index, index == keyboard.selected);
+            self.drawKeyboardKey(keyboard, theme, index, false, false, 0, 0);
+        if (keyboard.state.hasFocus()) self.drawKeyboardKey(
+            keyboard,
+            theme,
+            keyboard.selected,
+            true,
+            keyboard.state == .pressed or keyboard.state == .activating,
+            keyboard.focus_offset_x,
+            keyboard.focus_offset_y,
+        );
     }
 
-    fn drawKeyboardKey(self: Surface, keyboard: ui.Keyboard, theme: ui.Theme, index: usize, selected: bool) void {
+    fn drawKeyboardKey(self: Surface, keyboard: ui.Keyboard, theme: ui.Theme, index: usize, selected: bool, pressed: bool, offset_x: i16, offset_y: i16) void {
         const lower = "1234567890qwertyuiopasdfghjklzxcvbnm";
         const upper = "1234567890QWERTYUIOPASDFGHJKLZXCVBNM";
         const symbols = "1234567890!@#$%^&*()[]{}<>?+-=_/:;,.~`";
         const keys = if (keyboard.symbols) symbols else if (keyboard.uppercase) upper else lower;
-        const layout = @import("keyboard_layout.zig");
         var key_font = font.body;
         key_font.alignment = .center;
         key_font.ink_centered = true;
-        const bounds = layout.keyBounds(keyboard.bounds, index);
+        const logical = keyboard.keyBounds(index);
+        const moved = ui.Rect{
+            .x = @intCast(std.math.clamp(@as(i32, logical.x) + offset_x, 0, std.math.maxInt(u16))),
+            .y = @intCast(std.math.clamp(@as(i32, logical.y) + offset_y, 0, std.math.maxInt(u16))),
+            .width = logical.width,
+            .height = logical.height,
+        };
+        const inset: u16 = if (pressed) 3 else 0;
+        const bounds = ui.Rect{ .x = moved.x + inset, .y = moved.y + inset, .width = moved.width - 2 * inset, .height = moved.height - 2 * inset };
         if (self.clips.len != 0) {
             var visible = false;
             for (self.clips) |clip| if (damage.intersects(bounds, clip)) {
@@ -585,6 +601,7 @@ pub const Surface = struct {
         const background = if (selected) theme.selection else theme.surface;
         const foreground = if (selected) theme.selection_text else theme.text;
         self.fillRounded(bounds, background, geometry.radius);
+        if (selected and keyboard.state == .boundary) self.stroke(bounds, foreground, 4);
         const value = if (index < 36) keys[index .. index + 1] else switch (index) {
             36 => "Aa",
             37 => "#+",
@@ -683,6 +700,24 @@ test "activity dots remain inside their declared component bounds" {
         try std.testing.expect(index / width >= 100 and index / width < 126);
     };
     try std.testing.expect(painted > 0);
+}
+
+test "keyboard press visibly depresses the focused key" {
+    const themes = @import("theme.zig");
+    const focused_pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(focused_pixels);
+    const pressed_pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pressed_pixels);
+    var tree = ui.Tree{ .theme = themes.light, .background = themes.light.background };
+    tree.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = 13 } });
+    (Surface{ .pixels = focused_pixels }).render(&tree);
+    try std.testing.expect(tree.setInteraction(tree.focusedId().?, .pressed));
+    (Surface{ .pixels = pressed_pixels }).render(&tree);
+    try std.testing.expect(!std.mem.eql(u32, focused_pixels, pressed_pixels));
+    const key = tree.elements[0].keyboard.selectedBounds();
+    const sample = (key.y + key.height / 2) * width + key.x + 1;
+    try std.testing.expectEqual(Surface.pack(themes.light.selection), focused_pixels[sample]);
+    try std.testing.expectEqual(Surface.pack(themes.light.surface), pressed_pixels[sample]);
 }
 
 test "lowercase and uppercase preserve distinct letterforms" {

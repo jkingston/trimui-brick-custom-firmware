@@ -16,6 +16,7 @@ pub const Id = enum(u64) {
         wifi_details,
         bluetooth_list,
         brightness_meter,
+        keyboard_key,
         choice,
         game_menu,
         game_menu_network,

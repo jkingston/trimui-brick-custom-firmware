@@ -115,6 +115,23 @@ pub fn meter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16) 
     result.add(.{ .meter = .{ .id = id, .bounds = bounds, .value = @min(1000, value), .track = result.theme.surface, .fill = result.theme.text, .thumb = result.theme.accent } });
 }
 
+pub const KeyboardInput = struct {
+    selected: u8,
+    uppercase: bool = false,
+    symbols: bool = false,
+};
+
+pub fn keyboard(result: *ui.Tree, bounds: ui.Rect, value: KeyboardInput) void {
+    result.add(.{ .keyboard = .{
+        .id = interaction.Id.scoped(.keyboard_key, value.selected),
+        .state = .focused,
+        .bounds = bounds,
+        .selected = value.selected,
+        .uppercase = value.uppercase,
+        .symbols = value.symbols,
+    } });
+}
+
 pub const single_row_height: u16 = 88;
 pub const supporting_row_height: u16 = 108;
 
@@ -238,6 +255,15 @@ test "selectable frames share row identity and state" {
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
     selectable(.library, 2, true, .{ .x = 20, .y = 40, .width = 100, .height = 80 }, "").frame(&tree);
     try @import("std").testing.expectEqual(interaction.Id.scoped(.library, 2), tree.focusedId().?);
+}
+
+test "keyboard owns the focused key identity and visible input mode" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    keyboard(&tree, .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .{ .selected = 17, .uppercase = true, .symbols = true });
+    try @import("std").testing.expectEqual(interaction.Id.scoped(.keyboard_key, 17), tree.focusedId().?);
+    try @import("std").testing.expect(tree.elements[0].keyboard.uppercase);
+    try @import("std").testing.expect(tree.elements[0].keyboard.symbols);
 }
 
 test "feedback lifecycle does not leave completion notices indefinitely" {

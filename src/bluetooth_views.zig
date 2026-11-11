@@ -117,7 +117,7 @@ pub fn code(theme: Theme, state: *const bluetooth_model.Model) Tree {
     components.text(&result, .{ .x = 48, .y = 112, .width = 928, .height = 42 }, if (state.snapshot.prompt == .pin) "Enter the device PIN" else "Enter the pairing code", theme.muted, font.caption);
     result.add(.{ .bar = .{ .bounds = .{ .x = 48, .y = 166, .width = 928, .height = 72 }, .color = theme.surface, .radius = geometry.radius } });
     result.add(.{ .text = .{ .bounds = .{ .x = 72, .y = 178, .width = 880, .height = 48 }, .value = state.field.slice(), .color = theme.text, .font = font.body } });
-    result.add(.{ .keyboard = .{ .bounds = .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .selected = state.field.selected } });
+    components.keyboard(&result, .{ .x = 48, .y = 260, .width = 928, .height = 328 }, .{ .selected = state.field.selected, .uppercase = state.field.uppercase, .symbols = state.field.symbols });
     components.footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = if (state.field.selected == 39) "Pair" else "Type" } });
     return result;
 }

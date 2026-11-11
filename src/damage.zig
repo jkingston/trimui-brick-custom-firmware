@@ -180,9 +180,8 @@ pub const Scene = struct {
             if (!std.meta.eql(old.nodes[index].signature, next.nodes[index].signature)) {
                 if (old.nodes[index].keyboard) |before| if (next.nodes[index].keyboard) |after| {
                     if (std.meta.eql(before.bounds, after.bounds) and before.uppercase == after.uppercase and before.symbols == after.symbols) {
-                        const layout = @import("keyboard_layout.zig");
-                        if (before.selected < layout.count) result.add(layout.keyBounds(before.bounds, before.selected));
-                        if (after.selected < layout.count) result.add(layout.keyBounds(after.bounds, after.selected));
+                        result.add(before.displayedBounds());
+                        result.add(after.displayedBounds());
                         continue;
                     }
                 };

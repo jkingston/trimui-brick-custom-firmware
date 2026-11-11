@@ -63,7 +63,45 @@ pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem
 pub const Meter = struct { id: interaction.Id, bounds: Rect, value: u16, track: Color, fill: Color, thumb: Color };
 pub const Activity = struct { bounds: Rect, color: Color, phase: u16 = 0, animated: bool = true };
 pub const QrCode = struct { bounds: Rect, cells: []const u8, width: u16, foreground: Color, background: Color };
-pub const Keyboard = struct { bounds: Rect, selected: u8, uppercase: bool = false, symbols: bool = false };
+pub const Keyboard = struct {
+    id: interaction.Id = .none,
+    state: interaction.State = .focused,
+    bounds: Rect,
+    selected: u8,
+    uppercase: bool = false,
+    symbols: bool = false,
+    focus_offset_x: i16 = 0,
+    focus_offset_y: i16 = 0,
+
+    pub fn keyBounds(self: Keyboard, index: usize) Rect {
+        const columns = 10;
+        const rows = 4;
+        const gap = 8;
+        const item = @min(index, columns * rows - 1);
+        const width = (self.bounds.width - gap * (columns - 1)) / columns;
+        const height = (self.bounds.height - gap * (rows - 1)) / rows;
+        return .{
+            .x = self.bounds.x + @as(u16, @intCast(item % columns)) * (width + gap),
+            .y = self.bounds.y + @as(u16, @intCast(item / columns)) * (height + gap),
+            .width = width,
+            .height = height,
+        };
+    }
+
+    pub fn selectedBounds(self: Keyboard) Rect {
+        return self.keyBounds(@min(self.selected, 39));
+    }
+
+    pub fn displayedBounds(self: Keyboard) Rect {
+        const bounds = self.selectedBounds();
+        return .{
+            .x = @intCast(std.math.clamp(@as(i32, bounds.x) + self.focus_offset_x, 0, std.math.maxInt(u16))),
+            .y = @intCast(std.math.clamp(@as(i32, bounds.y) + self.focus_offset_y, 0, std.math.maxInt(u16))),
+            .width = bounds.width,
+            .height = bounds.height,
+        };
+    }
+};
 pub const KeyboardKey = struct { keyboard: Keyboard, index: u8, bounds: Rect };
 pub const CoverKind = @import("cover_kind.zig").Kind;
 pub const Cover = struct { bounds: Rect, kind: CoverKind };
@@ -161,6 +199,10 @@ pub const Tree = struct {
                 item.outline = self.theme.text;
                 item.charge = self.theme.accent;
             },
+            .keyboard => |*item| {
+                item.selected = @min(item.selected, 39);
+                if (item.id == .none) item.id = interaction.Id.scoped(.keyboard_key, item.selected);
+            },
             else => {},
         }
         self.elements[self.len] = resolved;
@@ -196,6 +238,7 @@ pub const Tree = struct {
             .menu_row => |row| if (row.state.hasFocus()) return row.id,
             .cartridge => |item| if (item.state.hasFocus()) return item.id,
             .overlay_row => |row| if (row.state.hasFocus()) return row.id,
+            .keyboard => |item| if (item.state.hasFocus()) return item.id,
             else => {},
         };
         return null;
@@ -209,6 +252,7 @@ pub const Tree = struct {
             .menu_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
             .cartridge => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.bounds },
             .overlay_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
+            .keyboard => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.selectedBounds() },
             else => {},
         };
         return null;
@@ -241,6 +285,10 @@ pub const Tree = struct {
                 item.style.edge = if (item.selected) self.theme.accent else self.theme.border;
                 return true;
             },
+            .keyboard => |*item| if (item.id == id) {
+                item.state = state;
+                return true;
+            },
             else => {},
         };
         return false;
@@ -264,6 +312,11 @@ pub const Tree = struct {
                 return true;
             },
             .cartridge => |*item| if (item.id == id) {
+                item.focus_offset_x = offset_x;
+                item.focus_offset_y = offset_y;
+                return true;
+            },
+            .keyboard => |*item| if (item.id == id) {
                 item.focus_offset_x = offset_x;
                 item.focus_offset_y = offset_y;
                 return true;
