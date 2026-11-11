@@ -74,10 +74,21 @@ pub const Cartridge = struct {
     texture: ?assets.Texture,
     sprite: ?assets.Texture,
     selected: bool = false,
+    focus_offset_x: i16 = 0,
+    focus_offset_y: i16 = 0,
     dim: u8 = 0,
     tilt: i16 = 0,
     clip_left: u16 = 0,
     plain_fallback: bool = false,
+
+    pub fn displayBounds(self: Cartridge) Rect {
+        return .{
+            .x = @intCast(std.math.clamp(@as(i32, self.bounds.x) + self.focus_offset_x, 0, std.math.maxInt(u16))),
+            .y = @intCast(std.math.clamp(@as(i32, self.bounds.y) + self.focus_offset_y, 0, std.math.maxInt(u16))),
+            .width = self.bounds.width,
+            .height = self.bounds.height,
+        };
+    }
 };
 pub const OverlayRow = struct {
     id: interaction.Id = .none,
@@ -246,6 +257,11 @@ pub const Tree = struct {
             .overlay_row => |*row| if (row.id == id) {
                 row.focus_offset_x = offset_x;
                 row.focus_offset_y = offset_y;
+                return true;
+            },
+            .cartridge => |*item| if (item.id == id) {
+                item.focus_offset_x = offset_x;
+                item.focus_offset_y = offset_y;
                 return true;
             },
             else => {},

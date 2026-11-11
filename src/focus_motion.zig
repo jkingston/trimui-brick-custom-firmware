@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
 const interaction = @import("interaction.zig");
+const input = @import("input.zig");
 const motion = @import("motion.zig");
 const ui = @import("ui_scene.zig");
 
@@ -13,6 +14,9 @@ pub const Controller = struct {
     target_y: i32 = 0,
     position_x: motion.Scalar = motion.Scalar.init(0, .focus),
     position_y: motion.Scalar = motion.Scalar.init(0, .focus),
+    boundary_x: motion.Scalar = motion.Scalar.init(0, .press),
+    boundary_y: motion.Scalar = motion.Scalar.init(0, .press),
+    boundary_until_ms: i64 = 0,
 
     pub fn update(self: *Controller, tree: *const ui.Tree, now_ms: i64, reduced: bool) void {
         const focus = tree.focus() orelse {
@@ -42,13 +46,38 @@ pub const Controller = struct {
 
     pub fn decorate(self: Controller, tree: *ui.Tree, now_ms: i64) void {
         const id = self.id orelse return;
-        const offset_x = std.math.clamp(self.position_x.value(now_ms) - self.target_x, std.math.minInt(i16), std.math.maxInt(i16));
-        const offset_y = std.math.clamp(self.position_y.value(now_ms) - self.target_y, std.math.minInt(i16), std.math.maxInt(i16));
+        if (now_ms < self.boundary_until_ms) _ = tree.setInteraction(id, .boundary);
+        const offset_x = std.math.clamp(self.position_x.value(now_ms) - self.target_x + self.boundary_x.value(now_ms), std.math.minInt(i16), std.math.maxInt(i16));
+        const offset_y = std.math.clamp(self.position_y.value(now_ms) - self.target_y + self.boundary_y.value(now_ms), std.math.minInt(i16), std.math.maxInt(i16));
         _ = tree.setFocusOffset(id, @intCast(offset_x), @intCast(offset_y));
     }
 
     pub fn active(self: Controller, now_ms: i64) bool {
-        return self.position_x.active(now_ms) or self.position_y.active(now_ms);
+        return self.position_x.active(now_ms) or self.position_y.active(now_ms) or
+            self.boundary_x.active(now_ms) or self.boundary_y.active(now_ms) or
+            now_ms < self.boundary_until_ms;
+    }
+
+    /// A boundary is an acknowledged result, not ignored input. Normal motion
+    /// nudges toward the attempted direction; reduced motion keeps only the
+    /// stronger rail pulse.
+    pub fn boundary(self: *Controller, action: input.Action, now_ms: i64, reduced: bool) bool {
+        const impulse: i32 = switch (action) {
+            .up, .left => -10,
+            .down, .right => 10,
+            else => return false,
+        };
+        if (self.id == null) return false;
+        var value = motion.Scalar.init(if (reduced) 0 else impulse, .press);
+        value.reduced = reduced;
+        value.retarget(0, now_ms);
+        switch (action) {
+            .left, .right => self.boundary_x = value,
+            .up, .down => self.boundary_y = value,
+            else => unreachable,
+        }
+        self.boundary_until_ms = now_ms + @import("design.zig").motion_tokens.press.duration_ms;
+        return true;
     }
 };
 
@@ -93,5 +122,24 @@ test "reduced motion keeps focus state without scheduling movement" {
     controller.update(&tree, 0, true);
     controller.decorate(&tree, 0);
     try std.testing.expect(!controller.active(0));
+    try std.testing.expectEqual(@as(i16, 0), tree.elements[0].menu_row.focus_offset_y);
+}
+
+test "boundary response nudges normally and pulses without motion when reduced" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .menu_row = .{ .bounds = .{ .x = 20, .y = 100, .width = 200, .height = 80 }, .label = "One", .selected = true } });
+    var controller = Controller{};
+    controller.update(&tree, 0, false);
+    try std.testing.expect(controller.boundary(.up, 10, false));
+    controller.decorate(&tree, 10);
+    try std.testing.expectEqual(interaction.State.boundary, tree.elements[0].menu_row.state);
+    try std.testing.expectEqual(@as(i16, -10), tree.elements[0].menu_row.focus_offset_y);
+
+    tree = ui.Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .menu_row = .{ .bounds = .{ .x = 20, .y = 100, .width = 200, .height = 80 }, .label = "One", .selected = true } });
+    try std.testing.expect(controller.boundary(.up, 100, true));
+    controller.decorate(&tree, 100);
+    try std.testing.expectEqual(interaction.State.boundary, tree.elements[0].menu_row.state);
     try std.testing.expectEqual(@as(i16, 0), tree.elements[0].menu_row.focus_offset_y);
 }

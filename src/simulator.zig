@@ -364,7 +364,9 @@ pub fn main(init: std.process.Init) !void {
             navigation.cancel();
             if (overlay_visible) {
                 const previous_layer = game_overlay.layer;
-                changed = game_overlay.apply(pressed) or changed;
+                const applied = game_overlay.apply(pressed);
+                const boundary = !applied and game_overlay.supportsDirection(pressed) and focus.boundary(pressed, timestamp, game_overlay.reduced_motion);
+                changed = applied or boundary or changed;
                 const command = game_overlay.takeCommand();
                 if (command == null and game_overlay.layer != previous_layer) {
                     var destination = game_overlay.tree();
@@ -395,7 +397,9 @@ pub fn main(init: std.process.Init) !void {
             } else {
                 const previous = state.selected;
                 const previous_page = state.page;
-                changed = state.apply(pressed) or changed;
+                const applied = state.apply(pressed);
+                const boundary = !applied and state.supportsDirection(pressed) and focus.boundary(pressed, timestamp, state.settings.reduced_motion);
+                changed = applied or boundary or changed;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), timestamp);
                 const launch = state.takeLaunch();

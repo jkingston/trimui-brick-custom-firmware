@@ -82,6 +82,12 @@ to it before presentation; it retargets from the rail's currently visible
 position. Focus uses the restrained surface treatment and rail, while press is
 the stronger inversion. Do not reproduce either treatment inside a screen.
 
+When a supported direction cannot move farther, call the controller's
+`boundary()` response. It nudges toward the attempted direction and strengthens
+the rail briefly; reduced motion keeps the rail pulse without moving content.
+Irrelevant axes remain silent, so feedback means “the end” rather than “that
+control does not use this button.”
+
 ### Motion
 
 Use `motion.Scalar`. Call `retarget()` on every new destination, including a

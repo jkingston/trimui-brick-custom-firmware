@@ -103,6 +103,15 @@ pub const Model = struct {
         return command;
     }
 
+    pub fn supportsDirection(self: *const Model, action: input.Action) bool {
+        const vertical = action == .up or action == .down;
+        const horizontal = action == .left or action == .right;
+        return switch (self.layer) {
+            .pause => vertical or (horizontal and (self.selected == 1 or self.selected == 3)),
+            .states, .save_slots, .replace_confirm, .load_confirm, .performance, .failure => vertical,
+        };
+    }
+
     pub fn tree(self: *const Model) ui.Tree {
         const performance_values = [_][]const u8{ "Power saver", "Balanced", "Performance" };
         var result = switch (self.layer) {
@@ -221,6 +230,16 @@ test "overlay hierarchy distinguishes opening and returning layers" {
     try std.testing.expect(!returnsToParent(.select, .states, .load_confirm));
     try std.testing.expect(returnsToParent(.back, .states, .pause));
     try std.testing.expect(returnsToParent(.select, .load_confirm, .states));
+}
+
+test "overlay direction support excludes irrelevant horizontal input" {
+    var state = Model{};
+    try std.testing.expect(state.supportsDirection(.down));
+    try std.testing.expect(!state.supportsDirection(.left));
+    state.selected = 1;
+    try std.testing.expect(state.supportsDirection(.left));
+    state.layer = .states;
+    try std.testing.expect(!state.supportsDirection(.right));
 }
 
 test "saving an occupied slot requires confirmation; cancelling preserves it" {

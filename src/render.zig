@@ -224,7 +224,7 @@ pub const Surface = struct {
 
     fn focusFrame(self: Surface, frame: ui.FocusFrame) void {
         self.fill(frame.bounds, frame.style.background);
-        if (frame.state.hasFocus()) self.stroke(frame.bounds, frame.style.border, if (frame.state == .pressed) 5 else 3);
+        if (frame.state.hasFocus()) self.stroke(frame.bounds, frame.style.border, if (frame.state == .pressed) 5 else if (frame.state == .boundary) 4 else 3);
         self.focusRail(frame.bounds, frame.focus_offset_x, frame.focus_offset_y, frame.state, frame.style.rail);
     }
 
@@ -272,9 +272,10 @@ pub const Surface = struct {
         const raw_y = @as(i32, bounds.y) + offset_y;
         const rail_height: u16 = @min(bounds.height, 72);
         const centered_y = raw_y + @divTrunc(@as(i32, bounds.height - rail_height), 2);
-        const x: u16 = @intCast(std.math.clamp(raw_x, 0, @as(i32, @intCast(width - 6))));
+        const rail_width: u16 = if (state == .boundary) 10 else 6;
+        const x: u16 = @intCast(std.math.clamp(raw_x, 0, @as(i32, @intCast(width - rail_width))));
         const y: u16 = @intCast(std.math.clamp(centered_y, 0, @as(i32, @intCast(height - rail_height))));
-        self.fill(.{ .x = x, .y = y, .width = 6, .height = rail_height }, color);
+        self.fill(.{ .x = x, .y = y, .width = rail_width, .height = rail_height }, color);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
@@ -331,16 +332,16 @@ pub const Surface = struct {
     }
 
     fn drawCartridge(self: Surface, cartridge: ui.Cartridge) void {
-        const bounds = cartridge.bounds;
+        const bounds = cartridge.displayBounds();
         if (cartridge.sprite) |sprite| {
             self.drawTextureDimmed(sprite, bounds, cartridge.dim, cartridge.tilt, cartridge.clip_left);
-            if (cartridge.state == .pressed) self.stroke(bounds, cartridge.style.edge, 6);
+            if (cartridge.selected) self.stroke(bounds, cartridge.style.edge, if (cartridge.state == .pressed or cartridge.state == .boundary) 6 else 4);
             return;
         }
         if (cartridge.plain_fallback) {
             self.fill(bounds, cartridge.style.surface);
             self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", cartridge.style.text, font.caption);
-            if (cartridge.state == .pressed) self.stroke(bounds, cartridge.style.edge, 6);
+            if (cartridge.selected) self.stroke(bounds, cartridge.style.edge, if (cartridge.state == .pressed or cartridge.state == .boundary) 6 else 4);
             return;
         }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
@@ -381,7 +382,7 @@ pub const Surface = struct {
             ui.Color{ .r = 0x24, .g = 0x27, .b = 0x29 };
         self.fill(.{ .x = body.x + 8, .y = body.y + 10, .width = body.width, .height = body.height }, cartridge.style.shadow);
         self.fill(body, shell);
-        const edge: u16 = if (cartridge.state == .pressed) 8 else if (cartridge.selected) 5 else 2;
+        const edge: u16 = if (cartridge.state == .pressed) 8 else if (cartridge.state == .boundary) 7 else if (cartridge.selected) 5 else 2;
         const edge_color = cartridge.style.edge;
         self.fill(.{ .x = body.x, .y = body.y, .width = body.width, .height = edge }, edge_color);
         self.fill(.{ .x = body.x, .y = body.y + body.height - edge, .width = body.width, .height = edge }, edge_color);

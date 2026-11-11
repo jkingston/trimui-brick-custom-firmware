@@ -27,6 +27,7 @@ pub const Id = enum(u64) {
 pub const State = enum {
     idle,
     focused,
+    boundary,
     pressed,
     activating,
     busy,
@@ -36,13 +37,13 @@ pub const State = enum {
 
     pub fn hasFocus(self: State) bool {
         return switch (self) {
-            .focused, .pressed, .activating, .busy, .succeeded, .failed => true,
+            .focused, .boundary, .pressed, .activating, .busy, .succeeded, .failed => true,
             .idle, .disabled => false,
         };
     }
 
     pub fn acceptsInput(self: State) bool {
-        return self == .idle or self == .focused or self == .pressed;
+        return self == .idle or self == .focused or self == .boundary or self == .pressed;
     }
 };
 

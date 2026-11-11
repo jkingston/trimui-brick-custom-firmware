@@ -38,6 +38,23 @@ test "page hierarchy gives every renderer the same transition direction" {
     try std.testing.expect(!returnsToParent(.menu, .home, .power));
 }
 
+test "direction support follows each component layout" {
+    var state = Model{ .page = .games, .library_view = .shelf };
+    try std.testing.expect(state.supportsDirection(.left));
+    try std.testing.expect(!state.supportsDirection(.up));
+    state.library_view = .grid;
+    try std.testing.expect(state.supportsDirection(.up));
+    state.page = .setting;
+    state.active_setting = .brightness;
+    try std.testing.expect(state.supportsDirection(.right));
+    try std.testing.expect(!state.supportsDirection(.down));
+    state.page = .wifi;
+    state.wifi.page = .list;
+    try std.testing.expect(!state.supportsDirection(.left));
+    state.wifi.page = .password;
+    try std.testing.expect(state.supportsDirection(.left));
+}
+
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
     page: Page = .home,
@@ -65,6 +82,31 @@ pub const Model = struct {
 
     pub fn collection(self: *const Model) catalog.Collection {
         return .{ .games = self.games, .system = self.system };
+    }
+
+    pub fn supportsDirection(self: *const Model, action: Action) bool {
+        const vertical = action == .up or action == .down;
+        const horizontal = action == .left or action == .right;
+        return switch (self.page) {
+            .games => switch (self.library_view) {
+                .list => vertical,
+                .shelf => horizontal,
+                .grid => vertical or horizontal,
+            },
+            .setting => if (self.active_setting == .brightness) horizontal else vertical,
+            .wifi => switch (self.wifi.page) {
+                .list, .details => vertical,
+                .password, .hidden_name, .hidden_security, .open_confirm, .forget_confirm => vertical or horizontal,
+                .info => false,
+            },
+            .bluetooth => switch (self.bluetooth.page) {
+                .list, .details => vertical,
+                .forget_confirm, .confirmation, .code_entry => vertical or horizontal,
+                .code_display => false,
+            },
+            .home, .settings, .systems, .views, .power, .power_confirm => vertical,
+            .game, .wifi_fallback => false,
+        };
     }
 
     pub fn librarySource(self: *const Model) ?usize {

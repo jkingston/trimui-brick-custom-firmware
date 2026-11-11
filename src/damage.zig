@@ -245,7 +245,7 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .keyboard_key => |value| value.bounds,
         .cover => |value| expand(value.bounds, 10, 12),
         .cartridge => |value| blk: {
-            var bounds = expand(value.bounds, 8, 10);
+            var bounds = expand(value.displayBounds(), 8, 10);
             const left = bounds.x -| value.clip_left;
             bounds.width +|= bounds.x - left;
             bounds.x = left;
@@ -405,4 +405,13 @@ test "paint bounds clip cartridges outside the viewport without underflow" {
         .sprite = null,
     } });
     try std.testing.expectEqual(@as(u16, 24), edge.width);
+
+    const nudged = paintBounds(.{ .cartridge = .{
+        .bounds = .{ .x = 100, .y = 154, .width = 256, .height = 330 },
+        .platform = "gba",
+        .texture = null,
+        .sprite = null,
+        .focus_offset_x = -10,
+    } });
+    try std.testing.expectEqual(@as(u16, 90), nudged.x);
 }

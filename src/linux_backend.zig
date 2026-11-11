@@ -683,13 +683,14 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 const previous_page = state.page;
                 navigation.cancel();
                 const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
+                const boundary = !result.changed and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                 if (result.launch) |index| return index;
                 if (state.page != previous_page)
                     tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
-                changed = changed or result.changed;
+                changed = changed or result.changed or boundary;
                 if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
             };
         }
@@ -744,14 +745,15 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         const previous_page = state.page;
                         navigation.cancel();
                         const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
+                        const boundary = !result.changed and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                         if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                             motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                         if (result.launch) |index| return index;
                         if (state.page != previous_page)
                             tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
-                        changed = changed or result.changed;
-                        if (result.changed) display.recordInput(event.seconds * 1_000_000 + event.microseconds);
+                        changed = changed or result.changed or boundary;
+                        if (result.changed or boundary) display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
                     }
                 }
@@ -835,8 +837,11 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         }
         if (ready == 0) {
             if (repeat.due(nowMilliseconds(io))) |action| {
-                if (action == .up or action == .down)
-                    changed = state.apply(action) or changed;
+                if (action == .up or action == .down) {
+                    const applied = state.apply(action);
+                    const boundary = !applied and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.reduced_motion);
+                    changed = applied or boundary or changed;
+                }
             }
         }
         for (&gamepads.slots, 0..) |*slot, slot_index| {
@@ -889,7 +894,9 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                     if (event_action) |action| {
                         const previous_layer = state.layer;
                         navigation.cancel();
-                        if (state.apply(action)) {
+                        const applied = state.apply(action);
+                        const boundary = !applied and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.reduced_motion);
+                        if (applied or boundary) {
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         }
