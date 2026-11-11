@@ -415,7 +415,24 @@ pub fn main(init: std.process.Init) !void {
             } else {
                 const previous = state.selected;
                 const previous_page = state.page;
+                const previous_appearance = state.settings.appearance;
                 const applied = state.apply(pressed);
+                if (state.takeSetting()) |setting|
+                    std.log.info("Setting intent: {s}", .{@tagName(setting)});
+                if (state.takeWifiRequest()) |pending| {
+                    var request = pending;
+                    std.log.info("Wi-Fi intent: {s}", .{@tagName(request.command.kind)});
+                    request.wipe();
+                }
+                if (state.takeBluetoothCommand()) |pending| {
+                    var command = pending;
+                    std.log.info("Bluetooth intent: {s}", .{@tagName(command.kind)});
+                    command.wipe();
+                }
+                if (state.pending_power) |power| {
+                    std.log.info("Power intent: {s}", .{@tagName(power)});
+                    state.pending_power = null;
+                }
                 const boundary = !applied and state.supportsDirection(pressed) and focus.boundary(pressed, timestamp, state.settings.reduced_motion);
                 changed = applied or boundary or changed;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
@@ -431,6 +448,13 @@ pub fn main(init: std.process.Init) !void {
                     focus.update(&destination, timestamp, state.settings.reduced_motion);
                     focus.decorate(&destination, timestamp);
                     navigation.begin(&tree, &destination, if (model.returnsToParent(pressed, previous_page, state.page)) .back else .forward, timestamp, state.settings.reduced_motion);
+                    tree = destination;
+                } else if (launch == null and state.settings.appearance != previous_appearance) {
+                    var destination = state.tree();
+                    focus = .{};
+                    focus.update(&destination, timestamp, state.settings.reduced_motion);
+                    focus.decorate(&destination, timestamp);
+                    navigation.begin(&tree, &destination, .forward, timestamp, state.settings.reduced_motion);
                     tree = destination;
                 }
                 layout_pending = layout_pending or (applied and state.page == previous_page and (pressed == .up or pressed == .down or pressed == .left or pressed == .right) and !(state.page == .games and state.library_view == .shelf));

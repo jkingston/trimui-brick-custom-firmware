@@ -689,6 +689,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
                 const previous = state.selected;
                 const previous_page = state.page;
+                const previous_appearance = state.settings.appearance;
                 navigation.cancel();
                 finishLayout(&layout, &tree, nowMilliseconds(io));
                 const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
@@ -697,7 +698,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                 if (result.launch) |index| return index;
-                if (state.page != previous_page)
+                if (state.page != previous_page or state.settings.appearance != previous_appearance)
                     tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
                 layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .shelf));
                 changed = changed or result.changed or boundary;
@@ -735,6 +736,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         .activated => {
                             const previous = state.selected;
                             const previous_page = state.page;
+                            const previous_appearance = state.settings.appearance;
                             navigation.cancel();
                             finishLayout(&layout, &tree, nowMilliseconds(io));
                             const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, .select);
@@ -742,7 +744,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                             if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                                 motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                             if (result.launch) |index| return index;
-                            if (state.page != previous_page)
+                            if (state.page != previous_page or state.settings.appearance != previous_appearance)
                                 tree = beginNavigation(state, &tree, previous_page, .select, nowMilliseconds(io), &navigation, &focus);
                             changed = changed or result.changed;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
@@ -755,6 +757,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     if (event_action) |action| {
                         const previous = state.selected;
                         const previous_page = state.page;
+                        const previous_appearance = state.settings.appearance;
                         navigation.cancel();
                         finishLayout(&layout, &tree, nowMilliseconds(io));
                         const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
@@ -763,7 +766,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                             motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                         if (result.launch) |index| return index;
-                        if (state.page != previous_page)
+                        if (state.page != previous_page or state.settings.appearance != previous_appearance)
                             tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
                         layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .shelf));
                         changed = changed or result.changed or boundary;
