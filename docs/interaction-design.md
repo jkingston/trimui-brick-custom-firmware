@@ -26,6 +26,7 @@ document explains the decisions they enforce.
 | --- | --- |
 | Typography, geometry, semantic motion roles | `src/design.zig` |
 | Interruptible scalar motion and frame deadlines | `src/motion.zig` |
+| Connected page transitions and source anchors | `src/navigation_motion.zig` |
 | Identity, control lifecycle, focus boundaries | `src/interaction.zig` |
 | Sound/haptic event policy | `src/feedback.zig` |
 | Selectable controls and notice lifecycle | `src/ui_components.zig` |
@@ -97,11 +98,16 @@ does not auto-dismiss. Completion feedback uses `FeedbackLifecycle`.
 
 ### Navigation and overlays
 
-Forward transitions use the selected component as their anchor. Back is the
-shorter reverse relationship and restores the previous focus identity. An
-in-game overlay preserves the game frame where possible, traps focus while open,
-and closes symmetrically. Never add a screen-specific splash between a source
-and its destination.
+Use `navigation_motion.Controller`; screens must not author page-specific
+transitions. Forward reveals the complete destination out of the selected
+component. Back leaves the restored parent visible while the departing page
+collapses into its restored focus. A new input finishes the current transition
+at its destination immediately and acts on that destination; input never waits
+for decoration. Reduced motion presents the destination directly.
+
+An in-game overlay preserves the game frame where possible, traps focus while
+open, and closes symmetrically. Never add a screen-specific splash between a
+source and its destination.
 
 ## Timing and scheduling
 
@@ -139,6 +145,7 @@ A new interactive component is not complete until:
 - held input and boundaries use shared behavior;
 - busy, disabled, failure, and recovery are unambiguous;
 - forward/back focus restoration is tested;
+- page changes use the shared connected-navigation controller and cancel cleanly;
 - reduced motion, muted sound, and disabled haptics preserve usability;
 - deterministic unit tests cover its state transitions and motion endpoints;
 - active animation cannot block beyond its next frame deadline;

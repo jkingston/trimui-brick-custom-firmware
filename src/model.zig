@@ -16,6 +16,28 @@ pub const Power = enum { screen_off, suspend_device, shutdown };
 const columns = @import("design.zig").geometry.grid_columns;
 const settings_count = @typeInfo(settings_model.Setting).@"enum".field_names.len;
 
+/// Describes the page hierarchy once so every renderer can use the same
+/// connected-navigation direction.
+pub fn returnsToParent(action: Action, from: Page, to: Page) bool {
+    if (action == .back) return true;
+    const returning = switch (from) {
+        .game, .systems, .views => to == .games,
+        .setting, .wifi, .bluetooth => to == .settings,
+        .wifi_fallback => to == .wifi,
+        .power_confirm => to == .power,
+        else => false,
+    };
+    return returning or (action == .menu and to == .home);
+}
+
+test "page hierarchy gives every renderer the same transition direction" {
+    try std.testing.expect(!returnsToParent(.select, .home, .settings));
+    try std.testing.expect(returnsToParent(.back, .settings, .home));
+    try std.testing.expect(returnsToParent(.select, .views, .games));
+    try std.testing.expect(returnsToParent(.menu, .settings, .home));
+    try std.testing.expect(!returnsToParent(.menu, .home, .power));
+}
+
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
     page: Page = .home,

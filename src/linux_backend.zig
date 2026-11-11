@@ -9,6 +9,7 @@ const input_repeat = @import("input_repeat.zig");
 const interaction = @import("interaction.zig");
 const interaction_motion = @import("motion.zig");
 const model = @import("model.zig");
+const navigation_motion = @import("navigation_motion.zig");
 const overlay = @import("overlay.zig");
 const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
@@ -329,6 +330,27 @@ fn repeatAllowed(state: *const model.Model, action: model.Action) bool {
 
 const SessionAction = struct { changed: bool = false, launch: ?usize = null };
 
+fn navigationDirection(action: model.Action, from: model.Page, to: model.Page) navigation_motion.Direction {
+    return if (model.returnsToParent(action, from, to)) .back else .forward;
+}
+
+fn beginNavigation(
+    state: *model.Model,
+    source: *const ui.Tree,
+    from_page: model.Page,
+    action: model.Action,
+    now_ms: i64,
+    navigation: *navigation_motion.Controller,
+    focus: *focus_motion.Controller,
+) ui.Tree {
+    var destination = state.tree();
+    focus.* = .{};
+    focus.update(&destination, now_ms, state.settings.reduced_motion);
+    focus.decorate(&destination, now_ms);
+    navigation.begin(source, &destination, navigationDirection(action, from_page, state.page), now_ms, state.settings.reduced_motion);
+    return destination;
+}
+
 fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
     if (profile_input) return;
     const dir = std.Io.Dir.cwd().openDir(io, "/data/settings", .{}) catch return;
@@ -491,6 +513,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     var poll_fds: [max_gamepads + 3]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var motion: @import("shelf_motion.zig").Motion = .{};
+    var navigation: navigation_motion.Controller = .{};
     var press: PressTracker = .{};
     var feedback_lifecycle = ui_components.FeedbackLifecycle{};
     var was_animating = false;
@@ -503,7 +526,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
-        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now);
+        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now);
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
@@ -640,11 +663,15 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
                 const previous = state.selected;
+                const previous_page = state.page;
+                navigation.cancel();
                 const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                 if (result.launch) |index| return index;
+                if (state.page != previous_page)
+                    tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
                 changed = changed or result.changed;
                 if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
             };
@@ -671,17 +698,22 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     const event_action = actionForEvent(event, slot.builtin, &slot.dropped);
                     switch (press.observe(event, slot.builtin, slot.dropped, &tree)) {
                         .pressed => {
+                            navigation.cancel();
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             continue;
                         },
                         .activated => {
                             const previous = state.selected;
+                            const previous_page = state.page;
+                            navigation.cancel();
                             const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, .select);
                             if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                             if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                                 motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                             if (result.launch) |index| return index;
+                            if (state.page != previous_page)
+                                tree = beginNavigation(state, &tree, previous_page, .select, nowMilliseconds(io), &navigation, &focus);
                             changed = changed or result.changed;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -692,11 +724,15 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     }
                     if (event_action) |action| {
                         const previous = state.selected;
+                        const previous_page = state.page;
+                        navigation.cancel();
                         const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                         if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                             motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                         if (result.launch) |index| return index;
+                        if (state.page != previous_page)
+                            tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
                         changed = changed or result.changed;
                         if (result.changed) display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -728,7 +764,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             focus.update(&tree, frame_now, state.settings.reduced_motion);
             focus.decorate(&tree, frame_now);
             press.decorate(&tree);
-            try display.submit(&tree);
+            if (navigation.active(frame_now))
+                try display.submitTransition(&navigation, frame_now)
+            else
+                try display.submit(&tree);
         }
     }
 }

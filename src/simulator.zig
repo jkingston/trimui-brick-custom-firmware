@@ -142,6 +142,15 @@ fn failSdl(sdl: *const Sdl, operation: []const u8) !void {
 
 fn drawTree(sdl: *const Sdl, renderer: *Renderer, texture: *Texture, pixels: []u32, tree: *const ui.Tree) !void {
     (render.Surface{ .pixels = pixels }).render(tree);
+    try presentPixels(sdl, renderer, texture, pixels);
+}
+
+fn drawTransition(sdl: *const Sdl, renderer: *Renderer, texture: *Texture, pixels: []u32, transition: *const @import("navigation_motion.zig").Controller, now_ms: i64) !void {
+    (render.Surface{ .pixels = pixels }).renderTransition(transition.frame(now_ms));
+    try presentPixels(sdl, renderer, texture, pixels);
+}
+
+fn presentPixels(sdl: *const Sdl, renderer: *Renderer, texture: *Texture, pixels: []const u32) !void {
     if (sdl.updateTexture(texture, null, pixels.ptr, render.width * @sizeOf(u32)) != 0)
         return failSdl(sdl, "SDL_UpdateTexture");
     if (sdl.renderClear(renderer) != 0) return failSdl(sdl, "SDL_RenderClear");
@@ -294,6 +303,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var motion: @import("shelf_motion.zig").Motion = .{};
+    var navigation: @import("navigation_motion.zig").Controller = .{};
     var repeat: @import("input_repeat.zig").Controller = .{};
     var pressed_id: ?@import("interaction.zig").Id = null;
     var select_armed = false;
@@ -301,7 +311,7 @@ pub fn main(init: std.process.Init) !void {
     while (true) {
         const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
         motion.reduced = state.settings.reduced_motion;
-        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now);
+        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now);
         const repeat_timeout = repeat.timeout(now);
         const timeout = @import("motion.zig").pollTimeout(animating, was_animating, repeat_timeout);
         // SAFETY: event is inspected only when SDL reports an initialized event.
@@ -330,12 +340,14 @@ pub fn main(init: std.process.Init) !void {
                     sdl.setWindowSize(window, size.width, size.height);
                     changed = true;
                 } else if (key == 'm') {
+                    navigation.cancel();
                     overlay_visible = !overlay_visible;
                     if (overlay_visible) game_overlay = .{};
                     repeat.reset();
                     changed = true;
                 } else if (actionForKey(key)) |pressed| {
                     if (pressed == .select) {
+                        navigation.cancel();
                         select_armed = true;
                         pressed_id = tree.focusedId();
                         action = null;
@@ -348,6 +360,7 @@ pub fn main(init: std.process.Init) !void {
             }
         }
         if (action) |pressed| {
+            navigation.cancel();
             if (overlay_visible) {
                 changed = game_overlay.apply(pressed) or changed;
                 if (game_overlay.takeCommand()) |command| {
@@ -370,12 +383,22 @@ pub fn main(init: std.process.Init) !void {
                 }
             } else {
                 const previous = state.selected;
+                const previous_page = state.page;
                 changed = state.apply(pressed) or changed;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), timestamp);
-                if (state.takeLaunch()) |index| {
+                const launch = state.takeLaunch();
+                if (launch) |index| {
                     const argv = retroarch.arguments(&state.games[index]);
                     std.log.info("Launch intent: {s} / {s}", .{ argv[4], state.games[index].rom_path });
+                }
+                if (launch == null and state.page != previous_page) {
+                    var destination = state.tree();
+                    focus = .{};
+                    focus.update(&destination, timestamp, state.settings.reduced_motion);
+                    focus.decorate(&destination, timestamp);
+                    navigation.begin(&tree, &destination, if (model.returnsToParent(pressed, previous_page, state.page)) .back else .forward, timestamp, state.settings.reduced_motion);
+                    tree = destination;
                 }
             }
         }
@@ -385,7 +408,10 @@ pub fn main(init: std.process.Init) !void {
             focus.update(&tree, timestamp, state.settings.reduced_motion);
             focus.decorate(&tree, timestamp);
             if (pressed_id) |id| _ = tree.setInteraction(id, .pressed);
-            try drawTree(&sdl, renderer, texture, pixels, &tree);
+            if (navigation.active(timestamp))
+                try drawTransition(&sdl, renderer, texture, pixels, &navigation, timestamp)
+            else
+                try drawTree(&sdl, renderer, texture, pixels, &tree);
         }
     }
 }

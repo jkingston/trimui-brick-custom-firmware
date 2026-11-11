@@ -132,10 +132,19 @@ pub const Scheduler = struct {
     pub fn submit(self: *Scheduler, tree: *const ui.Tree) !void {
         try self.present(tree);
     }
+    pub fn submitTransition(self: *Scheduler, transition: *const @import("navigation_motion.zig").Controller, now_ms: i64) !void {
+        const render_started_us = std.Io.Timestamp.now(self.io, .awake).toMicroseconds();
+        self.surface.renderTransition(transition.frame(now_ms));
+        try self.flipAt(render_started_us);
+    }
 
     fn present(self: *Scheduler, tree: *const ui.Tree) !void {
         const render_started_us = std.Io.Timestamp.now(self.io, .awake).toMicroseconds();
         self.surface.render(tree);
+        try self.flipAt(render_started_us);
+    }
+
+    fn flipAt(self: *Scheduler, render_started_us: i64) !void {
         self.variable.xoffset = 0;
         self.variable.yoffset = @intCast(self.draw_page * render.height);
         self.variable.activate = fb_activate_vertical_blank;

@@ -49,6 +49,16 @@ pub const Surface = struct {
         for (tree.slice()) |element| self.renderElement(element, tree.theme);
     }
 
+    pub fn renderTransition(self: Surface, frame: @import("navigation_motion.zig").Frame) void {
+        self.render(frame.base);
+        var clip = [_]ui.Rect{frame.clip};
+        var overlay = self;
+        overlay.clips = &clip;
+        if (overlay.sink) |sink| sink.clip(sink.context, &clip);
+        defer if (overlay.sink) |sink| sink.clip(sink.context, &.{});
+        overlay.render(frame.overlay);
+    }
+
     pub fn renderDamage(self: Surface, tree: *const ui.Tree, changed: *const damage.RectSet) void {
         const rects = changed.slice();
         if (rects.len == 0) return;
@@ -588,6 +598,20 @@ test "long text stays within its bounds and offscreen rectangles are harmless" {
         }
     }
     try std.testing.expect(written > 0);
+}
+
+test "navigation transition clips the complete destination scene" {
+    const themes = @import("theme.zig");
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var from = ui.Tree{ .theme = themes.light, .background = themes.light.background };
+    from.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 0, .width = width, .height = height }, .color = themes.light.background } });
+    var to = ui.Tree{ .theme = themes.dark, .background = themes.dark.background };
+    to.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 0, .width = width, .height = height }, .color = themes.dark.background } });
+    (Surface{ .pixels = pixels }).renderTransition(.{ .base = &from, .overlay = &to, .clip = .{ .x = 100, .y = 200, .width = 300, .height = 100 } });
+    try std.testing.expectEqual(Surface.pack(themes.light.background), pixels[0]);
+    try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[250 * width + 200]);
+    try std.testing.expectEqual(Surface.pack(themes.light.background), pixels[500 * width + 500]);
 }
 
 test "lowercase and uppercase preserve distinct letterforms" {
