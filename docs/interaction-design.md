@@ -135,7 +135,7 @@ without the job that justified it there.
 | Progress, warning, failure | Keep it at the originating control where possible. Use the shared hairline status band only when the event has no sufficient local surface. |
 | Notification | Reserve for a cross-context event that needs attention, such as controller loss or save failure. Background sync completion is silent. There is no notification centre until real product requirements justify one. |
 | Modal | Only destructive, security-sensitive, or irreversible commitments. Never use a modal merely to report completion. |
-| Menu button | Reveal Device from Library; dismiss Device back to Library; reveal or close Quick system during play. It is never a page-dependent shortcut carousel. |
+| Menu button | Reveal Device from Library; dismiss the complete system layer back to Library; reveal or close Quick system during play. From a focused task opened during play, Menu closes every system layer and resumes. It is never ignored or used as a page-dependent shortcut carousel. |
 
 The status cluster owns icon order, spacing, and collapse. Screens do not place
 battery or network marks themselves. A durable state may remain visible there;

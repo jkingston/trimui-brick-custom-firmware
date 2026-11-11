@@ -160,6 +160,21 @@ pub const Model = struct {
     }
 
     pub fn apply(self: *Model, action: Action) bool {
+        if (action == .menu) {
+            const destination = product_navigation.menuDestination(self.page) orelse return false;
+            if (self.page == .games) self.remember();
+            if (self.page == .wifi or self.page == .wifi_fallback) self.wifi.dismiss();
+            if (self.page == .bluetooth) self.bluetooth.dismiss();
+            self.launch_failed = null;
+            if (destination == .games)
+                self.browse()
+            else {
+                self.page = destination;
+                self.selected = 0;
+            }
+            self.revision += 1;
+            return true;
+        }
         if (self.page == .wifi_fallback) {
             if (action != .back) return false;
             self.page = .wifi;
@@ -333,12 +348,7 @@ pub const Model = struct {
                     self.selected = 2;
                 },
             },
-            .menu => {
-                self.remember();
-                self.page = product_navigation.menuDestination(self.page) orelse self.page;
-                self.selected = 0;
-                self.launch_failed = null;
-            },
+            .menu => unreachable,
             .view => if (self.page == .games) {
                 self.remember();
                 self.library_view = switch (self.library_view) {
@@ -638,6 +648,37 @@ test "Menu reveals and dismisses the system instead of cycling destinations" {
     try std.testing.expectEqual(Page.settings, state.page);
     _ = state.apply(.menu);
     try std.testing.expectEqual(Page.games, state.page);
+}
+
+test "Menu restores Library context from every Device depth" {
+    var state = Model{ .page = .setting, .library_selection = 4, .selected = 2 };
+    _ = state.apply(.menu);
+    try std.testing.expectEqual(Page.games, state.page);
+    try std.testing.expectEqual(@as(usize, 4), state.selected);
+}
+
+test "Menu dismisses Wi-Fi without retaining unfinished credentials" {
+    var state = Model{ .page = .wifi, .library_selection = 3 };
+    state.wifi.page = .password;
+    state.wifi.field.bytes[0] = 'x';
+    state.wifi.field.len = 1;
+    _ = state.apply(.menu);
+    try std.testing.expectEqual(Page.games, state.page);
+    try std.testing.expectEqual(@as(usize, 3), state.selected);
+    try std.testing.expectEqual(@as(u8, 0), state.wifi.field.len);
+    try std.testing.expectEqual(@as(u8, 0), state.wifi.field.bytes[0]);
+}
+
+test "Menu rejects a Bluetooth pairing prompt before dismissing it" {
+    var state = Model{ .page = .bluetooth, .library_selection = 2 };
+    state.bluetooth.page = .code_entry;
+    state.bluetooth.field.bytes[0] = '7';
+    state.bluetooth.field.len = 1;
+    _ = state.apply(.menu);
+    try std.testing.expectEqual(Page.games, state.page);
+    try std.testing.expectEqual(@as(usize, 2), state.selected);
+    try std.testing.expectEqual(bluetooth_model.CommandKind.cancel, state.takeBluetoothCommand().?.kind);
+    try std.testing.expectEqual(@as(u8, 0), state.bluetooth.field.len);
 }
 
 test "library preview can trail a skim and settle on release" {

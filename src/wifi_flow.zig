@@ -140,6 +140,21 @@ pub const Model = struct {
         };
     }
 
+    /// Leaving the system layer must not retain unfinished credentials or a
+    /// request that never reached the service.
+    pub fn dismiss(self: *Model) void {
+        self.field.wipe();
+        self.clearRetryCredential();
+        self.clearHiddenName();
+        self.clearPending();
+        self.show_password = false;
+        self.page = .list;
+        self.active = null;
+        self.detail_selected = 0;
+        self.confirm_selected = 0;
+        self.wifi_state.releaseOrder();
+    }
+
     fn applyList(self: *Model, action: input.Action) bool {
         switch (action) {
             .up => return self.wifi_state.move(-1),

@@ -1150,8 +1150,14 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
                         state.selected = 0;
                         state.wifi.page = .list;
                         _ = try runSession(io, &state, true);
+                        const resume_game = state.page == .games;
                         state.page = .games;
                         state.selected = 0;
+                        if (resume_game) {
+                            game_overlay.layer = .pause;
+                            game_overlay.selected = 0;
+                            continue :game_session;
+                        }
                         continue;
                     },
                 }

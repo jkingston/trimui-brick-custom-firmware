@@ -16,7 +16,7 @@ pub const SurfaceRole = enum {
     commitment,
 };
 
-pub const MenuBehavior = enum { reveal_device, dismiss_to_library, task_owned };
+pub const MenuBehavior = enum { reveal_device, dismiss_to_library };
 
 pub const ChromePolicy = struct {
     role: SurfaceRole,
@@ -31,7 +31,7 @@ pub fn chrome(page: Page) ChromePolicy {
         .game => .{ .role = .launch, .ambient_status = false, .menu = .dismiss_to_library },
         .settings, .setting, .systems, .views, .power => .{ .role = .device, .ambient_status = true, .menu = .dismiss_to_library },
         .power_confirm => .{ .role = .commitment, .ambient_status = true, .menu = .dismiss_to_library },
-        .wifi, .wifi_fallback, .bluetooth => .{ .role = .focused_task, .ambient_status = false, .menu = .task_owned },
+        .wifi, .wifi_fallback, .bluetooth => .{ .role = .focused_task, .ambient_status = false, .menu = .dismiss_to_library },
     };
 }
 
@@ -39,7 +39,6 @@ pub fn menuDestination(page: Page) ?Page {
     return switch (chrome(page).menu) {
         .reveal_device => .settings,
         .dismiss_to_library => .games,
-        .task_owned => null,
     };
 }
 
@@ -69,7 +68,7 @@ test "surface policy makes Library home and keeps task chrome local" {
     try std.testing.expectEqual(SurfaceRole.library_home, chrome(.games).role);
     try std.testing.expectEqual(Page.settings, menuDestination(.games).?);
     try std.testing.expectEqual(Page.games, menuDestination(.settings).?);
-    try std.testing.expect(menuDestination(.wifi) == null);
+    try std.testing.expectEqual(Page.games, menuDestination(.wifi).?);
     try std.testing.expect(!chrome(.game).ambient_status);
     try std.testing.expect(!chrome(.bluetooth).ambient_status);
 }

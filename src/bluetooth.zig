@@ -214,6 +214,24 @@ pub const Model = struct {
             .code_display => self.applyDisplay(action),
         };
     }
+
+    /// Menu dismisses the complete system layer. Resolve interactive pairing
+    /// prompts and cancel invisible work before their UI disappears.
+    pub fn dismiss(self: *Model) void {
+        if (self.page == .confirmation or self.page == .code_entry or self.page == .code_display) {
+            _ = self.apply(.back);
+        } else if (self.snapshot.operation != .none and self.snapshot.operation != .discovery) {
+            self.queue(.cancel, if (self.snapshot.operation_device.len == 0) null else self.snapshot.operation_device, false);
+        } else if (self.snapshot.discovery != .idle) {
+            self.queue(.cancel, null, false);
+        } else self.clearPending();
+        self.field.wipe();
+        self.page = .list;
+        self.active = null;
+        self.selected = 0;
+        self.detail_selected = 0;
+        self.confirm_selected = 0;
+    }
     fn applyList(self: *Model, action: input.Action) bool {
         const cancellable = self.snapshot.operation != .none and self.snapshot.operation != .discovery;
         if (cancellable) {
