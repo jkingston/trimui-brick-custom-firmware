@@ -55,7 +55,7 @@ play.
 | Typography, geometry, semantic motion roles | `src/design.zig` |
 | Product page hierarchy and return direction | `src/product_navigation.zig` |
 | Interruptible scalar motion and frame deadlines | `src/motion.zig` |
-| Immediate directional page settlement | `src/navigation_motion.zig` |
+| Connected source/destination settlement | `src/navigation_motion.zig` |
 | Shared focus, meter, activity, layout, and navigation orchestration | `src/scene_motion.zig` |
 | Stable-ID viewport scrolling | `src/layout_motion.zig` |
 | Animated meters and value retargeting | `src/meter_motion.zig` |
@@ -105,6 +105,27 @@ scene primitives; new controls must enter through `ui_components.zig`.
   The shared footer preserves the primary action and collapses supporting
   labels toward icon-only before controls can collide; screens never assign
   footer slots.
+
+## System chrome and interruption policy
+
+Brick borrows the settled grammar of a modern mobile OS but reorders it around
+play. The Library is home, a running game is the foreground activity, and Quick
+system is the contextual control surface. Do not import phone or desktop chrome
+without the job that justified it there.
+
+| Element | Brick policy |
+| --- | --- |
+| Taskbar, dock, app switcher | None. Brick does not expose routine multitasking or an app grid. |
+| Status bar | No full-width bar. `ui_components.systemStatus()` owns a compact top-right cluster on shell surfaces. It is absent over play and on pages where connectivity is already the task. |
+| Battery, network, accessories | Ambient icons in the shared status cluster. They describe durable state and never become a row of prose. |
+| Routine success | Settle in place. The changed value, connected row, or status icon is the confirmation; do not toast “saved”, “on”, or “connected”. |
+| Progress, warning, failure | Keep it at the originating control where possible. Use the shared hairline status band only when the event has no sufficient local surface. |
+| Notification | Reserve for a cross-context event that needs attention, such as controller loss or save failure. Background sync completion is silent. There is no notification centre until real product requirements justify one. |
+| Modal | Only destructive, security-sensitive, or irreversible commitments. Never use a modal merely to report completion. |
+
+The status cluster owns icon order, spacing, and collapse. Screens do not place
+battery or network marks themselves. A durable state may remain visible there;
+a transient event must expire or become a concrete object in its destination.
 
 ## Interaction states
 
@@ -169,9 +190,11 @@ authentic cartridge or disc comes next, and the loose texture is a last resort.
 A number is not automatically the most important representation of a value.
 Use spatial level, shape, position, or state first when that is how the player
 judges the result; keep exact text as secondary evidence when precision remains
-useful. Brightness is primarily a meter with a subordinate percentage. Device
-battery is primarily a compact battery level with a small percentage. Do not
-make `100%` larger than the control, device, or consequence it describes.
+useful. Brightness is primarily a named perceptual outcome and stepped meter;
+its exact stop (`10 of 10`) is subordinate evidence, not a percentage headline.
+Device battery is primarily a compact battery level with small exact text only
+where the remaining number changes a decision. Do not make `100%` larger than
+the control, device, or consequence it describes.
 
 ### Control grammar
 
@@ -198,16 +221,16 @@ motion retargets rather than restarting.
 ### Radio initialization
 
 Wi-Fi and Bluetooth checking, starting, stopping, unavailable, and failure
-states use `radio_surface.status()`. They are page-scale device states, not
-disabled toggle rows. State copy is concrete, one shared activity cadence shows
-unfinished work, cancellation appears only when the operation accepts it, and
-successful initialization returns to the actual list. Completion is confirmed
-in place through the shared feedback lifecycle; it does not open a celebratory
-modal.
+states use `radio_surface.status()`. The destination and task remain stable
+(`Join a network`, `Connect a device`) while a compact state word and the shared
+activity cadence communicate readiness. They are not disabled toggle rows or
+page-scale explanations of the radio lifecycle. Cancellation appears only when
+the operation accepts it, and successful initialization resolves into the real
+list without a completion toast.
 
-Copy describes device availability and the user's next choice, never the
-service lifecycle. Say “unavailable” and offer “Try again”; do not
-expose daemons, initialization, startup failure, or recovery implementation.
+Copy describes the task and the user's next choice, never the service lifecycle.
+Say `needs attention` and offer `Try again`; do not expose daemons,
+initialization, startup failure, or recovery implementation.
 
 ### Quick system / receding room
 
@@ -316,10 +339,13 @@ draw private spinners or choose animation timing. Reduced motion preserves the
 busy signal as three static dots rather than removing it. Progress copy omits
 trailing ellipses because the activity indicator already communicates continuation.
 
-Use `ui_components.feedbackBanner()` for transient or terminal status. It uses
-one quiet surface with a trailing semantic mark. Do not use coloured edge
-stripes, toast shadows, or a new status ornament per screen. Failure copy is
-sentence case and says what happened; recovery belongs to the available action.
+Use `ui_components.feedbackBanner()` only for cross-context progress, warning,
+or failure that has no sufficient local surface. It uses the stable hairline
+status band with a trailing semantic mark, not a floating toast. Routine success
+must resolve into the changed object or `systemStatus()`. Do not use coloured
+edge stripes, toast shadows, or a new status ornament per screen. Failure copy
+is sentence case and says what happened; recovery belongs to the available
+action.
 
 Game launch is the same contract at page scale: reveal the selected game's
 launch destination before synchronous preparation begins, start shared activity
@@ -328,16 +354,22 @@ the emulator owns the display. Never leave the library frozen after activation.
 
 ### Navigation and overlays
 
-Use `navigation_motion.Controller`; screens must not author page-specific
-transitions. The complete destination is legible on the first frame and settles
-over less than one content margin. Forward and back mirror direction; the old
-surface persists only as a narrow edge of spatial context. Do not zoom a page,
-expand a control into a page, or use a full-screen presentation wipe. A new
-input finishes the current transition at its destination immediately and acts
-on that destination; input never waits for decoration. Reduced motion presents
-the destination directly.
+Routine shell navigation is press then cut: the source control acknowledges the
+input, and the complete destination appears immediately. Use
+`scene_motion.Controller.cutTo()` so focus continuity resets and unrelated pages
+do not appear to morph into each other.
 
-Whole-surface appearance changes use the same shared settle. Do not add a
+Use `navigation_motion.Controller` only when the source and destination share a
+meaningful object or room: game launch, Quick system depth, and similarly
+connected handoffs. The complete destination is legible on the first frame and
+settles over less than one content margin. Forward and back mirror direction;
+the old surface persists only as a narrow edge of spatial context. Do not zoom
+a page, expand a control into a page, or use a full-screen presentation wipe. A
+new input finishes the current transition at its destination immediately and
+acts on that destination; input never waits for decoration. Reduced motion
+presents the destination directly.
+
+Whole-surface appearance changes use the same immediate cut. Do not add a
 theme-specific animation.
 
 In-game overlay sublayers use the same controller and reduced-motion setting as
@@ -380,7 +412,7 @@ A new interactive component is not complete until:
 - held input and boundaries use shared behavior;
 - busy, disabled, failure, and recovery are unambiguous;
 - forward/back focus restoration is tested;
-- page changes use the shared connected-navigation controller and cancel cleanly;
+- routine page changes use shared press-cut handling; connected handoffs use the shared navigation controller and cancel cleanly;
 - reduced motion, muted sound, and disabled haptics preserve usability;
 - deterministic unit tests cover its state transitions and motion endpoints;
 - active animation cannot block beyond its next frame deadline;

@@ -3,11 +3,15 @@
 const std = @import("std");
 const catalog = @import("catalog.zig");
 const input = @import("input.zig");
+const interaction = @import("interaction.zig");
 const model = @import("model.zig");
 const overlay = @import("overlay.zig");
 const render = @import("render.zig");
 const retroarch = @import("retroarch.zig");
+const scene_motion = @import("scene_motion.zig");
 const ui = @import("ui.zig");
+
+const brightness_meter_id = interaction.Id.scoped(.brightness_meter, 0);
 
 const Window = opaque {};
 const Renderer = opaque {};
@@ -236,15 +240,10 @@ pub fn main(init: std.process.Init) !void {
     game_overlay.appearance = state.settings.appearance;
     game_overlay.reduced_motion = state.settings.reduced_motion;
     var tree = if (overlay_visible) game_overlay.tree() else state.tree();
-    var focus: @import("focus_motion.zig").Controller = .{};
-    var meter: @import("meter_motion.zig").Controller = .{};
-    var activity: @import("activity_motion.zig").Controller = .{};
-    focus.update(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
-    focus.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds());
-    meter.update(&tree, @import("interaction.zig").Id.scoped(.brightness_meter, 0), std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
-    meter.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds());
-    activity.update(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
-    activity.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds());
+    // SAFETY: reset initializes every field before presentation is observed.
+    var presentation: scene_motion.Controller = undefined;
+    presentation.reset();
+    presentation.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion, if (overlay_visible) null else brightness_meter_id);
     try drawTree(&sdl, renderer, texture, pixels, &tree);
 
     if (library_check) |directory| {
@@ -310,8 +309,6 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var motion: @import("shelf_motion.zig").Motion = .{};
-    var navigation: @import("navigation_motion.zig").Controller = .{};
-    var layout: @import("layout_motion.zig").Controller = .{};
     var layout_pending = false;
     var repeat: @import("input_repeat.zig").Controller = .{};
     var feedback_lifecycle = @import("ui_components.zig").FeedbackLifecycle{};
@@ -324,7 +321,7 @@ pub fn main(init: std.process.Init) !void {
         const notice = ui.Feedback{ .kind = game_overlay.notice_kind, .message = game_overlay.notice };
         if (overlay_visible and game_overlay.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
             feedback_lifecycle.show(notice, now);
-        const animating = (!overlay_visible and state.page == .games and state.library_view == .browse and motion.active(now)) or focus.active(now) or meter.active(now) or activity.active() or navigation.active(now) or layout.active(now);
+        const animating = (!overlay_visible and state.page == .games and state.library_view == .browse and motion.active(now)) or presentation.active(now);
         var repeat_timeout = repeat.timeout(now);
         if (overlay_visible) {
             const feedback_wait = feedback_lifecycle.timeout(now);
@@ -364,8 +361,8 @@ pub fn main(init: std.process.Init) !void {
                     sdl.setWindowSize(window, size.width, size.height);
                     changed = true;
                 } else if (key == 'm') {
-                    navigation.cancel();
-                    layout.cancel();
+                    presentation.cancelNavigation();
+                    presentation.layout.cancel();
                     overlay_visible = !overlay_visible;
                     if (overlay_visible) {
                         game_overlay = .{ .appearance = state.settings.appearance, .reduced_motion = state.settings.reduced_motion };
@@ -380,8 +377,8 @@ pub fn main(init: std.process.Init) !void {
                     changed = true;
                 } else if (actionForKey(key)) |pressed| {
                     if (pressed == .select) {
-                        navigation.cancel();
-                        layout.cancel();
+                        presentation.cancelNavigation();
+                        presentation.layout.cancel();
                         select_armed = true;
                         pressed_id = tree.focusedId();
                         action = null;
@@ -395,21 +392,17 @@ pub fn main(init: std.process.Init) !void {
             }
         }
         if (action) |pressed| {
-            navigation.cancel();
-            if (layout.active(timestamp)) tree = layout.frame(&tree, timestamp);
-            layout.cancel();
+            presentation.cancelNavigation();
+            presentation.finishLayout(&tree, timestamp);
             if (overlay_visible) {
                 const previous_layer = game_overlay.layer;
                 const applied = game_overlay.apply(pressed);
-                const boundary = !applied and game_overlay.supportsDirection(pressed) and focus.boundary(pressed, timestamp, game_overlay.reduced_motion);
+                const boundary = !applied and game_overlay.supportsDirection(pressed) and presentation.focus.boundary(pressed, timestamp, game_overlay.reduced_motion);
                 changed = applied or boundary or changed;
                 const command = game_overlay.takeCommand();
                 if (command == null and game_overlay.layer != previous_layer) {
                     var destination = game_overlay.tree();
-                    focus = .{};
-                    focus.update(&destination, timestamp, game_overlay.reduced_motion);
-                    focus.decorate(&destination, timestamp);
-                    navigation.begin(&tree, &destination, if (overlay.returnsToParent(pressed, previous_layer, game_overlay.layer)) .back else .forward, timestamp, game_overlay.reduced_motion);
+                    presentation.beginNavigation(&tree, &destination, if (overlay.returnsToParent(pressed, previous_layer, game_overlay.layer)) .back else .forward, timestamp, game_overlay.reduced_motion, null);
                     tree = destination;
                 }
                 if (command) |resolved| {
@@ -453,7 +446,7 @@ pub fn main(init: std.process.Init) !void {
                     std.log.info("Power intent: {s}", .{@tagName(power)});
                     state.pending_power = null;
                 }
-                const boundary = !applied and state.supportsDirection(pressed) and focus.boundary(pressed, timestamp, state.settings.reduced_motion);
+                const boundary = !applied and state.supportsDirection(pressed) and presentation.focus.boundary(pressed, timestamp, state.settings.reduced_motion);
                 changed = applied or boundary or changed;
                 if (state.page == .games and state.library_view == .browse and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), timestamp);
@@ -464,17 +457,11 @@ pub fn main(init: std.process.Init) !void {
                 }
                 if (launch == null and state.page != previous_page) {
                     var destination = state.tree();
-                    focus = .{};
-                    focus.update(&destination, timestamp, state.settings.reduced_motion);
-                    focus.decorate(&destination, timestamp);
-                    navigation.begin(&tree, &destination, if (model.returnsToParent(pressed, previous_page, state.page)) .back else .forward, timestamp, state.settings.reduced_motion);
+                    presentation.cutTo(&destination, timestamp, state.settings.reduced_motion, brightness_meter_id);
                     tree = destination;
                 } else if (launch == null and state.settings.appearance != previous_appearance) {
                     var destination = state.tree();
-                    focus = .{};
-                    focus.update(&destination, timestamp, state.settings.reduced_motion);
-                    focus.decorate(&destination, timestamp);
-                    navigation.begin(&tree, &destination, .forward, timestamp, state.settings.reduced_motion);
+                    presentation.cutTo(&destination, timestamp, state.settings.reduced_motion, brightness_meter_id);
                     tree = destination;
                 }
                 layout_pending = layout_pending or (applied and state.page == previous_page and (pressed == .up or pressed == .down or pressed == .left or pressed == .right) and !(state.page == .games and state.library_view == .browse));
@@ -484,21 +471,16 @@ pub fn main(init: std.process.Init) !void {
             game_overlay.appearance = state.settings.appearance;
             game_overlay.reduced_motion = state.settings.reduced_motion;
             var next = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
-            focus.update(&next, timestamp, state.settings.reduced_motion);
-            focus.decorate(&next, timestamp);
-            meter.update(&next, @import("interaction.zig").Id.scoped(.brightness_meter, 0), timestamp, state.settings.reduced_motion);
-            meter.decorate(&next, timestamp);
-            activity.update(&next, timestamp, state.settings.reduced_motion);
-            activity.decorate(&next, timestamp);
+            presentation.decorate(&next, timestamp, state.settings.reduced_motion, if (overlay_visible) null else brightness_meter_id);
             if (pressed_id) |id| _ = next.setInteraction(id, .pressed);
-            if (layout_pending and !navigation.active(timestamp))
-                _ = layout.begin(&tree, &next, timestamp, state.settings.reduced_motion);
+            if (layout_pending and !presentation.navigation.active(timestamp))
+                _ = presentation.layout.begin(&tree, &next, timestamp, state.settings.reduced_motion);
             layout_pending = false;
             tree = next;
-            if (navigation.active(timestamp))
-                try drawTransition(&sdl, renderer, texture, pixels, &navigation, timestamp)
-            else if (layout.active(timestamp)) {
-                var frame = layout.frame(&tree, timestamp);
+            if (presentation.navigation.active(timestamp))
+                try drawTransition(&sdl, renderer, texture, pixels, &presentation.navigation, timestamp)
+            else if (presentation.layout.active(timestamp)) {
+                var frame = presentation.layout.frame(&tree, timestamp);
                 try drawTree(&sdl, renderer, texture, pixels, &frame);
             } else try drawTree(&sdl, renderer, texture, pixels, &tree);
         }

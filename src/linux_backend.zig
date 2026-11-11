@@ -337,20 +337,13 @@ fn directional(action: model.Action) bool {
 
 const SessionAction = struct { changed: bool = false, launch: ?usize = null };
 
-fn navigationDirection(action: model.Action, from: model.Page, to: model.Page) navigation_motion.Direction {
-    return if (model.returnsToParent(action, from, to)) .back else .forward;
-}
-
 fn beginNavigation(
     state: *model.Model,
-    source: *const ui.Tree,
-    from_page: model.Page,
-    action: model.Action,
     now_ms: i64,
     presentation: *scene_motion.Controller,
 ) ui.Tree {
     var destination = state.tree();
-    presentation.beginNavigation(source, &destination, navigationDirection(action, from_page, state.page), now_ms, state.settings.reduced_motion, brightness_meter_id);
+    presentation.cutTo(&destination, now_ms, state.settings.reduced_motion, brightness_meter_id);
     return destination;
 }
 
@@ -621,7 +614,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         }
         if (nowMilliseconds(io) >= battery_deadline) {
             const percent = batteryPercent(io);
-            changed = changed or (state.page == .foyer and percent != state.battery_percent);
+            changed = changed or (state.showsSystemStatus() and percent != state.battery_percent);
             state.battery_percent = percent;
             battery_deadline = nowMilliseconds(io) + 60000;
         }
@@ -719,7 +712,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     return index;
                 }
                 if (state.page != previous_page or state.settings.appearance != previous_appearance)
-                    tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &presentation);
+                    tree = beginNavigation(state, nowMilliseconds(io), &presentation);
                 layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .browse));
                 changed = changed or result.changed or boundary;
                 if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -770,7 +763,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                                 return index;
                             }
                             if (state.page != previous_page or state.settings.appearance != previous_appearance)
-                                tree = beginNavigation(state, &tree, previous_page, .select, nowMilliseconds(io), &presentation);
+                                tree = beginNavigation(state, nowMilliseconds(io), &presentation);
                             changed = changed or result.changed;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -795,7 +788,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                             return index;
                         }
                         if (state.page != previous_page or state.settings.appearance != previous_appearance)
-                            tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &presentation);
+                            tree = beginNavigation(state, nowMilliseconds(io), &presentation);
                         layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .browse));
                         changed = changed or result.changed or boundary;
                         if (result.changed or boundary) display.recordInput(event.seconds * 1_000_000 + event.microseconds);

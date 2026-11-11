@@ -148,8 +148,11 @@ pub const Surface = struct {
         switch (element) {
             .focus_frame => |frame| switch (frame.presentation) {
                 .plate => self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
-                .quiet => if (frame.state == .pressed or frame.state == .activating)
-                    self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
+                .quiet => switch (frame.state) {
+                    .idle, .disabled => {},
+                    .pressed, .activating => self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
+                    .focused, .busy, .succeeded, .failed, .boundary => self.interactionField(frame.displayedBounds(), frame.state, frame.style.background, frame.style.border),
+                },
             },
             .menu_row => |row| self.interactionPlate(row.bounds, row.displayedBounds(), row.state, row.style.base, row.style.background, row.style.border, row.style.shadow),
             .action_card => |card| self.interactionPlate(card.bounds, card.displayedBounds(), card.state, card.style.base, card.style.background, card.style.border, card.style.shadow),
@@ -169,6 +172,26 @@ pub const Surface = struct {
         }
         self.fillRounded(plate, background, geometry.radius);
         self.stroke(plate, border, if (state == .boundary or state == .failed) 3 else 1);
+    }
+
+    /// Editorial focus is a quiet change in local luminance, not a card or
+    /// selection ornament. Its geometry is still animated by focus_motion, so
+    /// direction remains perceptible without moving or reflowing the label.
+    fn interactionField(self: Surface, bounds: ui.Rect, state: @import("interaction.zig").State, background: ui.Color, signal: ui.Color) void {
+        const strengths = [_]u8{ 28, 104, 176, 146, 108, 72, 38, 12 };
+        const band_count: u16 = @intCast(strengths.len);
+        const band_width = @max(@as(u16, 1), @divTrunc(bounds.width + band_count - 1, band_count));
+        for (strengths, 0..) |strength, index| {
+            const x = bounds.x +| (@as(u16, @intCast(index)) *| band_width);
+            const width_remaining = (bounds.x +| bounds.width) -| x;
+            if (width_remaining == 0) break;
+            const width_band = @min(band_width, width_remaining);
+            const vertical_fade = @min(@as(u16, 6), bounds.height / 3);
+            self.fillAlpha(.{ .x = x, .y = bounds.y, .width = width_band, .height = vertical_fade }, background, strength / 3);
+            self.fillAlpha(.{ .x = x, .y = bounds.y +| vertical_fade, .width = width_band, .height = bounds.height -| (2 *| vertical_fade) }, background, strength);
+            self.fillAlpha(.{ .x = x, .y = (bounds.y +| bounds.height) -| vertical_fade, .width = width_band, .height = vertical_fade }, background, strength / 3);
+        }
+        if (state == .boundary or state == .failed) self.stroke(bounds, signal, 3);
     }
 
     fn contract(bounds: ui.Rect, amount: u16) ui.Rect {
@@ -805,6 +828,23 @@ test "keyboard press visibly depresses the focused key" {
     const sample = (key.y + key.height / 2) * width + key.x + 1;
     try std.testing.expectEqual(Surface.pack(themes.light.selection), focused_pixels[sample]);
     try std.testing.expectEqual(Surface.pack(themes.light.surface), pressed_pixels[sample]);
+}
+
+test "quiet editorial focus is visible without a resting outline" {
+    const themes = @import("theme.zig");
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var tree = ui.Tree{ .theme = themes.light, .background = themes.light.background };
+    tree.add(.{ .focus_frame = .{
+        .state = .focused,
+        .bounds = .{ .x = 80, .y = 120, .width = 360, .height = 72 },
+        .presentation = .quiet,
+    } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    const background = Surface.pack(themes.light.background);
+    const center = (120 + 36) * width + 80 + 180;
+    try std.testing.expect(pixels[center] != background);
+    try std.testing.expectEqual(background, pixels[119 * width + 80]);
 }
 
 test "lowercase and uppercase preserve distinct letterforms" {

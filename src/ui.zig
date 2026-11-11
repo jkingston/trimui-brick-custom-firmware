@@ -8,6 +8,7 @@ const interaction = @import("interaction.zig");
 const bluetooth_model = @import("bluetooth.zig");
 const scene = @import("ui_scene.zig");
 const game_object = @import("game_object.zig");
+const retroarch = @import("retroarch.zig");
 pub const Color = scene.Color;
 pub const Theme = scene.Theme;
 pub const Rect = scene.Rect;
@@ -206,6 +207,9 @@ const layout = struct {
 pub const Hint = components.Hint;
 pub const Feedback = components.Feedback;
 pub const FeedbackKind = components.FeedbackKind;
+pub const SystemStatus = components.SystemStatus;
+pub const NetworkStatus = components.NetworkStatus;
+pub const systemStatus = components.systemStatus;
 const textLabel = components.text;
 const header = components.header;
 const footer = components.footer;
@@ -221,7 +225,7 @@ fn uiFont(size: u16, line_height: u16, weight: design.Weight, alignment: design.
 fn editorialHeader(result: *Tree, section: []const u8, context: []const u8) void {
     textLabel(result, .{ .x = 48, .y = 35, .width = 300, .height = 40 }, section, result.theme.text, uiFont(25, 32, .semibold, .start));
     if (context.len != 0)
-        textLabel(result, .{ .x = 540, .y = 35, .width = 436, .height = 40 }, context, result.theme.muted, uiFont(25, 32, .regular, .end));
+        textLabel(result, .{ .x = 510, .y = 35, .width = 336, .height = 40 }, context, result.theme.muted, uiFont(25, 32, .regular, .end));
 }
 
 fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, selected: bool, identity: ?interaction.Id, dim: u8, tilt: i16) void {
@@ -337,10 +341,10 @@ fn shelfPose(relative: i8, offset: i16) ShelfPose {
     };
 }
 
-pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) Tree {
+pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?retroarch.Failure) Tree {
     const failed = launch_failed != null;
     var result = Tree{ .theme = theme, .background = theme.background };
-    if (failed) header(&result, "Unable to start");
+    if (failed) header(&result, "Can't open this game");
     artwork(&result, game, .{ .x = 48, .y = if (failed) 154 else 120, .width = 348, .height = if (failed) 392 else 430 }, false, true, null, if (failed) 28 else 0, 0);
 
     var title_font = font.body;
@@ -358,8 +362,11 @@ pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) 
         .gap = 18,
     } });
     if (failed) {
-        textLabel(&result, .{ .x = 452, .y = 430, .width = 524, .height = 52 }, launch_failed.?, theme.text, uiFont(28, 40, .regular, .start));
-        footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Retry" } });
+        textLabel(&result, .{ .x = 452, .y = 430, .width = 524, .height = 92 }, launch_failed.?.message(), theme.text, uiFont(28, 40, .regular, .start));
+        if (launch_failed.?.retryable())
+            footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Try again" } })
+        else
+            footer(&result, &.{.{ .control = .back, .label = "Games" }});
     } else {
         textLabel(&result, .{ .x = 452, .y = 454, .width = 430, .height = 42 }, "Starting", theme.muted, font.caption);
         components.activity(&result, .{ .x = 910, .y = 458, .width = 48, .height = 28 }, theme.accent);
@@ -503,7 +510,7 @@ test "foyer reserves a stable status band above footer actions" {
     for (screen.slice()) |element| switch (element) {
         .action_card => |card| card_bottom = @max(card_bottom, card.bounds.y + card.bounds.height),
         .bar => |bar| {
-            if (bar.bounds.height == geometry.feedback_height and bar.bounds.width == geometry.width - 2 * layout.margin)
+            if (bar.bounds.height == 1 and bar.bounds.width == geometry.width - 2 * layout.margin)
                 feedback_top = bar.bounds.y;
         },
         else => {},
@@ -531,7 +538,7 @@ test "game launch owns activity while launch failure remains terminal" {
     const themes = @import("theme.zig");
     const launching = gameDetail(themes.light, catalog.games[0], null);
     try std.testing.expect(launching.hasActivity());
-    const failed = gameDetail(themes.light, catalog.games[0], "CORE UNAVAILABLE");
+    const failed = gameDetail(themes.light, catalog.games[0], .missing_core);
     try std.testing.expect(!failed.hasActivity());
 }
 

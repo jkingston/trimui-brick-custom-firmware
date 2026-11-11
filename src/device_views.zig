@@ -21,7 +21,7 @@ fn uiFont(size: u16, line_height: u16, weight: design.Weight, alignment: design.
 fn editorialHeader(result: *scene.Tree, section: []const u8, context: []const u8) void {
     components.text(result, .{ .x = 48, .y = 35, .width = 300, .height = 40 }, section, result.theme.text, uiFont(25, 32, .semibold, .start));
     if (context.len != 0)
-        components.text(result, .{ .x = 540, .y = 35, .width = 436, .height = 40 }, context, result.theme.muted, uiFont(25, 32, .regular, .end));
+        components.text(result, .{ .x = 510, .y = 35, .width = 336, .height = 40 }, context, result.theme.muted, uiFont(25, 32, .regular, .end));
 }
 
 pub fn message(theme: scene.Theme, title: []const u8, subject: []const u8, detail: []const u8) scene.Tree {
@@ -97,12 +97,13 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
     if (item == .brightness) {
         var result = scene.Tree{ .theme = theme, .background = theme.background };
         components.header(&result, "Brightness");
-        components.text(&result, .{ .x = 96, .y = 236, .width = 500, .height = 44 }, "Panel output", theme.muted, uiFont(28, 38, .regular, .start));
-        components.text(&result, .{ .x = 760, .y = 236, .width = 168, .height = 40 }, values.value(.brightness), theme.muted, uiFont(22, 30, .regular, .end));
-        components.steppedMeter(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 96, .y = 326, .width = 832, .height = 48 }, @as(u16, values.brightness) * 100, 11);
+        components.text(&result, .{ .x = 96, .y = 186, .width = 500, .height = 36 }, "PANEL OUTPUT", theme.accent, uiFont(20, 28, .semibold, .start));
+        components.text(&result, .{ .x = 96, .y = 226, .width = 500, .height = 78 }, settings_model.brightnessTone(values.brightness), theme.text, displayFont(62, 72, .semibold, .start));
+        components.text(&result, .{ .x = 760, .y = 252, .width = 168, .height = 34 }, settings_model.brightnessStep(values.brightness), theme.muted, uiFont(21, 29, .regular, .end));
+        components.steppedMeter(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 96, .y = 342, .width = 832, .height = 48 }, @as(u16, values.brightness) * 100, 11);
         var note_font = font.caption;
         note_font.alignment = .center;
-        components.text(&result, .{ .x = 82, .y = 442, .width = 860, .height = 40 }, "Left / right to adjust", theme.muted, note_font);
+        components.text(&result, .{ .x = 82, .y = 452, .width = 860, .height = 40 }, "Left / right to adjust", theme.muted, note_font);
         components.footer(&result, &.{.{ .control = .back, .label = "Settings" }});
         return result;
     }
@@ -119,8 +120,9 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
 pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []const u8, bluetooth_summary: []const u8) scene.Tree {
     const theme = values.appearance.colors();
     const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Reduced motion", "Wi-Fi", "Bluetooth" };
-    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), values.value(.reduced_motion), wifi_summary, bluetooth_summary };
+    const details = [_][]const u8{ settings_model.brightnessTone(values.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), values.value(.reduced_motion), wifi_summary, bluetooth_summary };
     const groups = [_][]const u8{ "DISPLAY", "SYSTEM", "DISPLAY", "POWER", "INTERFACE", "INTERFACE", "CONNECTION", "CONNECTION" };
+    const stage_labels = [_][]const u8{ "PANEL OUTPUT", "POWER MODE", "SCREEN REST", "DEVICE SLEEP", "VISUAL ENVIRONMENT", "MOVEMENT", "NETWORK", "WIRELESS" };
     const descriptions = [_][]const u8{
         "Set the panel output.",
         "Balance speed and battery life.",
@@ -144,21 +146,22 @@ pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []
             .scale = .row,
         });
     }
-    components.text(&result, .{ .x = 602, .y = 178, .width = 330, .height = 38 }, groups[selected], theme.accent, uiFont(22, 30, .semibold, .start));
+    components.text(&result, .{ .x = 602, .y = 178, .width = 330, .height = 38 }, stage_labels[selected], theme.accent, uiFont(20, 28, .semibold, .start));
     const brightness_selected = selected == @backingInt(settings_model.Setting.brightness);
     result.add(.{ .text_block = .{
-        .bounds = .{ .x = 602, .y = 234, .width = 330, .height = 244 },
+        .bounds = .{ .x = 602, .y = 226, .width = 330, .height = 270 },
         .title = details[selected],
         .detail = descriptions[selected],
-        .color = if (brightness_selected) theme.muted else theme.text,
+        .color = theme.text,
         .detail_color = theme.muted,
-        .title_font = if (brightness_selected) uiFont(22, 30, .regular, .end) else displayFont(58, 68, .semibold, .start),
+        .title_font = displayFont(58, 68, .semibold, .start),
         .detail_font = uiFont(27, 39, .regular, .start),
         .lines = 2,
         .detail_lines = 3,
-        .gap = if (brightness_selected) 100 else 24,
+        .gap = if (brightness_selected) 116 else 26,
     } });
-    components.steppedMeterState(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 602, .y = 320, .width = 330, .height = 36 }, @as(u16, values.brightness) * 100, 11, brightness_selected);
+    components.text(&result, .{ .x = 762, .y = 306, .width = 170, .height = 32 }, if (brightness_selected) settings_model.brightnessStep(values.brightness) else "", theme.muted, uiFont(20, 28, .regular, .end));
+    components.steppedMeterState(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 602, .y = 350, .width = 330, .height = 36 }, @as(u16, values.brightness) * 100, 11, brightness_selected);
     components.continuation(&result, 132, 587, first != 0, first + visible < items.len);
     components.footer(&result, &.{ .{ .control = .back, .label = "Library" }, .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = "Open" } });
     return result;

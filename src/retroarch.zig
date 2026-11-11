@@ -24,12 +24,19 @@ pub const Failure = enum {
 
     pub fn message(self: Failure) []const u8 {
         return switch (self) {
-            .missing_core => "Emulator not installed",
-            .missing_content => "Game file unavailable",
-            .missing_bios => "Neo Geo BIOS is missing",
-            .save_storage => "Save storage unavailable",
-            .legacy_conflict => "Legacy saves need review",
-            .emulator => "Game could not start",
+            .missing_core => "Support for this system isn't installed.",
+            .missing_content => "The game file is no longer available.",
+            .missing_bios => "This system needs an additional file.",
+            .save_storage => "Saves aren't available right now.",
+            .legacy_conflict => "These saves need attention before playing.",
+            .emulator => "The game closed before it was ready.",
+        };
+    }
+
+    pub fn retryable(self: Failure) bool {
+        return switch (self) {
+            .missing_content, .save_storage, .emulator => true,
+            .missing_core, .missing_bios, .legacy_conflict => false,
         };
     }
 

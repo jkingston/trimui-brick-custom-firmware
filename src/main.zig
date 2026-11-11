@@ -42,6 +42,12 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
     const surface = render.Surface{ .pixels = pixels };
     var state = model.Model{};
     state.settings.appearance = appearance;
+    state.battery_percent = 72;
+    state.wifi.wifi_state.initialized = true;
+    state.wifi.wifi_state.snapshot.radio = .ready;
+    state.wifi.wifi_state.snapshot.connectivity = .internet;
+    state.bluetooth.initialized = true;
+    state.bluetooth.snapshot.radio = .ready;
     // Keep the public snapshot names stable; internally this exceptional entry
     // surface is a foyer, never a routine universal home.
     const foyer_screen = std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback");
@@ -70,14 +76,14 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         state.selected = 0;
         // The foyer owns battery status at runtime; deterministic snapshots
         // must cover the real header composition rather than an empty fixture.
-        state.battery_percent = 72;
         if (games != null and state.games.len != 0) state.last_played = state.game_index;
         if (std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback")) {
             state.last_played = 1;
             state.resumable = true;
         }
-        if (std.mem.eql(u8, screen, "home-feedback"))
+        if (std.mem.eql(u8, screen, "home-feedback")) {
             state.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
+        }
     }
     if (std.mem.eql(u8, screen, "settings-overflow")) {
         state.page = .settings;

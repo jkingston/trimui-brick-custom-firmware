@@ -212,8 +212,49 @@ pub fn batteryLevel(result: *ui.Tree, bounds: ui.Rect, percent: u8) void {
     result.add(.{ .battery = .{ .bounds = .{ .x = bounds.x + 62, .y = bounds.y + 2, .width = 52, .height = 24 }, .percent = percent } });
 }
 
-/// Shared transient or terminal status surface. Meaning is carried by a
-/// compact trailing status mark and copy, never by a decorative edge stripe.
+pub const NetworkStatus = enum { hidden, connected, attention };
+
+pub const SystemStatus = struct {
+    battery: ?u8 = null,
+    network: NetworkStatus = .hidden,
+};
+
+/// The shell has a compact status cluster, not a persistent status bar. This
+/// component owns its order and spacing so screens cannot accumulate arbitrary
+/// chrome in the corner. Network bars communicate reachability, never RSSI.
+pub fn systemStatus(result: *ui.Tree, status: SystemStatus) void {
+    const right: u16 = design.geometry.width - design.spacing.margin;
+    if (status.battery) |percent|
+        result.add(.{ .battery = .{ .bounds = .{ .x = right - 60, .y = 40, .width = 60, .height = 28 }, .percent = percent } });
+    if (status.network != .hidden)
+        networkSignal(result, .{ .x = right -| @as(u16, if (status.battery == null) 28 else 104), .y = 43, .width = 25, .height = 22 }, status.network);
+}
+
+/// Constructed from scene primitives so software, GPU, screenshots, and damage
+/// tracking share one icon without renderer-specific assets.
+fn networkSignal(result: *ui.Tree, bounds: ui.Rect, status: NetworkStatus) void {
+    const bar_width: u16 = 4;
+    const gap: u16 = 3;
+    for (0..4) |index| {
+        const bar_height: u16 = 5 + @as(u16, @intCast(index)) * 4;
+        result.add(.{ .bar = .{
+            .bounds = .{
+                .x = bounds.x + @as(u16, @intCast(index)) * (bar_width + gap),
+                .y = bounds.y + bounds.height -| bar_height,
+                .width = bar_width,
+                .height = bar_height,
+            },
+            .color = if (status == .connected) result.theme.accent else result.theme.muted,
+            .radius = 2,
+        } });
+    }
+    if (status == .attention)
+        result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x + bounds.width - 5, .y = bounds.y, .width = 5, .height = 5 }, .color = result.theme.accent, .radius = 3 } });
+}
+
+/// Shared transient or terminal status surface. It occupies a stable status
+/// band without becoming a floating toast: one hairline, one message, and one
+/// semantic mark let the underlying screen remain the visual subject.
 pub fn feedbackBanner(result: *ui.Tree, bounds: ui.Rect, feedback: Feedback) void {
     if (!feedback.visible()) return;
     const marker = switch (feedback.kind) {
@@ -221,12 +262,15 @@ pub fn feedbackBanner(result: *ui.Tree, bounds: ui.Rect, feedback: Feedback) voi
         .warning => result.theme.muted,
         .progress, .success => result.theme.accent,
     };
-    result.add(.{ .bar = .{ .bounds = bounds, .color = result.theme.surface, .radius = geometry.radius } });
+    result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = 1 }, .color = result.theme.border } });
     const status_width: u16 = 58;
-    var message_font = font.control;
+    var message_font = font.caption;
+    message_font.size = 24;
+    message_font.line_height = 32;
+    message_font.weight = .medium;
     message_font.ink_centered = true;
-    text(result, .{ .x = bounds.x + 18, .y = bounds.y + (bounds.height -| message_font.line_height) / 2, .width = bounds.width - 36 - status_width, .height = message_font.line_height }, feedback.message, result.theme.text, message_font);
-    const status = ui.Rect{ .x = bounds.x + bounds.width - 18 - status_width, .y = bounds.y + (bounds.height -| 32) / 2, .width = status_width, .height = 32 };
+    text(result, .{ .x = bounds.x, .y = bounds.y + 12, .width = bounds.width - status_width, .height = message_font.line_height }, feedback.message, result.theme.text, message_font);
+    const status = ui.Rect{ .x = bounds.x + bounds.width - status_width, .y = bounds.y + 12, .width = status_width, .height = 32 };
     if (feedback.kind == .progress) {
         activity(result, status, marker);
     } else {
@@ -496,12 +540,26 @@ test "activity declaration is renderer-neutral" {
     try @import("std").testing.expect(tree.hasActivity());
 }
 
-test "feedback banner uses a trailing semantic mark without an edge stripe" {
+test "system status owns one compact top-right cluster" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    systemStatus(&tree, .{ .battery = 72, .network = .connected });
+    try tree.validate();
+    try @import("std").testing.expectEqual(@as(usize, 5), tree.len);
+    try @import("std").testing.expectEqual(@as(u16, design.geometry.width - design.spacing.margin - 60), tree.elements[0].battery.bounds.x);
+    for (tree.elements[1..5]) |element| {
+        try @import("std").testing.expect(element == .bar);
+        try @import("std").testing.expect(element.bar.bounds.x < tree.elements[0].battery.bounds.x);
+    }
+}
+
+test "feedback status band uses a hairline and trailing semantic mark" {
     const theme = @import("theme.zig").light;
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
     feedbackBanner(&tree, .{ .x = 48, .y = 600, .width = 928, .height = 56 }, .{ .kind = .failure, .message = "Could not connect" });
     try @import("std").testing.expectEqual(@as(usize, 3), tree.len);
     try @import("std").testing.expectEqual(@as(u16, 928), tree.elements[0].bar.bounds.width);
+    try @import("std").testing.expectEqual(@as(u16, 1), tree.elements[0].bar.bounds.height);
     try @import("std").testing.expectEqual("!", tree.elements[2].text.value);
     try @import("std").testing.expectEqual(theme.danger, tree.elements[2].text.color);
 }

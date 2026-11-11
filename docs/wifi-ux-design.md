@@ -12,8 +12,8 @@ router administration screen:
 
 * Settings exposes one **Wi-Fi** row with a short outcome: `Off`, `On`,
   `Sign-in required` or `No internet`.
-* Opening it shows the Wi-Fi switch, one live status sentence, then one stable
-  list of logical networks. The current network is first, followed by saved
+* Opening it shows one compact radio state and one stable list of logical
+  networks. The current network is first, followed by saved
   networks in range, then new networks by signal quality.
 * A network row contains only its name, a plain-language state, signal and a
   lock/open indication. BSSID, channel, IP, DNS, MAC and protocol names do not
@@ -22,7 +22,9 @@ router administration screen:
   network connects. Selecting the current network opens its actions and
   details.
 * Association is not presented as success. Brick briefly checks the usable
-  path and then reports `Connected`, `Sign-in required`, or `No internet`.
+  path and then settles into a `Connected`, `Sign-in required`, or `No internet`
+  row. On shell surfaces, usable connectivity is also visible in the shared
+  top-right status cluster; there is no `Connected to Wi-Fi` toast.
 * Captive login opens automatically after a user-initiated join when the shell
   is in the foreground. An automatic join never takes over a running game;
   instead it exposes `Sign-in required` in Settings and a non-modal notice at
@@ -64,7 +66,7 @@ implemented must not appear as inert controls.
 ```text
 Settings
 └── Wi-Fi                         Off / On / Sign-in required / No internet
-    ├── Wi-Fi switch
+    ├── radio state / asynchronous action
     ├── current, saved-in-range and available networks
     ├── Add hidden network
     └── Saved networks            only when an out-of-range profile exists
@@ -102,7 +104,7 @@ once.
 
 ## Primary Wi-Fi screen
 
-Use the shell's 1024×768 rhythm: a 92 px switch row, a status caption and at
+Use the shell's 1024×768 rhythm: a compact radio state, a status caption and at
 most four 96 px network/action rows. Lists longer than the viewport scroll one
 row at a time and keep the focused row anchored.
 
@@ -157,7 +159,7 @@ events:
 | Product state | Primary copy | Network-row copy |
 | --- | --- | --- |
 | Off | `Wi-Fi off` | no rows |
-| Starting | `Turning Wi-Fi on…` | no rows yet |
+| Checking / starting | `Join a network` + `Getting ready` | retain any trustworthy saved rows; otherwise no rows yet |
 | Scanning, no current network | `Looking for networks…` | previous results remain |
 | Associating | `Connecting to {name}…` | `Connecting…` |
 | Local / validating | `Checking the connection…` | `Checking…` |
@@ -170,10 +172,11 @@ events:
 | Address failure | `{name} could not assign an address` | `Couldn't get address` |
 | Unsupported security | `This network's security is not supported` | `Not supported` |
 | Network disappeared | `{name} is no longer in range` | `Out of range` |
-| Authority/radio failure | `Wi-Fi could not start` | no misleading results |
+| Authority/radio failure | `Wi-Fi needs attention` + `Try again` | no misleading results |
 
-An operation that is still inside its measured normal time does not need a
-spinner animation. The changing words are sufficient and cheaper to render.
+An operation with unknown duration uses the shared activity cadence. It does
+not invent a percentage, replace the destination with an implementation state,
+or duplicate continuation with trailing ellipses.
 
 ## Join flow
 

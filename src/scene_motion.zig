@@ -47,6 +47,16 @@ pub const Controller = struct {
         self.navigation.begin(source, destination, direction, now_ms, reduced);
     }
 
+    /// Routine shell destinations cut after the source control has completed
+    /// its press acknowledgement. Reset focus continuity so unrelated pages do
+    /// not appear to morph into one another.
+    pub fn cutTo(self: *Controller, destination: *ui.Tree, now_ms: i64, reduced: bool, meter_id: ?interaction.Id) void {
+        self.navigation.cancel();
+        self.layout.cancel();
+        self.focus = .{};
+        self.decorate(destination, now_ms, reduced, meter_id);
+    }
+
     pub fn cancelNavigation(self: *Controller) void {
         self.navigation.cancel();
     }
@@ -68,4 +78,15 @@ test "one controller decorates and reports every shared motion role" {
     tree.elements[1].meter.value = 800;
     controller.decorate(&tree, 10, false, id);
     try @import("std").testing.expect(controller.active(20));
+}
+
+test "routine destination cuts without retaining page navigation" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .menu_row = .{ .id = interaction.Id.scoped(.settings, 0), .bounds = .{ .x = 20, .y = 40, .width = 400, .height = 88 }, .label = "Brightness", .selected = true } });
+    var controller = Controller{};
+    controller.navigation.running = true;
+    controller.cutTo(&tree, 0, false, null);
+    try @import("std").testing.expect(!controller.navigation.active(0));
+    try @import("std").testing.expectEqual(interaction.Id.scoped(.settings, 0), tree.focusedId().?);
 }

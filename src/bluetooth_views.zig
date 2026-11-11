@@ -14,17 +14,18 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
     const snapshot = &state.snapshot;
     if (!state.initialized) return radio_surface.status(theme, .{
         .title = "Bluetooth",
-        .subject = "Checking Bluetooth",
-        .detail = "This will only take a moment.",
+        .state = "GETTING READY",
+        .subject = "Connect a device",
+        .detail = "Your devices will appear here.",
         .scope = .bluetooth_list,
         .progress = true,
     });
     if (snapshot.radio != .ready) return switch (snapshot.radio) {
-        .off => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Bluetooth is off", .detail = "Turn it on to connect controllers and audio.", .scope = .bluetooth_list, .action_label = "Turn on" }),
-        .starting => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Turning Bluetooth on", .detail = "Controllers and audio will appear when the radio is ready.", .scope = .bluetooth_list, .progress = true, .action_label = "Cancel" }),
-        .stopping => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Turning Bluetooth off", .detail = "This will only take a moment.", .scope = .bluetooth_list, .progress = true, .action_label = "Cancel" }),
-        .unavailable => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Bluetooth isn't available", .detail = "You can keep using the device without it.", .scope = .bluetooth_list }),
-        .failed => radio_surface.status(theme, .{ .title = "Bluetooth", .subject = "Bluetooth unavailable", .detail = "Try again, or continue without it.", .scope = .bluetooth_list, .action_label = "Try again" }),
+        .off => radio_surface.status(theme, .{ .title = "Bluetooth", .state = "OFF", .subject = "Connect a device", .detail = "Turn on Bluetooth for controllers and audio.", .scope = .bluetooth_list, .action_label = "Turn on" }),
+        .starting => radio_surface.status(theme, .{ .title = "Bluetooth", .state = "STARTING", .subject = "Connect a device", .detail = "Controllers and audio will appear here.", .scope = .bluetooth_list, .progress = true, .action_label = "Cancel" }),
+        .stopping => radio_surface.status(theme, .{ .title = "Bluetooth", .state = "TURNING OFF", .subject = "Bluetooth is off", .detail = "Finishing up.", .scope = .bluetooth_list, .progress = true, .action_label = "Cancel" }),
+        .unavailable => radio_surface.status(theme, .{ .title = "Bluetooth", .state = "NOT AVAILABLE", .subject = "Bluetooth isn't available", .detail = "Built-in controls still work.", .scope = .bluetooth_list }),
+        .failed => radio_surface.status(theme, .{ .title = "Bluetooth", .state = "NOT READY", .subject = "Bluetooth needs attention", .detail = "Built-in controls still work.", .scope = .bluetooth_list, .action_label = "Try again" }),
         .ready => unreachable,
     };
 

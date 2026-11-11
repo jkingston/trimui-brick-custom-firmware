@@ -4,7 +4,6 @@
 const std = @import("std");
 const navigation = @import("navigation_motion.zig");
 const render = @import("render.zig");
-const settings = @import("settings.zig");
 const ui = @import("ui.zig");
 
 fn writeFrames(
@@ -33,9 +32,9 @@ pub fn main(init: std.process.Init) !void {
     var arguments = std.process.Args.Iterator.init(init.minimal.args);
     _ = arguments.next();
     const directory = arguments.next() orelse "output/motion-proof";
-    const values = settings.Values{};
-    var foyer = ui.foyer(values.appearance.colors(), 1);
-    var device = ui.settings(0, values, "Connected", "Off");
-    try writeFrames(init.io, init.gpa, directory, "forward", &foyer, &device, .forward, &.{ 0, 48, 96, 167 });
-    try writeFrames(init.io, init.gpa, directory, "back", &device, &foyer, .back, &.{ 0, 40, 80, 120 });
+    const theme = @import("theme.zig").dark;
+    var quick = ui.overlayPause(theme, "FALLING", 2, 0, "Balanced", "");
+    var states = ui.overlayStates(theme, "FALLING", 0, "", .{ true, false, false, true });
+    try writeFrames(init.io, init.gpa, directory, "forward", &quick, &states, .forward, &.{ 0, 48, 96, 167 });
+    try writeFrames(init.io, init.gpa, directory, "back", &states, &quick, .back, &.{ 0, 40, 80, 120 });
 }

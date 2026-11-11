@@ -8,6 +8,7 @@ const scene = @import("ui_scene.zig");
 
 pub const Spec = struct {
     title: []const u8,
+    state: []const u8,
     subject: []const u8,
     detail: []const u8,
     scope: interaction.Id.Scope,
@@ -18,33 +19,40 @@ pub const Spec = struct {
 
 pub fn status(theme: scene.Theme, spec: Spec) scene.Tree {
     var result = scene.Tree{ .theme = theme, .background = theme.background };
-    components.text(&result, .{ .x = 48, .y = 42, .width = 640, .height = 42 }, spec.title, theme.muted, .{ .size = 23, .line_height = 32, .weight = .semibold });
+    components.header(&result, spec.title);
+    components.text(&result, .{ .x = 664, .y = 48, .width = 312, .height = 34 }, spec.state, if (spec.progress) theme.accent else theme.muted, .{ .size = 20, .line_height = 28, .weight = .semibold, .alignment = .end });
     result.add(.{ .text_block = .{
-        .bounds = .{ .x = 48, .y = 190, .width = 820, .height = 260 },
+        .bounds = .{ .x = 48, .y = 184, .width = 820, .height = 222 },
         .title = spec.subject,
         .detail = spec.detail,
         .color = theme.text,
         .detail_color = theme.muted,
-        .title_font = .{ .size = 66, .line_height = 78, .weight = .semibold, .family = .display },
-        .detail_font = .{ .size = 29, .line_height = 42 },
+        .title_font = .{ .size = 60, .line_height = 70, .weight = .semibold, .family = .display },
+        .detail_font = .{ .size = 28, .line_height = 40 },
         .lines = 2,
         .detail_lines = 2,
-        .gap = 24,
+        .gap = 22,
     } });
-    components.focusAnchor(&result, spec.scope, 0, true, .{ .x = 32, .y = 170, .width = 856, .height = 300 });
     if (spec.progress)
-        components.activity(&result, .{ .x = 48, .y = 482, .width = 48, .height = 28 }, theme.accent);
-    if (spec.action_label.len == 0)
-        components.footer(&result, &.{.{ .control = .back, .label = spec.back_label }})
-    else
+        components.activity(&result, .{ .x = 48, .y = 414, .width = 56, .height = 28 }, theme.accent);
+    if (spec.action_label.len == 0) {
+        components.footer(&result, &.{.{ .control = .back, .label = spec.back_label }});
+    } else {
+        components.editorialChoice(&result, spec.scope, 0, true, .{
+            .label = spec.action_label,
+            .bounds = .{ .x = 48, .y = 468, .width = 440, .height = 70 },
+            .focus_bounds = .{ .x = 48, .y = 468, .width = 440, .height = 74 },
+            .scale = .action,
+        });
         components.footer(&result, &.{ .{ .control = .back, .label = spec.back_label }, .{ .control = .confirm, .label = spec.action_label } });
+    }
     return result;
 }
 
 test "radio state keeps one stable focus target" {
     const std = @import("std");
     const theme = @import("theme.zig").dark;
-    var tree = status(theme, .{ .title = "Wi-Fi", .subject = "Turning Wi-Fi on", .detail = "This usually takes a moment.", .scope = .wifi_list, .progress = true, .action_label = "Cancel" });
+    var tree = status(theme, .{ .title = "Wi-Fi", .state = "STARTING", .subject = "Join a network", .detail = "Wi-Fi is getting ready.", .scope = .wifi_list, .progress = true, .action_label = "Cancel" });
     try tree.validate();
     try std.testing.expect(tree.focusedId() != null);
     var has_back = false;

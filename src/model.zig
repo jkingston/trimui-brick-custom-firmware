@@ -108,6 +108,15 @@ pub const Model = struct {
         };
     }
 
+    /// Ambient device state belongs on shell surfaces, not over play, launch,
+    /// captive sign-in, or connectivity screens that already make it the task.
+    pub fn showsSystemStatus(self: *const Model) bool {
+        return switch (self.page) {
+            .foyer, .games, .settings, .setting, .views, .systems, .power, .power_confirm => true,
+            .game, .wifi, .wifi_fallback, .bluetooth => false,
+        };
+    }
+
     pub fn librarySource(self: *const Model) ?usize {
         return self.collection().sourceIndex(if (self.page == .games) self.selected else self.library_selection);
     }
@@ -246,8 +255,10 @@ pub const Model = struct {
                     self.launch_failed = null;
                 },
                 .game => {
-                    self.pending_launch = self.game_index;
-                    self.launch_failed = null;
+                    if (self.launch_failed == null or self.launch_failed.?.retryable()) {
+                        self.pending_launch = self.game_index;
+                        self.launch_failed = null;
+                    }
                 },
                 .settings => {
                     if (self.selected == settings_count) {
@@ -504,7 +515,7 @@ pub const Model = struct {
         var result = switch (self.page) {
             .foyer => ui.foyerSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
             .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_preview, self.library_view, shelf_offset),
-            .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
+            .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], self.launch_failed),
             .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.summary(), self.bluetooth.summary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
             .wifi => self.wifiTree(theme),
@@ -526,10 +537,19 @@ pub const Model = struct {
             .power => ui.choice(theme, "Power", &.{ "Turn screen off", "Sleep", "Shut down" }, self.selected, null, "Sleep disconnects Bluetooth devices.", "Settings"),
             .power_confirm => ui.confirmation(theme, "Shut down", "Turn off the device?", "Hold Power to start it again.", "Shut down", self.selected),
         };
-        if (self.page == .foyer) {
-            if (self.battery_percent) |percent| result.add(.{ .battery = .{ .bounds = .{ .x = 916, .y = 40, .width = 60, .height = 28 }, .percent = percent } });
+        if (self.showsSystemStatus()) {
+            const network: ui.NetworkStatus = if (self.wifi.wifi_state.initialized) switch (self.wifi.wifi_state.snapshot.connectivity) {
+                .internet => .connected,
+                .local, .captive, .limited => .attention,
+                .none => .hidden,
+            } else .hidden;
+            ui.systemStatus(&result, .{ .battery = self.battery_percent, .network = network });
         }
-        if (self.feedback.visible()) ui.showFeedback(&result, self.feedback);
+        // Direct manipulation and connectivity settle in place. Routine
+        // success is represented by the changed value, row, or system-status
+        // icon; only work in flight or an outcome needing attention interrupts
+        // the composition with prose.
+        if (self.feedback.visible() and self.feedback.kind != .success) ui.showFeedback(&result, self.feedback);
         return result;
     }
 
@@ -652,9 +672,12 @@ test "history launch leaves a different filter without changing save identity" {
     try std.testing.expectEqual(@as(?usize, 4), state.takeLaunch());
     try std.testing.expect(state.system == null);
     try std.testing.expectEqual(@as(usize, 4), state.selected);
-    state.launchFailed(.missing_core);
+    state.launchFailed(.emulator);
     _ = state.apply(.select);
     try std.testing.expectEqual(@as(?usize, 4), state.takeLaunch());
+    state.launchFailed(.missing_core);
+    try std.testing.expect(!state.apply(.select));
+    try std.testing.expect(state.takeLaunch() == null);
 }
 
 test "shutdown requires an explicit confirmation and cancel is default" {
@@ -757,6 +780,27 @@ test "radio and device snapshot transitions produce positive feedback" {
     ));
     try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
     try std.testing.expectEqualStrings("Game audio ready", state.feedback.message);
+}
+
+test "routine connection success settles into the foyer status cluster" {
+    var state = Model{ .page = .foyer, .last_played = 0, .resumable = true, .battery_percent = 72 };
+    state.wifi.wifi_state.initialized = true;
+    state.wifi.wifi_state.snapshot.radio = .ready;
+    state.wifi.wifi_state.snapshot.connectivity = .internet;
+    state.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
+    const tree = state.tree();
+
+    var signal_bars: usize = 0;
+    var success_copy = false;
+    for (tree.slice()) |element| switch (element) {
+        .bar => |bar| if (bar.bounds.x >= 872 and bar.bounds.x < 900) {
+            signal_bars += 1;
+        },
+        .text => |value| success_copy = success_copy or std.mem.eql(u8, value.value, "Connected to Wi-Fi"),
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 4), signal_bars);
+    try std.testing.expect(!success_copy);
 }
 
 test "captive network exposes bounded manual fallback and returns to Wi-Fi" {

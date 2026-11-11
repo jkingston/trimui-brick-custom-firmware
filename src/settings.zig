@@ -26,7 +26,7 @@ pub const Values = struct {
     pub fn value(self: Values, setting: Setting) []const u8 {
         return switch (setting) {
             .appearance => if (self.appearance == .light) "Light" else "Dark",
-            .brightness => brightness_labels[self.brightness],
+            .brightness => brightnessTone(self.brightness),
             .performance => performance_labels[@backingInt(self.performance)],
             .display_timeout => display_labels[self.display_timeout],
             .suspend_timeout => suspend_labels[self.suspend_timeout],
@@ -37,7 +37,8 @@ pub const Values = struct {
 
 pub const display_seconds = [_]u32{ 0, 30, 60, 180, 300, 600 };
 pub const suspend_seconds = [_]u32{ 0, 300, 900, 1800, 3600 };
-const brightness_labels = [_][]const u8{ "Minimum", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%" };
+const brightness_labels = [_][]const u8{ "Darkest", "Level 1", "Level 2", "Level 3", "Level 4", "Level 5", "Level 6", "Level 7", "Level 8", "Level 9", "Brightest" };
+const brightness_steps = [_][]const u8{ "0 of 10", "1 of 10", "2 of 10", "3 of 10", "4 of 10", "5 of 10", "6 of 10", "7 of 10", "8 of 10", "9 of 10", "10 of 10" };
 const performance_labels = [_][]const u8{ "Power saver", "Balanced", "Performance" };
 const display_labels = [_][]const u8{ "Never", "30 seconds", "1 minute", "3 minutes", "5 minutes", "10 minutes" };
 const suspend_labels = [_][]const u8{ "Never", "5 minutes", "15 minutes", "30 minutes", "1 hour" };
@@ -45,6 +46,19 @@ const suspend_labels = [_][]const u8{ "Never", "5 minutes", "15 minutes", "30 mi
 fn step(current: u8, count: usize, direction: i8) u8 {
     if (direction < 0) return if (current == 0) @intCast(count - 1) else current - 1;
     return @intCast((@as(usize, current) + 1) % count);
+}
+
+pub fn brightnessTone(value: u8) []const u8 {
+    return switch (@min(value, 10)) {
+        0...2 => "Dim",
+        3...5 => "Soft",
+        6...8 => "Balanced",
+        else => "Bright",
+    };
+}
+
+pub fn brightnessStep(value: u8) []const u8 {
+    return brightness_steps[@min(value, 10)];
 }
 
 fn readNumber(io: std.Io, path: []const u8, maximum: u32) ?u32 {

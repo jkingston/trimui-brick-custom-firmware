@@ -70,17 +70,18 @@ fn wifiValue(network: *const wifi_model.Network) []const u8 {
 pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
     if (!state.initialized) return radio_surface.status(theme, .{
         .title = "Wi-Fi",
-        .subject = "Checking Wi-Fi",
-        .detail = "This will only take a moment.",
+        .state = "GETTING READY",
+        .subject = "Join a network",
+        .detail = "Nearby networks will appear here.",
         .scope = .wifi_list,
         .progress = true,
     });
     if (state.snapshot.radio != .ready) return switch (state.snapshot.radio) {
-        .off => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Wi-Fi is off", .detail = "Turn it on to find networks.", .scope = .wifi_list, .action_label = "Turn on" }),
-        .starting => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Turning Wi-Fi on", .detail = "This usually takes a moment.", .scope = .wifi_list, .progress = true, .action_label = "Cancel" }),
-        .stopping => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Turning Wi-Fi off", .detail = "This will only take a moment.", .scope = .wifi_list, .progress = true }),
-        .unavailable => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Wi-Fi isn't available", .detail = "You can keep using the device without it.", .scope = .wifi_list }),
-        .failed => radio_surface.status(theme, .{ .title = "Wi-Fi", .subject = "Wi-Fi unavailable", .detail = "Try again, or continue without it.", .scope = .wifi_list, .action_label = "Try again" }),
+        .off => radio_surface.status(theme, .{ .title = "Wi-Fi", .state = "OFF", .subject = "Join a network", .detail = "Turn on Wi-Fi to see nearby networks.", .scope = .wifi_list, .action_label = "Turn on" }),
+        .starting => radio_surface.status(theme, .{ .title = "Wi-Fi", .state = "STARTING", .subject = "Join a network", .detail = "Nearby networks will appear here.", .scope = .wifi_list, .progress = true, .action_label = "Cancel" }),
+        .stopping => radio_surface.status(theme, .{ .title = "Wi-Fi", .state = "TURNING OFF", .subject = "Wi-Fi is off", .detail = "Finishing up.", .scope = .wifi_list, .progress = true }),
+        .unavailable => radio_surface.status(theme, .{ .title = "Wi-Fi", .state = "NOT AVAILABLE", .subject = "Wi-Fi isn't available", .detail = "You can keep playing offline.", .scope = .wifi_list }),
+        .failed => radio_surface.status(theme, .{ .title = "Wi-Fi", .state = "NOT READY", .subject = "Wi-Fi needs attention", .detail = "You can keep playing offline.", .scope = .wifi_list, .action_label = "Try again" }),
         .ready => unreachable,
     };
 

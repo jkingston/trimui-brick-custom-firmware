@@ -12,3 +12,8 @@ if rg -n '(duration_ms|frame_ms|easing)[[:space:]]*=' $views; then
     echo 'View code must select semantic motion roles, not define timings.' >&2
     exit 1
 fi
+
+if rg -n '@import\("(focus_motion|layout_motion|meter_motion|activity_motion)\.zig"\)' src/simulator.zig; then
+    echo 'The simulator must consume scene_motion rather than assembling presentation controllers.' >&2
+    exit 1
+fi
