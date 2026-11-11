@@ -496,6 +496,19 @@ pub const Tree = struct {
         };
     }
 
+    /// Translate a complete declarative scene for shared page motion. Scene
+    /// builders keep authoring settled geometry; the transition controller is
+    /// the only caller that offsets it during composition.
+    pub fn translateX(self: *Tree, offset_x: i16) void {
+        for (self.elements[0..self.len]) |*element| switch (element.*) {
+            inline else => |*value| value.bounds.x = @intCast(std.math.clamp(
+                @as(i32, value.bounds.x) + offset_x,
+                0,
+                std.math.maxInt(u16),
+            )),
+        };
+    }
+
     pub fn slice(self: *const Tree) []const Element {
         return self.elements[0..self.len];
     }
@@ -556,6 +569,19 @@ test "tree resolves selection into durable interaction state" {
     try std.testing.expect(tree.setFocusOffset(id, 12, -20));
     try std.testing.expectEqual(@as(i16, 12), tree.elements[0].menu_row.focus_offset_x);
     try std.testing.expectEqual(@as(i16, -20), tree.elements[0].menu_row.focus_offset_y);
+}
+
+test "complete scenes can be translated without screen-specific geometry" {
+    const theme = @import("theme.zig").light;
+    var tree = Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 40, .width = 300, .height = 60 }, .value = "Games", .color = theme.text } });
+    tree.add(.{ .menu_row = .{ .bounds = .{ .x = 28, .y = 138, .width = 968, .height = 94 }, .label = "Recent" } });
+    tree.translateX(-24);
+    try std.testing.expectEqual(@as(u16, 24), tree.elements[0].text.bounds.x);
+    try std.testing.expectEqual(@as(u16, 4), tree.elements[1].menu_row.bounds.x);
+    tree.translateX(24);
+    try std.testing.expectEqual(@as(u16, 48), tree.elements[0].text.bounds.x);
+    try std.testing.expectEqual(@as(u16, 28), tree.elements[1].menu_row.bounds.x);
 }
 
 test "semantic action states own distinct styling and shared activity" {

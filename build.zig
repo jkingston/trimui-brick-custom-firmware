@@ -38,6 +38,18 @@ pub fn build(b: *std.Build) void {
     const simulator_step = b.step("simulator", "Build the desktop simulator");
     simulator_step.dependOn(&b.addInstallArtifact(simulator, .{}).step);
 
+    const motion_proof = b.addExecutable(.{
+        .name = "brick-motion-proof",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/navigation_proof.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        }),
+    });
+    const motion_proof_step = b.step("motion-proof", "Build the navigation motion filmstrip renderer");
+    motion_proof_step.dependOn(&b.addInstallArtifact(motion_proof, .{}).step);
+
     // Explicit experiment only: never part of the production shell build.
     const gpu_module = b.createModule(.{
         .root_source_file = b.path("tools/gpu-dmabuf-probe.zig"),

@@ -54,12 +54,23 @@ pub const Surface = struct {
 
     pub fn renderTransition(self: Surface, frame: @import("navigation_motion.zig").Frame) void {
         self.render(frame.base);
-        var clip = [_]ui.Rect{frame.clip};
+        const distance: u16 = @intCast(@abs(frame.offset_x));
+        const screen_width: u16 = width;
+        const screen_height: u16 = height;
+        const visible = if (frame.offset_x > 0)
+            ui.Rect{ .x = distance, .y = 0, .width = screen_width -| distance, .height = screen_height }
+        else
+            ui.Rect{ .x = 0, .y = 0, .width = screen_width -| distance, .height = screen_height };
+        var destination = frame.overlay.*;
+        destination.preserve_background = true;
+        destination.translateX(frame.offset_x);
+        var clip = [_]ui.Rect{visible};
         var overlay = self;
         overlay.clips = &clip;
         if (overlay.sink) |sink| sink.clip(sink.context, &clip);
         defer if (overlay.sink) |sink| sink.clip(sink.context, &.{});
-        overlay.render(frame.overlay);
+        overlay.fill(visible, destination.background);
+        overlay.render(&destination);
     }
 
     pub fn renderDamage(self: Surface, tree: *const ui.Tree, changed: *const damage.RectSet) void {
@@ -728,7 +739,7 @@ test "long text stays within its bounds and offscreen rectangles are harmless" {
     try std.testing.expect(written > 0);
 }
 
-test "navigation transition clips the complete destination scene" {
+test "navigation transition makes the destination immediate and direction legible" {
     const themes = @import("theme.zig");
     const pixels = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(pixels);
@@ -736,10 +747,16 @@ test "navigation transition clips the complete destination scene" {
     from.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 0, .width = width, .height = height }, .color = themes.light.background } });
     var to = ui.Tree{ .theme = themes.dark, .background = themes.dark.background };
     to.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 0, .width = width, .height = height }, .color = themes.dark.background } });
-    (Surface{ .pixels = pixels }).renderTransition(.{ .base = &from, .overlay = &to, .clip = .{ .x = 100, .y = 200, .width = 300, .height = 100 } });
+    (Surface{ .pixels = pixels }).renderTransition(.{ .base = &from, .overlay = &to, .offset_x = 24 });
     try std.testing.expectEqual(Surface.pack(themes.light.background), pixels[0]);
-    try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[250 * width + 200]);
-    try std.testing.expectEqual(Surface.pack(themes.light.background), pixels[500 * width + 500]);
+    try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[0 * width + 24]);
+    try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[500 * width + 500]);
+    try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[height * width - 1]);
+
+    (Surface{ .pixels = pixels }).renderTransition(.{ .base = &from, .overlay = &to, .offset_x = -24 });
+    try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[0]);
+    try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[width - 25]);
+    try std.testing.expectEqual(Surface.pack(themes.light.background), pixels[width - 1]);
 }
 
 test "meter endpoints remain inside their declared component bounds" {

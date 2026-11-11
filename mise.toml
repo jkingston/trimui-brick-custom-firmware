@@ -160,3 +160,13 @@ SDL_VIDEODRIVER=dummy output/host/bin/brick-ui-simulator \
 SDL_VIDEODRIVER=dummy output/host/bin/brick-ui-simulator \
     --data-root output/sim-empty --library-check output/empty-check
 '''
+
+[tasks.motion-proof]
+description = "Render forward and back navigation as reviewable filmstrips"
+run = '''
+mkdir -p output/motion-proof
+zig build motion-proof --prefix output/host --summary all
+output/host/bin/brick-motion-proof output/motion-proof
+magick output/motion-proof/forward-*.ppm +append -resize 50% output/motion-proof/forward.png
+magick output/motion-proof/back-*.ppm +append -resize 50% output/motion-proof/back.png
+'''

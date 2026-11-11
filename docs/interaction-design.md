@@ -323,19 +323,20 @@ the emulator owns the display. Never leave the library frozen after activation.
 ### Navigation and overlays
 
 Use `navigation_motion.Controller`; screens must not author page-specific
-transitions. Forward reveals the complete destination out of the selected
-component. Back leaves the restored parent visible while the departing page
-collapses into its restored focus. A new input finishes the current transition
-at its destination immediately and acts on that destination; input never waits
-for decoration. Reduced motion presents the destination directly.
+transitions. The complete destination is legible on the first frame and settles
+over less than one content margin. Forward and back mirror direction; the old
+surface persists only as a narrow edge of spatial context. Do not zoom a page,
+expand a control into a page, or use a full-screen presentation wipe. A new
+input finishes the current transition at its destination immediately and acts
+on that destination; input never waits for decoration. Reduced motion presents
+the destination directly.
 
-Whole-surface appearance changes use the same forward reveal from the selected
-appearance option. Do not hard-cut between light and dark palettes or add a
-separate theme-specific animation.
+Whole-surface appearance changes use the same shared settle. Do not add a
+theme-specific animation.
 
 In-game overlay sublayers use the same controller and reduced-motion setting as
-shell pages, trap focus while open, and return into the originating row. Never
-add a screen-specific splash between a source and its destination.
+shell pages, trap focus while open, and restore the originating row. Never add
+a screen-specific splash between a source and its destination.
 
 ## Timing and scheduling
 
