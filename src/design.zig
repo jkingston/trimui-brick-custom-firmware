@@ -22,13 +22,14 @@ pub const Geometry = struct {
     focus: u16,
     header_y: u16,
     header_rule_y: u16,
+    feedback_y: u16,
+    feedback_height: u16,
+    footer_rule_y: u16,
     footer_y: u16,
+    footer_height: u16,
     row_padding: u16,
     row_text_y: u16,
     row_detail_y: u16,
-    home_top: u16,
-    home_step: u16,
-    home_height: u16,
     settings_top: u16,
     settings_step: u16,
     settings_height: u16,
@@ -99,6 +100,10 @@ pub const Config = struct {
         }
         if (self.geometry.width <= 2 * self.spacing.margin or self.geometry.height <= self.geometry.footer_y)
             @compileError("Invalid screen geometry");
+        if (self.geometry.feedback_y + self.geometry.feedback_height >= self.geometry.footer_rule_y or
+            self.geometry.footer_rule_y >= self.geometry.footer_y or
+            self.geometry.footer_y + self.geometry.footer_height > self.geometry.height)
+            @compileError("Invalid feedback and footer bands");
         if (self.geometry.overlay_x + self.geometry.overlay_width > self.geometry.width or
             self.geometry.overlay_y + self.geometry.overlay_height > self.geometry.height)
             @compileError("Overlay is outside the screen");
@@ -122,16 +127,19 @@ pub const config = Config{
         .focus = 6,
         .header_y = 37,
         .header_rule_y = 100,
+        // Feedback has a stable band above an independently stable action
+        // rail. Screens may leave the band empty, but never borrow it.
+        .feedback_y = 617,
+        .feedback_height = 50,
+        .footer_rule_y = 675,
         .footer_y = 699,
+        .footer_height = 44,
         .row_padding = 20,
         .row_text_y = 24,
         .row_detail_y = 50,
-        .home_top = 140,
-        .home_step = 104,
-        .home_height = 92,
         .settings_top = 138,
-        .settings_step = 96,
-        .settings_height = 96,
+        .settings_step = 94,
+        .settings_height = 94,
         .overlay_x = 0,
         .overlay_y = 0,
         .overlay_width = 1024,

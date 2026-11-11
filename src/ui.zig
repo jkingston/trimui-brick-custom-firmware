@@ -168,6 +168,17 @@ const layout = struct {
     const margin = design.spacing.margin;
     const footer_y = geometry.footer_y;
 };
+const home_layout = struct {
+    const primary = Rect{ .x = 28, .y = 142, .width = 614, .height = 468 };
+    const upper = Rect{ .x = 670, .y = 142, .width = 326, .height = 220 };
+    const lower = Rect{ .x = 670, .y = 390, .width = 326, .height = 220 };
+
+    comptime {
+        if (primary.y + primary.height > geometry.feedback_y or
+            lower.y + lower.height > geometry.feedback_y)
+            @compileError("Home cards intrude into the shared feedback band");
+    }
+};
 pub const Hint = components.Hint;
 pub const Feedback = components.Feedback;
 pub const FeedbackKind = components.FeedbackKind;
@@ -217,14 +228,14 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Brick");
     if (recent) |game| {
-        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 468 }, if (resumable) "READY TO RESUME" else "LAST PLAYED", game.title, if (resumable) "Continue your last session" else "Play again", .primary, 2, 1);
+        components.actionCard(&result, .home, 0, selected == 0, home_layout.primary, if (resumable) "READY TO RESUME" else "LAST PLAYED", game.title, if (resumable) "Continue your last session" else "Play again", .primary, 2, 1);
         if (game.assets.cover != null or game.assets.preview != null)
             artwork(&result, game, .{ .x = 370, .y = 170, .width = 244, .height = 216 }, false, false, null, 0, 0);
-        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 220 }, "LIBRARY", "Games", "Browse your collection", .secondary, 1, 2);
-        components.actionCard(&result, .home, 2, selected == 2, .{ .x = 670, .y = 390, .width = 326, .height = 220 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
+        components.actionCard(&result, .home, 1, selected == 1, home_layout.upper, "LIBRARY", "Games", "Browse your collection", .secondary, 1, 2);
+        components.actionCard(&result, .home, 2, selected == 2, home_layout.lower, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
     } else {
-        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 468 }, "LIBRARY", "Games", "Browse and play your collection", .primary, 1, 1);
-        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 468 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
+        components.actionCard(&result, .home, 0, selected == 0, home_layout.primary, "LIBRARY", "Games", "Browse and play your collection", .primary, 1, 1);
+        components.actionCard(&result, .home, 1, selected == 1, .{ .x = home_layout.upper.x, .y = home_layout.upper.y, .width = home_layout.upper.width, .height = home_layout.primary.height }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
     }
     footer(&result, &.{ .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = if (recent == null) "Open" else if (selected == 0) (if (resumable) "Resume" else "Play") else "Open" } });
     return result;
@@ -496,7 +507,7 @@ pub fn showFeedback(tree: *Tree, feedback: Feedback) void {
     if (!feedback.visible()) return;
     // Keep transient feedback above the footer keyline so action hints remain
     // stable and readable while status comes and goes.
-    const bounds = Rect{ .x = layout.margin, .y = layout.footer_y - 82, .width = geometry.width - 2 * layout.margin, .height = 50 };
+    const bounds = Rect{ .x = layout.margin, .y = geometry.feedback_y, .width = geometry.width - 2 * layout.margin, .height = geometry.feedback_height };
     components.feedbackBanner(tree, bounds, feedback);
 }
 
@@ -555,7 +566,7 @@ test "home reserves a stable status band above footer actions" {
     for (screen.slice()) |element| switch (element) {
         .action_card => |card| card_bottom = @max(card_bottom, card.bounds.y + card.bounds.height),
         .bar => |bar| {
-            if (bar.bounds.height == 50 and bar.bounds.width == geometry.width - 2 * layout.margin)
+            if (bar.bounds.height == geometry.feedback_height and bar.bounds.width == geometry.width - 2 * layout.margin)
                 feedback_top = bar.bounds.y;
         },
         else => {},
@@ -563,7 +574,20 @@ test "home reserves a stable status band above footer actions" {
 
     try std.testing.expect(feedback_top != null);
     try std.testing.expect(card_bottom <= feedback_top.?);
-    try std.testing.expect(feedback_top.? + 50 < layout.footer_y - 24);
+    try std.testing.expect(feedback_top.? + geometry.feedback_height < geometry.footer_rule_y);
+}
+
+test "settings content clears the shared status band" {
+    var screen = settings(0, .{}, "Off", "Off");
+    showFeedback(&screen, .{ .kind = .progress, .message = "Applying display settings" });
+
+    var content_bottom: u16 = 0;
+    for (screen.slice()) |element| switch (element) {
+        .overlay_row => |row| content_bottom = @max(content_bottom, row.bounds.y + row.bounds.height),
+        else => {},
+    };
+
+    try std.testing.expect(content_bottom < geometry.feedback_y);
 }
 
 test "game launch owns activity while launch failure remains terminal" {

@@ -352,7 +352,7 @@ test "selection change damages the connected focus path" {
     const changed = Scene.changes(&previous, &next);
     try std.testing.expect(!changed.full);
     try std.testing.expectEqual(@as(usize, 1), changed.len);
-    try std.testing.expectEqual(@as(u16, 195), changed.rects[0].height);
+    try std.testing.expectEqual(@as(u16, 191), changed.rects[0].height);
     previous = Scene.capture(&second);
     try std.testing.expectEqual(@as(usize, 0), Scene.changes(&previous, &next).len);
 }

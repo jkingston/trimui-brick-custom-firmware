@@ -244,8 +244,8 @@ pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void
 pub fn footer(result: *ui.Tree, items: []const Hint) void {
     if (items.len == 0) return;
     std.debug.assert(items.len <= 8);
-    const bounds = ui.Rect{ .x = design.spacing.margin, .y = geometry.footer_y, .width = geometry.width - 2 * design.spacing.margin, .height = 44 };
-    result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y - 24, .width = bounds.width, .height = 1 }, .color = result.theme.border } });
+    const bounds = ui.Rect{ .x = design.spacing.margin, .y = geometry.footer_y, .width = geometry.width - 2 * design.spacing.margin, .height = geometry.footer_height };
+    result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = geometry.footer_rule_y, .width = bounds.width, .height = 1 }, .color = result.theme.border } });
 
     const anchored_left = items[0].control == .back or items[0].control == .menu;
     const first_right: usize = if (anchored_left) 1 else 0;
