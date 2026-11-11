@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const activity_motion = @import("activity_motion.zig");
 const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
@@ -429,15 +430,15 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
     if (state.takeWifiRequest()) |pending| {
         var request = pending;
         state.feedback = .{ .kind = .progress, .message = switch (request.command.kind) {
-            .set_enabled => if (request.command.value) "Turning Wi-Fi on…" else "Turning Wi-Fi off…",
-            .scan => "Refreshing networks…",
-            .connect => "Connecting to Wi-Fi…",
-            .cancel => "Cancelling Wi-Fi action…",
-            .disconnect => "Disconnecting from Wi-Fi…",
-            .forget => "Forgetting network…",
-            .set_auto_connect, .set_private_address => "Saving network setting…",
-            .open_captive => "Opening Wi-Fi sign in…",
-            .recheck => "Checking internet access…",
+            .set_enabled => if (request.command.value) "Turning Wi-Fi on" else "Turning Wi-Fi off",
+            .scan => "Refreshing networks",
+            .connect => "Connecting to Wi-Fi",
+            .cancel => "Cancelling Wi-Fi action",
+            .disconnect => "Disconnecting from Wi-Fi",
+            .forget => "Forgetting network",
+            .set_auto_connect, .set_private_address => "Saving network setting",
+            .open_captive => "Opening Wi-Fi sign in",
+            .recheck => "Checking internet access",
         } };
         if (wifi_client) |client| client.send(&request) catch {
             state.feedback = .{ .kind = .failure, .message = "Wi-Fi service is unavailable" };
@@ -449,16 +450,16 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
     if (state.takeBluetoothCommand()) |pending| {
         var command = pending;
         state.feedback = .{ .kind = .progress, .message = switch (command.kind) {
-            .set_radio => if (command.value) "Turning Bluetooth on…" else "Turning Bluetooth off…",
-            .start_search => "Looking for devices…",
-            .cancel => "Cancelling Bluetooth action…",
-            .pair => "Pairing device…",
-            .connect => "Connecting device…",
-            .disconnect => "Disconnecting device…",
-            .forget => "Forgetting device…",
-            .select_audio => "Preparing game audio…",
-            .confirm_pairing, .submit_passkey => "Confirming pairing…",
-            .network_activity => "Coordinating radios…",
+            .set_radio => if (command.value) "Turning Bluetooth on" else "Turning Bluetooth off",
+            .start_search => "Looking for devices",
+            .cancel => "Cancelling Bluetooth action",
+            .pair => "Pairing device",
+            .connect => "Connecting device",
+            .disconnect => "Disconnecting device",
+            .forget => "Forgetting device",
+            .select_audio => "Preparing game audio",
+            .confirm_pairing, .submit_passkey => "Confirming pairing",
+            .network_activity => "Coordinating radios",
         } };
         if (!sendBluetooth(bluetooth_client, bluetooth_request, &command))
             state.feedback = .{ .kind = .failure, .message = "Bluetooth service is unavailable" };
@@ -514,11 +515,14 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     var battery_deadline = nowMilliseconds(io) + 60000;
     var focus: focus_motion.Controller = .{};
     var meter: meter_motion.Controller = .{};
+    var activity: activity_motion.Controller = .{};
     var tree = state.tree();
     focus.update(&tree, nowMilliseconds(io), state.settings.reduced_motion);
     focus.decorate(&tree, nowMilliseconds(io));
     meter.update(&tree, brightness_meter_id, nowMilliseconds(io), state.settings.reduced_motion);
     meter.decorate(&tree, nowMilliseconds(io));
+    activity.update(&tree, nowMilliseconds(io), state.settings.reduced_motion);
+    activity.decorate(&tree, nowMilliseconds(io));
     try display.show(&tree);
 
     var wifi_client: ?wifi_ipc.Client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
@@ -556,7 +560,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
-        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or meter.active(now) or navigation.active(now) or layout.active(now);
+        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or meter.active(now) or activity.active() or navigation.active(now) or layout.active(now);
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
@@ -798,6 +802,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             focus.decorate(&next, frame_now);
             meter.update(&next, brightness_meter_id, frame_now, state.settings.reduced_motion);
             meter.decorate(&next, frame_now);
+            activity.update(&next, frame_now, state.settings.reduced_motion);
+            activity.decorate(&next, frame_now);
             press.decorate(&next);
             if (layout_pending and !navigation.active(frame_now))
                 _ = layout.begin(&tree, &next, frame_now, state.settings.reduced_motion);
@@ -812,6 +818,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             focus.decorate(&tree, frame_now);
             meter.update(&tree, brightness_meter_id, frame_now, state.settings.reduced_motion);
             meter.decorate(&tree, frame_now);
+            activity.update(&tree, frame_now, state.settings.reduced_motion);
+            activity.decorate(&tree, frame_now);
             press.decorate(&tree);
             if (navigation.active(frame_now))
                 try display.submitTransition(&navigation, frame_now)

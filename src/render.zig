@@ -134,6 +134,7 @@ pub const Surface = struct {
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
             .meter => |meter| self.drawMeter(meter),
+            .activity => |activity| self.drawActivity(activity),
             .qr_code => |qr| self.drawQr(qr),
             .keyboard => |keyboard| self.drawKeyboard(keyboard, theme),
             .keyboard_key => |key| self.drawKeyboardKey(key.keyboard, theme, key.index, true),
@@ -519,6 +520,27 @@ pub const Surface = struct {
         self.fillRounded(.{ .x = thumb.x + inset, .y = thumb.y + inset, .width = thumb.width - 2 * inset, .height = thumb.height - 2 * inset }, meter.track, (thumb_size - 2 * inset) / 2);
     }
 
+    fn drawActivity(self: Surface, activity: ui.Activity) void {
+        const dot: u16 = @min(10, @min(activity.bounds.height, activity.bounds.width / 3));
+        if (dot == 0) return;
+        const resting_size: u16 = @min(8, dot);
+        const gap: u16 = (activity.bounds.width -| 3 * dot) / 2;
+        for (0..3) |index| {
+            const strength: u16 = if (!activity.animated)
+                500
+            else blk: {
+                const center: i32 = @intCast(index * 333);
+                const raw = @abs(@as(i32, activity.phase) - center);
+                const distance = @min(raw, 1000 - raw);
+                break :blk @intCast(1000 - @min(1000, distance * 3));
+            };
+            const size: u16 = resting_size + @as(u16, @intCast(@as(u32, strength) * (dot - resting_size) / 1000));
+            const slot_x = activity.bounds.x + @as(u16, @intCast(index)) * (dot + gap);
+            const bounds = ui.Rect{ .x = slot_x + (dot - size) / 2, .y = activity.bounds.y + (activity.bounds.height - size) / 2, .width = size, .height = size };
+            self.fillRounded(bounds, activity.color, size / 2);
+        }
+    }
+
     fn drawQr(self: Surface, qr: ui.QrCode) void {
         if (qr.width == 0) return;
         self.fill(qr.bounds, qr.background);
@@ -644,6 +666,23 @@ test "meter endpoints remain inside their declared component bounds" {
     try std.testing.expectEqual(background, pixels[99 * width + 99]);
     try std.testing.expectEqual(background, pixels[141 * width + 401]);
     try std.testing.expect(pixels[120 * width + 385] != background);
+}
+
+test "activity dots remain inside their declared component bounds" {
+    const themes = @import("theme.zig");
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var tree = ui.Tree{ .theme = themes.light, .background = themes.light.background };
+    tree.add(.{ .activity = .{ .bounds = .{ .x = 100, .y = 100, .width = 48, .height = 26 }, .color = themes.light.accent, .phase = 500 } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    const background = Surface.pack(themes.light.background);
+    var painted: usize = 0;
+    for (pixels, 0..) |pixel, index| if (pixel != background) {
+        painted += 1;
+        try std.testing.expect(index % width >= 100 and index % width < 148);
+        try std.testing.expect(index / width >= 100 and index / width < 126);
+    };
+    try std.testing.expect(painted > 0);
 }
 
 test "lowercase and uppercase preserve distinct letterforms" {

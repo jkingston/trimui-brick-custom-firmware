@@ -238,10 +238,13 @@ pub fn main(init: std.process.Init) !void {
     var tree = if (overlay_visible) game_overlay.tree() else state.tree();
     var focus: @import("focus_motion.zig").Controller = .{};
     var meter: @import("meter_motion.zig").Controller = .{};
+    var activity: @import("activity_motion.zig").Controller = .{};
     focus.update(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
     focus.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds());
     meter.update(&tree, @import("interaction.zig").Id.scoped(.brightness_meter, 0), std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
     meter.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds());
+    activity.update(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds(), state.settings.reduced_motion);
+    activity.decorate(&tree, std.Io.Timestamp.now(init.io, .awake).toMilliseconds());
     try drawTree(&sdl, renderer, texture, pixels, &tree);
 
     if (library_check) |directory| {
@@ -321,7 +324,7 @@ pub fn main(init: std.process.Init) !void {
         const notice = ui.Feedback{ .kind = game_overlay.notice_kind, .message = game_overlay.notice };
         if (overlay_visible and game_overlay.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
             feedback_lifecycle.show(notice, now);
-        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or meter.active(now) or navigation.active(now) or layout.active(now);
+        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or meter.active(now) or activity.active() or navigation.active(now) or layout.active(now);
         var repeat_timeout = repeat.timeout(now);
         if (overlay_visible) {
             const feedback_wait = feedback_lifecycle.timeout(now);
@@ -471,6 +474,8 @@ pub fn main(init: std.process.Init) !void {
             focus.decorate(&next, timestamp);
             meter.update(&next, @import("interaction.zig").Id.scoped(.brightness_meter, 0), timestamp, state.settings.reduced_motion);
             meter.decorate(&next, timestamp);
+            activity.update(&next, timestamp, state.settings.reduced_motion);
+            activity.decorate(&next, timestamp);
             if (pressed_id) |id| _ = next.setInteraction(id, .pressed);
             if (layout_pending and !navigation.active(timestamp))
                 _ = layout.begin(&tree, &next, timestamp, state.settings.reduced_motion);

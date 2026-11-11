@@ -241,6 +241,7 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .menu_row => |value| value.bounds,
         .battery => |value| value.bounds,
         .meter => |value| value.bounds,
+        .activity => |value| value.bounds,
         .qr_code => |value| value.bounds,
         .keyboard => |value| value.bounds,
         .keyboard_key => |value| value.bounds,

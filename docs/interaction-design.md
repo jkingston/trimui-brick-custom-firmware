@@ -29,6 +29,7 @@ document explains the decisions they enforce.
 | Connected page transitions and source anchors | `src/navigation_motion.zig` |
 | Stable-ID viewport scrolling | `src/layout_motion.zig` |
 | Animated meters and value retargeting | `src/meter_motion.zig` |
+| Indeterminate activity cadence | `src/activity_motion.zig` |
 | Identity, control lifecycle, focus boundaries | `src/interaction.zig` |
 | Sound/haptic event policy | `src/feedback.zig` |
 | Selectable controls and notice lifecycle | `src/ui_components.zig` |
@@ -115,6 +116,12 @@ Transition `focused → pressed → activating`, start the operation, then use
 `busy` only if it outlives immediate activation. Finish with `succeeded` or
 `failed`; keep errors and recovery at the originating control. Progress feedback
 does not auto-dismiss. Completion feedback uses `FeedbackLifecycle`.
+
+Use progress `Feedback` for indeterminate work; it owns the shared activity
+indicator and `activity_motion.Controller` owns its cadence. Screens must not
+draw private spinners or choose animation timing. Reduced motion preserves the
+busy signal as three static dots rather than removing it. Progress copy omits
+trailing ellipses because the activity indicator already communicates continuation.
 
 ### Navigation and overlays
 

@@ -21,6 +21,7 @@ pub const ArtworkStyle = scene.ArtworkStyle;
 pub const MenuRow = scene.MenuRow;
 pub const Battery = scene.Battery;
 pub const Meter = scene.Meter;
+pub const Activity = scene.Activity;
 pub const QrCode = scene.QrCode;
 pub const Keyboard = scene.Keyboard;
 pub const KeyboardKey = scene.KeyboardKey;
@@ -506,7 +507,9 @@ pub fn showFeedback(tree: *Tree, feedback: Feedback) void {
     };
     tree.add(.{ .bar = .{ .bounds = bounds, .color = tree.theme.surface } });
     tree.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y, .width = 6, .height = bounds.height }, .color = marker } });
-    textLabel(tree, .{ .x = bounds.x + 22, .y = bounds.y + 5, .width = bounds.width - 38, .height = 40 }, feedback.message, tree.theme.text, font.control);
+    const activity_width: u16 = if (feedback.kind == .progress) 58 else 0;
+    textLabel(tree, .{ .x = bounds.x + 22, .y = bounds.y + 5, .width = bounds.width - 38 - activity_width, .height = 40 }, feedback.message, tree.theme.text, font.control);
+    if (feedback.kind == .progress) tree.add(.{ .activity = .{ .bounds = .{ .x = bounds.x + bounds.width - 70, .y = bounds.y + 12, .width = 48, .height = 26 }, .color = marker } });
 }
 
 pub fn showNotice(tree: *Tree, notice: []const u8) void {
@@ -542,6 +545,16 @@ test "windowed settings expose continuation in both directions" {
         saw_up = true;
     };
     try std.testing.expect(saw_up);
+}
+
+test "progress feedback owns activity while terminal feedback does not" {
+    const themes = @import("theme.zig");
+    var progress = Tree{ .theme = themes.light, .background = themes.light.background };
+    showFeedback(&progress, .{ .kind = .progress, .message = "Connecting" });
+    try std.testing.expect(progress.hasActivity());
+    var success = Tree{ .theme = themes.light, .background = themes.light.background };
+    showFeedback(&success, .{ .kind = .success, .message = "Connected" });
+    try std.testing.expect(!success.hasActivity());
 }
 
 pub fn saveSlots(theme: Theme, title: []const u8, selected: usize, available: [4]bool) Tree {

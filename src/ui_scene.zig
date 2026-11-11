@@ -61,6 +61,7 @@ pub const MenuRow = struct {
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem.zeroes(Color), charge: Color = std.mem.zeroes(Color) };
 pub const Meter = struct { id: interaction.Id, bounds: Rect, value: u16, track: Color, fill: Color, thumb: Color };
+pub const Activity = struct { bounds: Rect, color: Color, phase: u16 = 0, animated: bool = true };
 pub const QrCode = struct { bounds: Rect, cells: []const u8, width: u16, foreground: Color, background: Color };
 pub const Keyboard = struct { bounds: Rect, selected: u8, uppercase: bool = false, symbols: bool = false };
 pub const KeyboardKey = struct { keyboard: Keyboard, index: u8, bounds: Rect };
@@ -113,6 +114,7 @@ pub const Element = union(enum) {
     menu_row: MenuRow,
     battery: Battery,
     meter: Meter,
+    activity: Activity,
     qr_code: QrCode,
     keyboard: Keyboard,
     keyboard_key: KeyboardKey,
@@ -283,6 +285,18 @@ pub const Tree = struct {
             return true;
         };
         return false;
+    }
+
+    pub fn hasActivity(self: *const Tree) bool {
+        for (self.slice()) |element| if (element == .activity) return true;
+        return false;
+    }
+
+    pub fn setActivityPhase(self: *Tree, phase: u16, animated: bool) void {
+        for (self.elements[0..self.len]) |*element| if (element.* == .activity) {
+            element.activity.phase = phase % 1000;
+            element.activity.animated = animated;
+        };
     }
 
     pub fn slice(self: *const Tree) []const Element {

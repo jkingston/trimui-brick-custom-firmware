@@ -78,6 +78,10 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         state.page = .settings;
         state.feedback = .{ .kind = .success, .message = "Brightness saved" };
     }
+    if (std.mem.eql(u8, screen, "settings-progress")) {
+        state.page = .settings;
+        state.feedback = .{ .kind = .progress, .message = "Applying display settings" };
+    }
     if (std.mem.eql(u8, screen, "systems")) {
         state.page = .systems;
         state.selected = 0;
@@ -252,7 +256,7 @@ pub fn main(init: std.process.Init) !void {
             try snapshotTo(init.io, init.gpa, "", screen, null, 0, .dark, gpu);
             return;
         };
-        const screens = [_][]const u8{ "splash", "home", "home-recent", "games", "games-empty", "games-shelf", "games-grid", "game", "game-failed", "settings", "settings-overflow", "settings-feedback", "brightness", "performance", "display_timeout", "suspend_timeout", "appearance", "reduced_motion", "systems", "views", "power", "shutdown", "bluetooth", "bluetooth-checking", "bluetooth-off", "bluetooth-unavailable", "bluetooth-starting", "bluetooth-stopping", "bluetooth-connecting", "bluetooth-details", "bluetooth-pairing", "bluetooth-code-entry", "bluetooth-code-display", "bluetooth-failed", "wifi", "wifi-picker-checking", "wifi-picker-off", "wifi-picker-starting", "wifi-picker-stopping", "wifi-picker-error", "wifi-details", "wifi-password", "wifi-hidden-name", "wifi-hidden-security", "wifi-info", "wifi-open-confirm", "wifi-forget-confirm", "overlay", "overlay-states", "overlay-network", "overlay-network-captive", "network-request-off", "network-request-captive", "network-request-limited", "languages" };
+        const screens = [_][]const u8{ "splash", "home", "home-recent", "games", "games-empty", "games-shelf", "games-grid", "game", "game-failed", "settings", "settings-overflow", "settings-feedback", "settings-progress", "brightness", "performance", "display_timeout", "suspend_timeout", "appearance", "reduced_motion", "systems", "views", "power", "shutdown", "bluetooth", "bluetooth-checking", "bluetooth-off", "bluetooth-unavailable", "bluetooth-starting", "bluetooth-stopping", "bluetooth-connecting", "bluetooth-details", "bluetooth-pairing", "bluetooth-code-entry", "bluetooth-code-display", "bluetooth-failed", "wifi", "wifi-picker-checking", "wifi-picker-off", "wifi-picker-starting", "wifi-picker-stopping", "wifi-picker-error", "wifi-details", "wifi-password", "wifi-hidden-name", "wifi-hidden-security", "wifi-info", "wifi-open-confirm", "wifi-forget-confirm", "overlay", "overlay-states", "overlay-network", "overlay-network-captive", "network-request-off", "network-request-captive", "network-request-limited", "languages" };
         if (suite == null or !std.mem.eql(u8, suite.?, "damage")) for ([_]@import("theme.zig").Mode{ .light, .dark }) |appearance| for (screens) |screen| {
             try snapshotTo(init.io, init.gpa, "", screen, null, 0, appearance, gpu);
         };
@@ -331,6 +335,7 @@ test {
     _ = @import("focus_motion.zig");
     _ = @import("layout_motion.zig");
     _ = @import("meter_motion.zig");
+    _ = @import("activity_motion.zig");
     _ = @import("navigation_motion.zig");
     _ = @import("texture_batch.zig");
     _ = @import("battery_trials.zig");
