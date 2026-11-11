@@ -222,7 +222,7 @@ pub const SystemStatus = struct {
 
 /// The shell has a compact status cluster, not a persistent status bar. This
 /// component owns its order and spacing so screens cannot accumulate arbitrary
-/// chrome in the corner. Network bars communicate reachability, never RSSI.
+/// chrome in the corner. The Wi-Fi mark communicates reachability, never RSSI.
 pub fn systemStatus(result: *ui.Tree, status: SystemStatus) void {
     const right: u16 = design.geometry.width - design.spacing.margin;
     if (status.battery) |percent|
@@ -231,26 +231,12 @@ pub fn systemStatus(result: *ui.Tree, status: SystemStatus) void {
         networkSignal(result, .{ .x = right -| @as(u16, if (status.battery == null) 28 else 104), .y = 43, .width = 25, .height = 22 }, status.network);
 }
 
-/// Constructed from scene primitives so software, GPU, screenshots, and damage
-/// tracking share one icon without renderer-specific assets.
 fn networkSignal(result: *ui.Tree, bounds: ui.Rect, status: NetworkStatus) void {
-    const bar_width: u16 = 4;
-    const gap: u16 = 3;
-    for (0..4) |index| {
-        const bar_height: u16 = 5 + @as(u16, @intCast(index)) * 4;
-        result.add(.{ .bar = .{
-            .bounds = .{
-                .x = bounds.x + @as(u16, @intCast(index)) * (bar_width + gap),
-                .y = bounds.y + bounds.height -| bar_height,
-                .width = bar_width,
-                .height = bar_height,
-            },
-            .color = if (status == .connected) result.theme.accent else result.theme.muted,
-            .radius = 2,
-        } });
-    }
-    if (status == .attention)
-        result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x + bounds.width - 5, .y = bounds.y, .width = 5, .height = 5 }, .color = result.theme.accent, .radius = 3 } });
+    result.add(.{ .wifi = .{
+        .bounds = bounds,
+        .arcs = if (status == .connected) result.theme.accent else result.theme.muted,
+        .dot = result.theme.accent,
+    } });
 }
 
 /// Shared transient or terminal status surface. It occupies a stable status
@@ -550,12 +536,10 @@ test "system status owns one compact top-right cluster" {
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
     systemStatus(&tree, .{ .battery = 72, .network = .connected });
     try tree.validate();
-    try @import("std").testing.expectEqual(@as(usize, 5), tree.len);
+    try @import("std").testing.expectEqual(@as(usize, 2), tree.len);
     try @import("std").testing.expectEqual(@as(u16, design.geometry.width - design.spacing.margin - 60), tree.elements[0].battery.bounds.x);
-    for (tree.elements[1..5]) |element| {
-        try @import("std").testing.expect(element == .bar);
-        try @import("std").testing.expect(element.bar.bounds.x < tree.elements[0].battery.bounds.x);
-    }
+    try @import("std").testing.expect(tree.elements[1] == .wifi);
+    try @import("std").testing.expect(tree.elements[1].wifi.bounds.x < tree.elements[0].battery.bounds.x);
 }
 
 test "feedback status band uses a hairline and trailing semantic mark" {

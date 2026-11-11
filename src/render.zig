@@ -133,6 +133,7 @@ pub const Surface = struct {
             .menu_row => |row| self.menuRow(row),
             .action_card => |card| self.actionCard(card),
             .battery => |battery| self.drawBattery(battery),
+            .wifi => |wifi| self.drawWifi(wifi),
             .meter => |meter| self.drawMeter(meter),
             .activity => |activity| self.drawActivity(activity),
             .qr_code => |qr| self.drawQr(qr),
@@ -584,6 +585,37 @@ pub const Surface = struct {
         self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, battery.charge);
     }
 
+    fn drawWifi(self: Surface, wifi: ui.Wifi) void {
+        // Three open upper-circle bands form an idiomatic Wi-Fi mark without a
+        // font glyph or renderer-specific asset. Coalesce adjacent pixels into
+        // scanline runs so the GPU path receives a small bounded command set.
+        const center_x: i32 = @intCast(wifi.bounds.width / 2);
+        const center_y: i32 = @intCast(wifi.bounds.height -| 2);
+        const radii = [_]i32{ 5, 9, 13 };
+        for (0..wifi.bounds.height) |y_usize| {
+            const y: i32 = @intCast(y_usize);
+            var run: ?u16 = null;
+            for (0..wifi.bounds.width + 1) |x_usize| {
+                const inside = if (x_usize == wifi.bounds.width) false else blk: {
+                    const x: i32 = @intCast(x_usize);
+                    const dx = x - center_x;
+                    const dy = y - center_y;
+                    if (dy > -2) break :blk false;
+                    const distance = dx * dx + dy * dy;
+                    for (radii) |radius| if (distance >= (radius - 1) * (radius - 1) and distance <= (radius + 1) * (radius + 1))
+                        break :blk true;
+                    break :blk false;
+                };
+                if (inside and run == null) run = @intCast(x_usize);
+                if (!inside) if (run) |start| {
+                    self.fill(.{ .x = wifi.bounds.x + start, .y = wifi.bounds.y + @as(u16, @intCast(y_usize)), .width = @as(u16, @intCast(x_usize)) - start, .height = 1 }, wifi.arcs);
+                    run = null;
+                };
+            }
+        }
+        self.fillRounded(.{ .x = wifi.bounds.x + wifi.bounds.width / 2 -| 2, .y = wifi.bounds.y + wifi.bounds.height -| 5, .width = 5, .height = 5 }, wifi.dot, 3);
+    }
+
     fn drawMeter(self: Surface, meter: ui.Meter) void {
         if (!meter.visible) return;
         if (meter.presentation == .stepped and meter.steps >= 2) {
@@ -805,6 +837,23 @@ test "hidden stable meter slots do not erase surrounding content" {
     tree.add(.{ .meter = .{ .id = @import("interaction.zig").Id.scoped(.brightness_meter, 0), .bounds = .{ .x = 100, .y = 100, .width = 300, .height = 40 }, .value = 0, .visible = false, .track = themes.light.background, .fill = themes.light.background, .thumb = themes.light.background } });
     (Surface{ .pixels = pixels }).render(&tree);
     try std.testing.expectEqual(Surface.pack(themes.light.text), pixels[120 * width + 200]);
+}
+
+test "Wi-Fi attention mark keeps muted arcs and an accent origin" {
+    const themes = @import("theme.zig");
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var tree = ui.Tree{ .theme = themes.light, .background = themes.light.background };
+    tree.add(.{ .wifi = .{ .bounds = .{ .x = 100, .y = 100, .width = 27, .height = 22 }, .arcs = themes.light.muted, .dot = themes.light.accent } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    var muted_pixels: usize = 0;
+    var accent_pixels: usize = 0;
+    for (100..122) |y| for (100..127) |x| {
+        if (pixels[y * width + x] == Surface.pack(themes.light.muted)) muted_pixels += 1;
+        if (pixels[y * width + x] == Surface.pack(themes.light.accent)) accent_pixels += 1;
+    };
+    try std.testing.expect(muted_pixels > 24);
+    try std.testing.expect(accent_pixels > 8);
 }
 
 test "activity dots remain inside their declared component bounds" {

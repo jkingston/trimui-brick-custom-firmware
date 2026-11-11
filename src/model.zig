@@ -802,16 +802,14 @@ test "routine connection success settles into the foyer status cluster" {
     state.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
     const tree = state.tree();
 
-    var signal_bars: usize = 0;
+    var has_wifi_mark = false;
     var success_copy = false;
     for (tree.slice()) |element| switch (element) {
-        .bar => |bar| if (bar.bounds.x >= 872 and bar.bounds.x < 900) {
-            signal_bars += 1;
-        },
+        .wifi => has_wifi_mark = true,
         .text => |value| success_copy = success_copy or std.mem.eql(u8, value.value, "Connected to Wi-Fi"),
         else => {},
     };
-    try std.testing.expectEqual(@as(usize, 4), signal_bars);
+    try std.testing.expect(has_wifi_mark);
     try std.testing.expect(!success_copy);
 }
 
