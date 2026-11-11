@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+views='src/ui.zig src/foyer_view.zig src/device_views.zig src/wifi_views.zig src/bluetooth_views.zig'
+
+if rg -n 'result\.add\(\.\{ \.(menu_row|overlay_row|focus_frame|action_card|meter|keyboard)[[:space:]]*=' $views; then
+    echo 'Interactive scene primitives must be emitted by ui_components.' >&2
+    exit 1
+fi
+
+if rg -n '(duration_ms|frame_ms|easing)[[:space:]]*=' $views; then
+    echo 'View code must select semantic motion roles, not define timings.' >&2
+    exit 1
+fi

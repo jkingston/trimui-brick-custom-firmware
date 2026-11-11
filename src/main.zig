@@ -42,8 +42,10 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
     const surface = render.Surface{ .pixels = pixels };
     var state = model.Model{};
     state.settings.appearance = appearance;
-    const home_screen = std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback");
-    if (home_screen) state.page = .home;
+    // Keep the public snapshot names stable; internally this exceptional entry
+    // surface is a foyer, never a routine universal home.
+    const foyer_screen = std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback");
+    if (foyer_screen) state.page = .foyer;
     if (games) |library| {
         state.games = library;
         if (library.len > 0) {
@@ -64,9 +66,9 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
     } else if (std.mem.eql(u8, screen, "settings")) {
         state.page = .settings;
     }
-    if (home_screen) {
+    if (foyer_screen) {
         state.selected = 0;
-        // Home always owns battery status at runtime; deterministic snapshots
+        // The foyer owns battery status at runtime; deterministic snapshots
         // must cover the real header composition rather than an empty fixture.
         state.battery_percent = 72;
         if (games != null and state.games.len != 0) state.last_played = state.game_index;
@@ -347,6 +349,8 @@ test {
     _ = @import("meter_motion.zig");
     _ = @import("activity_motion.zig");
     _ = @import("navigation_motion.zig");
+    _ = @import("scene_motion.zig");
+    _ = @import("product_navigation.zig");
     _ = @import("texture_batch.zig");
     _ = @import("battery_trials.zig");
     _ = @import("bluetooth.zig");

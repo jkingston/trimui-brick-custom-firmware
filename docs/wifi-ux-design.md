@@ -258,7 +258,7 @@ Captive is a usable local link that still needs action, not a failed password.
 
 * User explicitly chose the network from the Wi-Fi screen: after the authority
   confirms captive, open the contained login automatically.
-* Auto-join while on Home/Settings: show a non-modal `Sign in to {name}` notice
+* Auto-join while in the foyer or device settings: show a non-modal `Sign in to {name}` notice
   and make the current network's primary action `Sign in`. Do not unexpectedly
   replace the whole shell.
 * Auto-join while a game is running: never launch or overlay the browser. Defer

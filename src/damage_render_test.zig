@@ -76,10 +76,10 @@ test "buffer-age damage rendering is pixel-identical across dissimilar screens" 
     };
     const expected = storage[2 * pixel_count .. 3 * pixel_count];
 
-    var first = ui.home(theme.light, 0);
+    var first = ui.foyer(theme.light, 0);
     var harness = try Harness.init(pages, expected, &first);
 
-    var next = ui.home(theme.light, 1);
+    var next = ui.foyer(theme.light, 1);
     try harness.show(&next);
     next = ui.overlayPause(theme.light, "A long game title", 0, 0, "Balanced", "");
     try harness.show(&next);

@@ -34,8 +34,8 @@ pub fn main(init: std.process.Init) !void {
     _ = arguments.next();
     const directory = arguments.next() orelse "output/motion-proof";
     const values = settings.Values{};
-    var home = ui.home(values.appearance.colors(), 1);
+    var foyer = ui.foyer(values.appearance.colors(), 1);
     var device = ui.settings(0, values, "Connected", "Off");
-    try writeFrames(init.io, init.gpa, directory, "forward", &home, &device, .forward, &.{ 0, 48, 96, 167 });
-    try writeFrames(init.io, init.gpa, directory, "back", &device, &home, .back, &.{ 0, 40, 80, 120 });
+    try writeFrames(init.io, init.gpa, directory, "forward", &foyer, &device, .forward, &.{ 0, 48, 96, 167 });
+    try writeFrames(init.io, init.gpa, directory, "back", &device, &foyer, .back, &.{ 0, 40, 80, 120 });
 }

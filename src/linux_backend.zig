@@ -6,16 +6,14 @@ const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
 const design = @import("design.zig");
 const display_scheduler = @import("display_scheduler.zig");
-const focus_motion = @import("focus_motion.zig");
 const input_repeat = @import("input_repeat.zig");
 const interaction = @import("interaction.zig");
 const interaction_motion = @import("motion.zig");
-const layout_motion = @import("layout_motion.zig");
-const meter_motion = @import("meter_motion.zig");
 const model = @import("model.zig");
 const navigation_motion = @import("navigation_motion.zig");
 const overlay = @import("overlay.zig");
 const retroarch = @import("retroarch.zig");
+const scene_motion = @import("scene_motion.zig");
 const ui = @import("ui.zig");
 const ui_components = @import("ui_components.zig");
 const settings = @import("settings.zig");
@@ -337,11 +335,6 @@ fn directional(action: model.Action) bool {
     return action == .up or action == .down or action == .left or action == .right;
 }
 
-fn finishLayout(layout: *layout_motion.Controller, tree: *ui.Tree, now_ms: i64) void {
-    if (layout.active(now_ms)) tree.* = layout.frame(tree, now_ms);
-    layout.cancel();
-}
-
 const SessionAction = struct { changed: bool = false, launch: ?usize = null };
 
 fn navigationDirection(action: model.Action, from: model.Page, to: model.Page) navigation_motion.Direction {
@@ -354,14 +347,10 @@ fn beginNavigation(
     from_page: model.Page,
     action: model.Action,
     now_ms: i64,
-    navigation: *navigation_motion.Controller,
-    focus: *focus_motion.Controller,
+    presentation: *scene_motion.Controller,
 ) ui.Tree {
     var destination = state.tree();
-    focus.* = .{};
-    focus.update(&destination, now_ms, state.settings.reduced_motion);
-    focus.decorate(&destination, now_ms);
-    navigation.begin(source, &destination, navigationDirection(action, from_page, state.page), now_ms, state.settings.reduced_motion);
+    presentation.beginNavigation(source, &destination, navigationDirection(action, from_page, state.page), now_ms, state.settings.reduced_motion, brightness_meter_id);
     return destination;
 }
 
@@ -371,14 +360,10 @@ fn beginOverlayNavigation(
     from_layer: overlay.Layer,
     action: model.Action,
     now_ms: i64,
-    navigation: *navigation_motion.Controller,
-    focus: *focus_motion.Controller,
+    presentation: *scene_motion.Controller,
 ) ui.Tree {
     var destination = state.tree();
-    focus.* = .{};
-    focus.update(&destination, now_ms, state.reduced_motion);
-    focus.decorate(&destination, now_ms);
-    navigation.begin(source, &destination, if (overlay.returnsToParent(action, from_layer, state.layer)) .back else .forward, now_ms, state.reduced_motion);
+    presentation.beginNavigation(source, &destination, if (overlay.returnsToParent(action, from_layer, state.layer)) .back else .forward, now_ms, state.reduced_motion, null);
     return destination;
 }
 
@@ -503,7 +488,7 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
         performPower(io, command) catch {
             state.feedback = .{ .kind = .failure, .message = if (command == .suspend_device) "Unable to sleep. The device is still awake." else "Could not complete power action" };
         };
-        state.page = .home;
+        state.page = .foyer;
         state.selected = 0;
     }
     if (state.takeLaunch()) |index| {
@@ -538,16 +523,11 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
 
     state.battery_percent = batteryPercent(io);
     var battery_deadline = nowMilliseconds(io) + 60000;
-    var focus: focus_motion.Controller = .{};
-    var meter: meter_motion.Controller = .{};
-    var activity: activity_motion.Controller = .{};
+    // SAFETY: reset initializes every field before presentation is observed.
+    var presentation: scene_motion.Controller = undefined;
+    presentation.reset();
     var tree = state.tree();
-    focus.update(&tree, nowMilliseconds(io), state.settings.reduced_motion);
-    focus.decorate(&tree, nowMilliseconds(io));
-    meter.update(&tree, brightness_meter_id, nowMilliseconds(io), state.settings.reduced_motion);
-    meter.decorate(&tree, nowMilliseconds(io));
-    activity.update(&tree, nowMilliseconds(io), state.settings.reduced_motion);
-    activity.decorate(&tree, nowMilliseconds(io));
+    presentation.decorate(&tree, nowMilliseconds(io), state.settings.reduced_motion, brightness_meter_id);
     try display.show(&tree);
 
     var wifi_client: ?wifi_ipc.Client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
@@ -570,8 +550,6 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     var poll_fds: [max_gamepads + 3]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var motion: @import("shelf_motion.zig").Motion = .{};
-    var navigation: navigation_motion.Controller = .{};
-    var layout: layout_motion.Controller = .{};
     var layout_pending = false;
     var press: PressTracker = .{};
     var feedback_lifecycle = ui_components.FeedbackLifecycle{};
@@ -585,7 +563,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
-        const animation = (state.page == .games and state.library_view == .browse and motion.active(now)) or focus.active(now) or meter.active(now) or activity.active() or navigation.active(now) or layout.active(now);
+        const animation = (state.page == .games and state.library_view == .browse and motion.active(now)) or presentation.active(now);
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
@@ -643,7 +621,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         }
         if (nowMilliseconds(io) >= battery_deadline) {
             const percent = batteryPercent(io);
-            changed = changed or (state.page == .home and percent != state.battery_percent);
+            changed = changed or (state.page == .foyer and percent != state.battery_percent);
             state.battery_percent = percent;
             battery_deadline = nowMilliseconds(io) + 60000;
         }
@@ -725,14 +703,14 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 const retained_preview = state.library_preview;
                 const previous_page = state.page;
                 const previous_appearance = state.settings.appearance;
-                navigation.cancel();
-                finishLayout(&layout, &tree, nowMilliseconds(io));
+                presentation.cancelNavigation();
+                presentation.finishLayout(&tree, nowMilliseconds(io));
                 const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                 // Held navigation updates focus immediately but retains rich
                 // content until release, preventing artwork churn from pacing
                 // the player's skim.
                 if (state.page == .games) state.library_preview = retained_preview;
-                const boundary = !result.changed and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
+                const boundary = !result.changed and state.supportsDirection(action) and presentation.focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                 if (state.page == .games and state.library_view == .browse and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
@@ -741,7 +719,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     return index;
                 }
                 if (state.page != previous_page or state.settings.appearance != previous_appearance)
-                    tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
+                    tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &presentation);
                 layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .browse));
                 changed = changed or result.changed or boundary;
                 if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -771,8 +749,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     const event_action = actionForEvent(event, slot.builtin, &slot.dropped);
                     switch (press.observe(event, slot.builtin, slot.dropped, &tree)) {
                         .pressed => {
-                            navigation.cancel();
-                            finishLayout(&layout, &tree, nowMilliseconds(io));
+                            presentation.cancelNavigation();
+                            presentation.finishLayout(&tree, nowMilliseconds(io));
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             continue;
@@ -781,8 +759,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                             const previous = state.selected;
                             const previous_page = state.page;
                             const previous_appearance = state.settings.appearance;
-                            navigation.cancel();
-                            finishLayout(&layout, &tree, nowMilliseconds(io));
+                            presentation.cancelNavigation();
+                            presentation.finishLayout(&tree, nowMilliseconds(io));
                             const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, .select);
                             if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                             if (state.page == .games and state.library_view == .browse and previous != state.selected)
@@ -792,7 +770,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                                 return index;
                             }
                             if (state.page != previous_page or state.settings.appearance != previous_appearance)
-                                tree = beginNavigation(state, &tree, previous_page, .select, nowMilliseconds(io), &navigation, &focus);
+                                tree = beginNavigation(state, &tree, previous_page, .select, nowMilliseconds(io), &presentation);
                             changed = changed or result.changed;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -805,10 +783,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         const previous = state.selected;
                         const previous_page = state.page;
                         const previous_appearance = state.settings.appearance;
-                        navigation.cancel();
-                        finishLayout(&layout, &tree, nowMilliseconds(io));
+                        presentation.cancelNavigation();
+                        presentation.finishLayout(&tree, nowMilliseconds(io));
                         const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
-                        const boundary = !result.changed and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
+                        const boundary = !result.changed and state.supportsDirection(action) and presentation.focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                         if (state.page == .games and state.library_view == .browse and previous != state.selected)
                             motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
@@ -817,7 +795,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                             return index;
                         }
                         if (state.page != previous_page or state.settings.appearance != previous_appearance)
-                            tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
+                            tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &presentation);
                         layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .browse));
                         changed = changed or result.changed or boundary;
                         if (result.changed or boundary) display.recordInput(event.seconds * 1_000_000 + event.microseconds);
@@ -839,15 +817,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         if (changed) {
             const frame_now = nowMilliseconds(io);
             var next = state.treeWithShelfOffset(motion.offset(frame_now));
-            focus.update(&next, frame_now, state.settings.reduced_motion);
-            focus.decorate(&next, frame_now);
-            meter.update(&next, brightness_meter_id, frame_now, state.settings.reduced_motion);
-            meter.decorate(&next, frame_now);
-            activity.update(&next, frame_now, state.settings.reduced_motion);
-            activity.decorate(&next, frame_now);
+            presentation.decorate(&next, frame_now, state.settings.reduced_motion, brightness_meter_id);
             press.decorate(&next);
-            if (layout_pending and !navigation.active(frame_now))
-                _ = layout.begin(&tree, &next, frame_now, state.settings.reduced_motion);
+            if (layout_pending and !presentation.navigation.active(frame_now))
+                _ = presentation.layout.begin(&tree, &next, frame_now, state.settings.reduced_motion);
             layout_pending = false;
             tree = next;
             try display.requestFrame(&tree);
@@ -855,17 +828,12 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         if (display.frameDue()) {
             const frame_now = nowMilliseconds(io);
             tree = state.treeWithShelfOffset(motion.offset(frame_now));
-            focus.update(&tree, frame_now, state.settings.reduced_motion);
-            focus.decorate(&tree, frame_now);
-            meter.update(&tree, brightness_meter_id, frame_now, state.settings.reduced_motion);
-            meter.decorate(&tree, frame_now);
-            activity.update(&tree, frame_now, state.settings.reduced_motion);
-            activity.decorate(&tree, frame_now);
+            presentation.decorate(&tree, frame_now, state.settings.reduced_motion, brightness_meter_id);
             press.decorate(&tree);
-            if (navigation.active(frame_now))
-                try display.submitTransition(&navigation, frame_now)
-            else if (layout.active(frame_now)) {
-                var frame = layout.frame(&tree, frame_now);
+            if (presentation.navigation.active(frame_now))
+                try display.submitTransition(&presentation.navigation, frame_now)
+            else if (presentation.layout.active(frame_now)) {
+                var frame = presentation.layout.frame(&tree, frame_now);
                 try display.submit(&frame);
             } else try display.submit(&tree);
         }
@@ -878,10 +846,11 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     var display = try Display.open(io, profile_input);
     defer display.close();
 
-    var focus: focus_motion.Controller = .{};
+    // SAFETY: reset initializes every field before presentation is observed.
+    var presentation: scene_motion.Controller = undefined;
+    presentation.reset();
     var tree = state.tree();
-    focus.update(&tree, nowMilliseconds(io), state.reduced_motion);
-    focus.decorate(&tree, nowMilliseconds(io));
+    presentation.decorate(&tree, nowMilliseconds(io), state.reduced_motion, null);
     try display.show(&tree);
     const input_monitor = try openInputMonitor(input_directory);
     defer closeFd(io, input_monitor, true);
@@ -892,7 +861,6 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     if (profile_input) try markReady(io);
     var poll_fds: [max_gamepads + 1]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
-    var navigation: navigation_motion.Controller = .{};
     var press: PressTracker = .{};
     var feedback_lifecycle = ui_components.FeedbackLifecycle{};
     var was_animating = false;
@@ -912,7 +880,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         var repeat_wait = repeat.timeout(now);
         const feedback_wait = feedback_lifecycle.timeout(now);
         if (feedback_wait >= 0) repeat_wait = if (repeat_wait < 0) feedback_wait else @min(repeat_wait, feedback_wait);
-        const animation = focus.active(now) or navigation.active(now);
+        const animation = presentation.active(now);
         const ready = try display.poll(&poll_fds, interaction_motion.pollTimeout(animation, was_animating, repeat_wait));
         var changed = animation or was_animating;
         if (feedback_lifecycle.tick(nowMilliseconds(io))) {
@@ -930,7 +898,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
             if (repeat.due(nowMilliseconds(io))) |action| {
                 if (action == .up or action == .down) {
                     const applied = state.apply(action);
-                    const boundary = !applied and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.reduced_motion);
+                    const boundary = !applied and state.supportsDirection(action) and presentation.focus.boundary(action, nowMilliseconds(io), state.reduced_motion);
                     changed = applied or boundary or changed;
                 }
             }
@@ -957,19 +925,19 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                     const event_action = actionForEvent(event, slot.builtin, &slot.dropped);
                     switch (press.observe(event, slot.builtin, slot.dropped, &tree)) {
                         .pressed => {
-                            navigation.cancel();
+                            presentation.cancelNavigation();
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             continue;
                         },
                         .activated => {
                             const previous_layer = state.layer;
-                            navigation.cancel();
+                            presentation.cancelNavigation();
                             if (state.apply(.select)) changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             const command = state.takeCommand();
                             if (command == null and state.layer != previous_layer)
-                                tree = beginOverlayNavigation(state, &tree, previous_layer, .select, nowMilliseconds(io), &navigation, &focus);
+                                tree = beginOverlayNavigation(state, &tree, previous_layer, .select, nowMilliseconds(io), &presentation);
                             if (command) |resolved| {
                                 if (resolved == .save_state or resolved == .load_state) {
                                     var status = ui.message(state.appearance.colors(), if (resolved == .save_state) "Save state" else "Load state", if (resolved == .save_state) "Saving state…" else "Loading state…", "");
@@ -984,16 +952,16 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                     }
                     if (event_action) |action| {
                         const previous_layer = state.layer;
-                        navigation.cancel();
+                        presentation.cancelNavigation();
                         const applied = state.apply(action);
-                        const boundary = !applied and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.reduced_motion);
+                        const boundary = !applied and state.supportsDirection(action) and presentation.focus.boundary(action, nowMilliseconds(io), state.reduced_motion);
                         if (applied or boundary) {
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         }
                         const command = state.takeCommand();
                         if (command == null and state.layer != previous_layer)
-                            tree = beginOverlayNavigation(state, &tree, previous_layer, action, nowMilliseconds(io), &navigation, &focus);
+                            tree = beginOverlayNavigation(state, &tree, previous_layer, action, nowMilliseconds(io), &presentation);
                         if (command) |resolved| {
                             if (resolved == .save_state or resolved == .load_state) {
                                 var status = ui.message(state.appearance.colors(), if (resolved == .save_state) "Save state" else "Load state", if (resolved == .save_state) "Saving state…" else "Loading state…", "");
@@ -1016,19 +984,17 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         if (changed) {
             const frame_now = nowMilliseconds(io);
             tree = state.tree();
-            focus.update(&tree, frame_now, state.reduced_motion);
-            focus.decorate(&tree, frame_now);
+            presentation.decorate(&tree, frame_now, state.reduced_motion, null);
             press.decorate(&tree);
             try display.requestFrame(&tree);
         }
         if (display.frameDue()) {
             const frame_now = nowMilliseconds(io);
             tree = state.tree();
-            focus.update(&tree, frame_now, state.reduced_motion);
-            focus.decorate(&tree, frame_now);
+            presentation.decorate(&tree, frame_now, state.reduced_motion, null);
             press.decorate(&tree);
-            if (navigation.active(frame_now))
-                try display.submitTransition(&navigation, frame_now)
+            if (presentation.navigation.active(frame_now))
+                try display.submitTransition(&presentation.navigation, frame_now)
             else
                 try display.submit(&tree);
         }

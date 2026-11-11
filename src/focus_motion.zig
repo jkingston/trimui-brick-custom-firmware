@@ -105,9 +105,9 @@ pub const Controller = struct {
 test "focus plate retargets from its visible position" {
     const theme = @import("theme.zig").light;
     var first = ui.Tree{ .theme = theme, .background = theme.background };
-    first.add(.{ .menu_row = .{ .id = interaction.Id.scoped(.home, 0), .bounds = .{ .x = 0, .y = 100, .width = 200, .height = 80 }, .label = "One", .selected = true } });
+    first.add(.{ .menu_row = .{ .id = interaction.Id.scoped(.foyer, 0), .bounds = .{ .x = 0, .y = 100, .width = 200, .height = 80 }, .label = "One", .selected = true } });
     var second = ui.Tree{ .theme = theme, .background = theme.background };
-    second.add(.{ .menu_row = .{ .id = interaction.Id.scoped(.home, 1), .bounds = .{ .x = 0, .y = 300, .width = 200, .height = 80 }, .label = "Two", .selected = true } });
+    second.add(.{ .menu_row = .{ .id = interaction.Id.scoped(.foyer, 1), .bounds = .{ .x = 0, .y = 300, .width = 200, .height = 80 }, .label = "Two", .selected = true } });
     var controller = Controller{};
     controller.update(&first, 0, false);
     controller.update(&second, 10, false);
@@ -138,9 +138,9 @@ test "focus plate preserves horizontal continuity for grids" {
 test "focus plate morphs between differently sized action cards" {
     const theme = @import("theme.zig").light;
     var first = ui.Tree{ .theme = theme, .background = theme.background };
-    first.add(.{ .action_card = .{ .id = interaction.Id.scoped(.home, 0), .state = .focused, .bounds = .{ .x = 28, .y = 142, .width = 614, .height = 468 }, .eyebrow = "Library", .label = "Games" } });
+    first.add(.{ .action_card = .{ .id = interaction.Id.scoped(.foyer, 0), .state = .focused, .bounds = .{ .x = 28, .y = 142, .width = 614, .height = 468 }, .eyebrow = "Library", .label = "Games" } });
     var second = ui.Tree{ .theme = theme, .background = theme.background };
-    second.add(.{ .action_card = .{ .id = interaction.Id.scoped(.home, 1), .state = .focused, .bounds = .{ .x = 670, .y = 142, .width = 326, .height = 220 }, .eyebrow = "Device", .label = "Settings" } });
+    second.add(.{ .action_card = .{ .id = interaction.Id.scoped(.foyer, 1), .state = .focused, .bounds = .{ .x = 670, .y = 142, .width = 326, .height = 220 }, .eyebrow = "Device", .label = "Settings" } });
     var controller = Controller{};
     controller.update(&first, 0, false);
     controller.update(&second, 10, false);

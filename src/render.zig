@@ -868,8 +868,8 @@ test "theme changes interface surfaces but preserves artwork pixels" {
     const b = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(b);
     const themes = @import("theme.zig");
-    var light = views.home(themes.light, 0);
-    var dark = views.home(themes.dark, 0);
+    var light = views.foyer(themes.light, 0);
+    var dark = views.foyer(themes.dark, 0);
     (Surface{ .pixels = a }).render(&light);
     (Surface{ .pixels = b }).render(&dark);
     try std.testing.expect(a[0] != b[0]);

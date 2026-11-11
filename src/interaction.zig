@@ -9,7 +9,7 @@ pub const Id = enum(u64) {
         implicit_menu,
         implicit_overlay,
         implicit_frame,
-        home,
+        foyer,
         settings,
         library,
         wifi_list,
@@ -149,7 +149,7 @@ test "focus groups report boundaries instead of silent ignored input" {
 }
 
 test "stable ids include scope and item" {
-    try std.testing.expect(Id.scoped(.home, 0) != Id.scoped(.home, 1));
-    try std.testing.expect(Id.scoped(.home, 0) != Id.scoped(.choice, 0));
-    try std.testing.expectEqual(Id.scoped(.home, 0), Id.scoped(.home, 0));
+    try std.testing.expect(Id.scoped(.foyer, 0) != Id.scoped(.foyer, 1));
+    try std.testing.expect(Id.scoped(.foyer, 0) != Id.scoped(.choice, 0));
+    try std.testing.expectEqual(Id.scoped(.foyer, 0), Id.scoped(.foyer, 0));
 }

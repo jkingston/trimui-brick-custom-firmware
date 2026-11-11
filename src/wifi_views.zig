@@ -183,14 +183,12 @@ pub fn wifiConnectionInfo(theme: Theme, network: *const wifi_model.Network) Tree
     };
     const labels = [_][]const u8{ "Network", "Security", "Signal", "IP address" };
     const values = [_][]const u8{ network.name.slice(), wifiSecurity(network.security), signal, if (network.address.len == 0) "Not assigned" else network.address.slice() };
-    for (labels, values, 0..) |label, value, index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = 144 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 },
-        .label = label,
-        .detail = "",
-        .value = value,
-        .selected = false,
-        .disclosure = false,
-    } });
+    for (labels, values, 0..) |label, value, index| {
+        var row = components.selectable(.wifi_details, index, false, .{ .x = 28, .y = 144 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 }, label);
+        row.value = value;
+        row.disclosure = false;
+        row.overlay(&result);
+    }
     components.footer(&result, &.{.{ .control = .back, .label = "Network" }});
     return result;
 }

@@ -16,6 +16,7 @@ description = "Check formatting, syntax and static analysis"
 run = [
     "zig fmt --check --ast-check build.zig build.zig.zon src",
     "zlint --deny-warnings src",
+    "tools/check-ui-architecture",
 ]
 
 [tasks.test]

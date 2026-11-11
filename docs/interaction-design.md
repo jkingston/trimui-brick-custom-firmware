@@ -53,14 +53,18 @@ play.
 | Concern | Code owner |
 | --- | --- |
 | Typography, geometry, semantic motion roles | `src/design.zig` |
+| Product page hierarchy and return direction | `src/product_navigation.zig` |
 | Interruptible scalar motion and frame deadlines | `src/motion.zig` |
-| Connected page transitions and source anchors | `src/navigation_motion.zig` |
+| Immediate directional page settlement | `src/navigation_motion.zig` |
+| Shared focus, meter, activity, layout, and navigation orchestration | `src/scene_motion.zig` |
 | Stable-ID viewport scrolling | `src/layout_motion.zig` |
 | Animated meters and value retargeting | `src/meter_motion.zig` |
 | Indeterminate activity cadence | `src/activity_motion.zig` |
 | Identity, control lifecycle, focus boundaries | `src/interaction.zig` |
 | Sound/haptic event policy | `src/feedback.zig` |
 | Selectable controls and notice lifecycle | `src/ui_components.zig` |
+| Exceptional entry composition | `src/foyer_view.zig` |
+| Settings, choices, confirmations, and value stages | `src/device_views.zig` |
 | Game identity across every library density | `src/game_object.zig` |
 | Wi-Fi/Bluetooth initialization and recovery | `src/radio_surface.zig` |
 | Renderer-neutral state and post-build interaction | `src/ui_scene.zig` |
@@ -68,6 +72,8 @@ play.
 
 Raw durations and easing curves outside `design.zig` are defects. Components
 select a `MotionRole`; they do not construct private motion styles.
+`tools/check-ui-architecture` also rejects view code that emits raw interactive
+scene primitives; new controls must enter through `ui_components.zig`.
 
 ## Visual language
 

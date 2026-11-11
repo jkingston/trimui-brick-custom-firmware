@@ -9,33 +9,13 @@ const captive = @import("captive.zig");
 const wifi = @import("wifi.zig");
 const wifi_flow = @import("wifi_flow.zig");
 const bluetooth_model = @import("bluetooth.zig");
+const product_navigation = @import("product_navigation.zig");
 
 pub const Action = input.Action;
-pub const Page = enum { home, games, game, settings, setting, wifi, wifi_fallback, bluetooth, systems, views, power, power_confirm };
+pub const Page = product_navigation.Page;
+pub const returnsToParent = product_navigation.returnsToParent;
 pub const Power = enum { screen_off, suspend_device, shutdown };
 const settings_count = @typeInfo(settings_model.Setting).@"enum".field_names.len;
-
-/// Describes the page hierarchy once so every renderer can use the same
-/// connected-navigation direction.
-pub fn returnsToParent(action: Action, from: Page, to: Page) bool {
-    if (action == .back) return true;
-    const returning = switch (from) {
-        .game, .systems, .views => to == .games,
-        .setting, .wifi, .bluetooth => to == .settings,
-        .wifi_fallback => to == .wifi,
-        .power_confirm => to == .power,
-        else => false,
-    };
-    return returning or (action == .menu and to == .home);
-}
-
-test "page hierarchy gives every renderer the same transition direction" {
-    try std.testing.expect(!returnsToParent(.select, .home, .settings));
-    try std.testing.expect(returnsToParent(.back, .settings, .home));
-    try std.testing.expect(returnsToParent(.select, .views, .games));
-    try std.testing.expect(returnsToParent(.menu, .settings, .home));
-    try std.testing.expect(!returnsToParent(.menu, .home, .power));
-}
 
 test "direction support follows each component layout" {
     var state = Model{ .page = .games, .library_view = .browse };
@@ -57,7 +37,7 @@ test "direction support follows each component layout" {
 
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
-    page: Page = .home,
+    page: Page = .foyer,
     library_view: ui.LibraryView = .recent,
     system: ?usize = null,
     selected: usize = 0,
@@ -89,7 +69,7 @@ pub const Model = struct {
 
     /// Resolve the cold-start destination after preferences and automatic-save
     /// availability are known. A valid resumable session bypasses shell
-    /// navigation; otherwise the library is the root and Home remains only the
+    /// navigation; otherwise the library is the root and the foyer remains only the
     /// empty/recovery foyer.
     pub fn bootTarget(self: *Model) ?usize {
         if (self.resumable) if (self.last_played) |index| if (index < self.games.len) {
@@ -97,7 +77,7 @@ pub const Model = struct {
             return index;
         };
         if (self.games.len != 0) self.browse() else {
-            self.page = .home;
+            self.page = .foyer;
             self.selected = 0;
         }
         return null;
@@ -122,7 +102,7 @@ pub const Model = struct {
                 .forget_confirm, .confirmation, .code_entry => vertical or horizontal,
                 .code_display => false,
             },
-            .home => horizontal,
+            .foyer => horizontal,
             .settings, .systems, .views, .power, .power_confirm => vertical,
             .game, .wifi_fallback => false,
         };
@@ -226,7 +206,7 @@ pub const Model = struct {
         switch (action) {
             .up, .down => {
                 const up = action == .up;
-                if (self.page == .home) return false;
+                if (self.page == .foyer) return false;
                 if (self.page == .games and self.library_view == .browse) return false;
                 if (self.page == .setting and self.active_setting == .brightness) return false;
                 const step: usize = 1;
@@ -238,7 +218,7 @@ pub const Model = struct {
             },
             .left, .right => {
                 const left = action == .left;
-                if (self.page == .home) {
+                if (self.page == .foyer) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, self.itemCount() -| 1);
                 } else if (self.page == .games and self.library_view == .browse) {
                     if (left) self.selected -|= 1;
@@ -249,7 +229,7 @@ pub const Model = struct {
                 }
             },
             .select => switch (self.page) {
-                .home => {
+                .foyer => {
                     const offset: usize = if (self.last_played != null) 1 else 0;
                     if (offset == 1 and self.selected == 0) {
                         self.game_index = self.last_played.?;
@@ -312,7 +292,7 @@ pub const Model = struct {
                 },
             },
             .back => switch (self.page) {
-                .home => {},
+                .foyer => {},
                 .games => {
                     self.remember();
                     // The library is the shell root. Back never detours through
@@ -345,7 +325,7 @@ pub const Model = struct {
             .menu => {
                 self.remember();
                 self.page = switch (self.page) {
-                    .games, .home => .settings,
+                    .games, .foyer => .settings,
                     .settings => .power,
                     .power => .settings,
                     else => .games,
@@ -495,7 +475,7 @@ pub const Model = struct {
 
     fn itemCount(self: *const Model) usize {
         return switch (self.page) {
-            .home => if (self.last_played != null) 3 else 2,
+            .foyer => if (self.last_played != null) 3 else 2,
             .games => self.collection().len(),
             .game => 1,
             .settings => settings_count + 2,
@@ -522,7 +502,7 @@ pub const Model = struct {
     pub fn treeWithShelfOffset(self: *const Model, shelf_offset: i16) ui.Tree {
         const theme = self.settings.appearance.colors();
         var result = switch (self.page) {
-            .home => ui.homeSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
+            .foyer => ui.foyerSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
             .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_preview, self.library_view, shelf_offset),
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], if (self.launch_failed) |failure| failure.message() else null),
             .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.summary(), self.bluetooth.summary()),
@@ -543,10 +523,10 @@ pub const Model = struct {
                 };
                 break :blk ui.choice(theme, "System", labels[0..count], self.selected, active, "", "Games");
             },
-            .power => ui.choice(theme, "Power", &.{ "Turn screen off", "Sleep", "Shut down" }, self.selected, null, "Sleep disconnects Bluetooth devices.", "Home"),
+            .power => ui.choice(theme, "Power", &.{ "Turn screen off", "Sleep", "Shut down" }, self.selected, null, "Sleep disconnects Bluetooth devices.", "Settings"),
             .power_confirm => ui.confirmation(theme, "Shut down", "Turn off the device?", "Hold Power to start it again.", "Shut down", self.selected),
         };
-        if (self.page == .home) {
+        if (self.page == .foyer) {
             if (self.battery_percent) |percent| result.add(.{ .battery = .{ .bounds = .{ .x = 916, .y = 40, .width = 60, .height = 28 }, .percent = percent } });
         }
         if (self.feedback.visible()) ui.showFeedback(&result, self.feedback);
@@ -574,9 +554,9 @@ pub const Model = struct {
     }
 };
 
-test "Home opens Games and returns without losing browsing position" {
+test "foyer opens Games and returns without losing browsing position" {
     var state = Model{};
-    try std.testing.expectEqual(Page.home, state.page);
+    try std.testing.expectEqual(Page.foyer, state.page);
     _ = state.apply(.select);
     _ = state.apply(.down);
     _ = state.apply(.back);
@@ -593,7 +573,7 @@ test "boot resumes valid play and otherwise enters the library" {
     try std.testing.expectEqual(Page.games, state.page);
     state = .{ .games = &.{} };
     try std.testing.expect(state.bootTarget() == null);
-    try std.testing.expectEqual(Page.home, state.page);
+    try std.testing.expectEqual(Page.foyer, state.page);
 }
 
 test "filtered launch uses source identity and restores each system position" {
@@ -689,12 +669,12 @@ test "shutdown requires an explicit confirmation and cancel is default" {
     try std.testing.expectEqual(Power.shutdown, state.pending_power.?);
 }
 
-test "Back at Home is inert with or without a resumable session" {
+test "Back at the foyer is inert with or without a resumable session" {
     inline for (.{ false, true }) |history| {
         var state = Model{ .last_played = if (history) 1 else null, .resumable = history, .library_selection = 3 };
         const revision = state.revision;
         for (0..8) |_| try std.testing.expect(!state.apply(.back));
-        try std.testing.expectEqual(Page.home, state.page);
+        try std.testing.expectEqual(Page.foyer, state.page);
         try std.testing.expectEqual(@as(usize, 0), state.selected);
         try std.testing.expectEqual(revision, state.revision);
         try std.testing.expect(state.takeLaunch() == null);

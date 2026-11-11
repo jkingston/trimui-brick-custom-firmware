@@ -176,14 +176,20 @@ pub fn meter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16) 
 /// Discrete-value evidence for D-pad settings. The current stop is taller,
 /// completed stops carry magnitude, and exact text remains optional context.
 pub fn steppedMeter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16, steps: u8) void {
+    steppedMeterState(result, id, bounds, value, steps, true);
+}
+
+/// A stable value-stage slot may remain in the scene while another setting is
+/// selected. The component, rather than its screen, owns the neutral styling.
+pub fn steppedMeterState(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16, steps: u8, visible: bool) void {
     std.debug.assert(steps >= 2);
     result.add(.{ .meter = .{
         .id = id,
         .bounds = bounds,
-        .value = @min(1000, value),
-        .track = result.theme.surface,
-        .fill = result.theme.text,
-        .thumb = result.theme.accent,
+        .value = if (visible) @min(1000, value) else 0,
+        .track = if (visible) result.theme.surface else result.theme.background,
+        .fill = if (visible) result.theme.text else result.theme.background,
+        .thumb = if (visible) result.theme.accent else result.theme.background,
         .presentation = .stepped,
         .steps = steps,
     } });
@@ -467,9 +473,9 @@ test "editorial focus preserves text geometry" {
 test "action cards use the shared interaction contract" {
     const theme = @import("theme.zig").light;
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
-    actionCard(&tree, .home, 1, true, .{ .x = 20, .y = 40, .width = 320, .height = 240 }, "Device", "Settings", "Display and audio", .secondary, 1, 1);
-    try @import("std").testing.expectEqual(interaction.Id.scoped(.home, 1), tree.focusedId().?);
-    try @import("std").testing.expect(tree.setInteraction(interaction.Id.scoped(.home, 1), .pressed));
+    actionCard(&tree, .foyer, 1, true, .{ .x = 20, .y = 40, .width = 320, .height = 240 }, "Device", "Settings", "Display and audio", .secondary, 1, 1);
+    try @import("std").testing.expectEqual(interaction.Id.scoped(.foyer, 1), tree.focusedId().?);
+    try @import("std").testing.expect(tree.setInteraction(interaction.Id.scoped(.foyer, 1), .pressed));
     try @import("std").testing.expectEqual(interaction.State.pressed, tree.elements[0].action_card.state);
     try @import("std").testing.expectEqual(theme.selection_text, tree.elements[0].action_card.style.text);
 }

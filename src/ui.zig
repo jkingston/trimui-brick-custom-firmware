@@ -4,7 +4,6 @@ const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
 const catalog = @import("catalog.zig");
-const settings_model = @import("settings.zig");
 const interaction = @import("interaction.zig");
 const bluetooth_model = @import("bluetooth.zig");
 const scene = @import("ui_scene.zig");
@@ -246,49 +245,9 @@ fn caption(result: *Tree, game: catalog.Game) void {
     result.add(.{ .text_block = .{ .bounds = .{ .x = 48, .y = 530, .width = 928, .height = 148 }, .title = game.title, .detail = game.system, .color = result.theme.text, .detail_color = result.theme.muted, .title_font = title_font, .detail_font = system_font } });
 }
 
-pub fn home(theme: Theme, selected: usize) Tree {
-    return homeSession(theme, selected, null, false);
-}
-
-pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumable: bool) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    const with_recent = recent != null;
-    textLabel(&result, .{ .x = 48, .y = 38, .width = 500, .height = 34 }, if (with_recent) "RETURN TO PLAY" else "BRICK", theme.muted, uiFont(22, 30, .semibold, .start));
-    const labels = if (with_recent) [_][]const u8{ "Continue", "Library", "Device" } else [_][]const u8{ "Library", "Device", "" };
-    const count: usize = if (with_recent) 3 else 2;
-    const title: []const u8 = if (with_recent) recent.?.title else "Choose a game";
-    const detail: []const u8 = if (with_recent)
-        (if (resumable) "Your last session is ready." else "Start the last game again.")
-    else
-        "";
-    result.add(.{ .text_block = .{
-        .bounds = .{ .x = 48, .y = 142, .width = if (with_recent) 510 else 820, .height = 300 },
-        .title = title,
-        .detail = detail,
-        .color = theme.text,
-        .detail_color = theme.muted,
-        .title_font = displayFont(if (with_recent) 66 else 78, if (with_recent) 76 else 90, .semibold, .start),
-        .detail_font = uiFont(30, 42, .regular, .start),
-        .lines = 2,
-        .detail_lines = 2,
-        .gap = 22,
-    } });
-    if (recent) |game| artwork(&result, game, .{ .x = 652, .y = 126, .width = 296, .height = 356 }, false, false, null, 0, 0);
-
-    const action_x = if (with_recent) [_]u16{ 48, 332, 606 } else [_]u16{ 48, 414, 0 };
-    const action_width = if (with_recent) [_]u16{ 228, 218, 218 } else [_]u16{ 310, 310, 0 };
-    for (labels[0..count], 0..) |label, index| {
-        const active = selected == index;
-        components.editorialChoice(&result, .home, index, active, .{
-            .label = label,
-            .bounds = .{ .x = action_x[index], .y = 552, .width = action_width[index], .height = 62 },
-            .focus_bounds = .{ .x = action_x[index], .y = 546, .width = action_width[index], .height = 72 },
-            .scale = .action,
-        });
-    }
-    footer(&result, &.{.{ .control = .confirm, .label = if (with_recent and selected == 0) (if (resumable) "Resume" else "Play") else "Open" }});
-    return result;
-}
+const foyer_view = @import("foyer_view.zig");
+pub const foyer = foyer_view.foyer;
+pub const foyerSession = foyer_view.session;
 
 pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
     return libraryCollection(theme, .{ .games = games }, selected, selected, view, shelf_offset);
@@ -305,7 +264,7 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
     if (count == 0) {
         textLabel(&result, .{ .x = 48, .y = 224, .width = 928, .height = 64 }, "No games yet", theme.text, font.title);
         result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 312, .width = 864, .height = 100 }, .value = "Add games to the Roms folder on your SD card.", .color = theme.muted, .font = font.body, .lines = 2 } });
-        footer(&result, &.{.{ .control = .back, .label = "Home" }});
+        footer(&result, &.{.{ .control = .back, .label = "Back" }});
         return result;
     }
     const game = collection.at(@min(preview_selected, count - 1));
@@ -408,158 +367,12 @@ pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) 
     return result;
 }
 
-pub fn message(theme: Theme, title: []const u8, subject: []const u8, detail: []const u8) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, title);
-    var title_font = font.body;
-    title_font.size = 50;
-    title_font.weight = .medium;
-    title_font.line_height = 60;
-    var detail_font = font.caption;
-    detail_font.size = 35;
-    detail_font.line_height = 51;
-    result.add(.{ .text_block = .{ .bounds = .{ .x = 48, .y = 223, .width = 900, .height = 268 }, .title = subject, .detail = detail, .color = theme.text, .detail_color = theme.muted, .title_font = title_font, .detail_font = detail_font, .detail_lines = 2, .gap = 31 } });
-    return result;
-}
-
-pub fn confirmation(theme: Theme, title: []const u8, subject: []const u8, detail: []const u8, action: []const u8, selected: usize) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    editorialHeader(&result, "CONFIRM", title);
-    result.add(.{ .text_block = .{
-        .bounds = .{ .x = 48, .y = 158, .width = 880, .height = 226 },
-        .title = subject,
-        .detail = detail,
-        .color = theme.text,
-        .detail_color = theme.muted,
-        .title_font = displayFont(53, 63, .semibold, .start),
-        .detail_font = uiFont(28, 40, .regular, .start),
-        .lines = 2,
-        .detail_lines = 2,
-        .gap = 22,
-    } });
-    const labels = [_][]const u8{ "Cancel", action };
-    for (labels, 0..) |label, index| {
-        const active = selected == index;
-        const x: u16 = 48 + @as(u16, @intCast(index)) * 470;
-        components.editorialChoice(&result, .confirmation, index, active, .{
-            .label = label,
-            .bounds = .{ .x = x, .y = 486, .width = 410, .height = 74 },
-            .focus_bounds = .{ .x = x, .y = 486, .width = 410, .height = 78 },
-            .scale = .action,
-            .alignment = .center,
-        });
-    }
-    footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = "Select" } });
-    return result;
-}
-
-pub fn choice(theme: Theme, title: []const u8, labels: []const []const u8, selected: usize, active: ?usize, note: []const u8, back: []const u8) Tree {
-    var result = Tree{ .theme = theme, .background = theme.background };
-    editorialHeader(&result, "CONTROL", title);
-    const visible = @min(labels.len, if (note.len != 0) @as(usize, 4) else 6);
-    const first = @min(selected -| 2, labels.len - visible);
-    const bottom: u16 = if (note.len != 0 or @import("std").mem.eql(u8, title, "Appearance")) 530 else 676;
-    const step = (bottom - 138) / @as(u16, @intCast(@max(1, visible)));
-    for (first..first + visible) |index| {
-        const focused = selected == index;
-        const row_y = 138 + @as(u16, @intCast(index - first)) * step;
-        components.editorialChoice(&result, .choice, index, focused, .{
-            .label = labels[index],
-            .bounds = .{ .x = 48, .y = row_y, .width = 700, .height = step -| 8 },
-            .focus_bounds = .{ .x = 48, .y = row_y, .width = 880, .height = step -| 8 },
-            .scale = .row,
-        });
-        if (active == index)
-            textLabel(&result, .{ .x = 792, .y = row_y, .width = 136, .height = step -| 8 }, "ACTIVE", theme.accent, uiFont(21, 30, .semibold, .end));
-    }
-    components.continuation(&result, 138, bottom, first != 0, first + visible < labels.len);
-    if (note.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 538, .width = 928, .height = 88 }, .value = note, .color = theme.muted, .font = font.caption, .lines = 2 } });
-    footer(&result, &.{ .{ .control = .back, .label = back }, .{ .control = .confirm, .label = "Select" } });
-    return result;
-}
-
-pub fn setting(item: settings_model.Setting, selected: usize, active: usize, values: settings_model.Values) Tree {
-    const theme = values.appearance.colors();
-    if (item == .brightness) {
-        var result = Tree{ .theme = theme, .background = theme.background };
-        header(&result, "Brightness");
-        textLabel(&result, .{ .x = 96, .y = 236, .width = 500, .height = 44 }, "Panel output", theme.muted, uiFont(28, 38, .regular, .start));
-        textLabel(&result, .{ .x = 760, .y = 236, .width = 168, .height = 40 }, values.value(.brightness), theme.muted, uiFont(22, 30, .regular, .end));
-        components.steppedMeter(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 96, .y = 326, .width = 832, .height = 48 }, @as(u16, values.brightness) * 100, 11);
-        var note_font = font.caption;
-        note_font.alignment = .center;
-        textLabel(&result, .{ .x = 82, .y = 442, .width = 860, .height = 40 }, "Left / right to adjust", theme.muted, note_font);
-        footer(&result, &.{.{ .control = .back, .label = "Settings" }});
-        return result;
-    }
-    const note: []const u8 = switch (item) {
-        .display_timeout => "The device stays awake.",
-        .suspend_timeout => "Bluetooth disconnects during sleep.",
-        .performance => "Balance response and battery life.",
-        .reduced_motion => "Settle movement immediately.",
-        else => "",
-    };
-    return choice(theme, settings_model.title(item), settings_model.labels(item), selected, active, note, "Settings");
-}
-
-pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []const u8, bluetooth_summary: []const u8) Tree {
-    const theme = values.appearance.colors();
-    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Reduced motion", "Wi-Fi", "Bluetooth" };
-    const details = [_][]const u8{ values.value(.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), values.value(.reduced_motion), wifi_summary, bluetooth_summary };
-    const groups = [_][]const u8{ "DISPLAY", "SYSTEM", "DISPLAY", "POWER", "INTERFACE", "INTERFACE", "CONNECTION", "CONNECTION" };
-    const descriptions = [_][]const u8{
-        "Set the panel output.",
-        "Balance speed and battery life.",
-        "Choose when the screen rests.",
-        "Choose when the device sleeps.",
-        "Select the visual environment.",
-        "Settle movement immediately.",
-        "Join and manage networks.",
-        "Pair controllers and audio.",
-    };
-    var result = Tree{ .theme = theme, .background = theme.background };
-    editorialHeader(&result, "DEVICE", groups[selected]);
-    const visible: usize = 5;
-    const first = @min(selected -| 2, items.len - visible);
-    for (items[first .. first + visible], details[first .. first + visible], first..) |item, value, index| {
-        const active = index == selected;
-        const row_y: u16 = 132 + @as(u16, @intCast(index - first)) * 91;
-        components.editorialChoice(&result, .settings, index, active, .{
-            .label = item,
-            .bounds = .{ .x = 48, .y = row_y, .width = 480, .height = 68 },
-            .focus_bounds = .{ .x = 48, .y = row_y, .width = 480, .height = 72 },
-            .scale = .row,
-        });
-        _ = value;
-    }
-    textLabel(&result, .{ .x = 602, .y = 178, .width = 330, .height = 38 }, groups[selected], theme.accent, uiFont(22, 30, .semibold, .start));
-    const brightness_selected = selected == @backingInt(settings_model.Setting.brightness);
-    result.add(.{ .text_block = .{
-        .bounds = .{ .x = 602, .y = 234, .width = 330, .height = 244 },
-        .title = details[selected],
-        .detail = descriptions[selected],
-        .color = if (brightness_selected) theme.muted else theme.text,
-        .detail_color = theme.muted,
-        .title_font = if (brightness_selected) uiFont(22, 30, .regular, .end) else displayFont(58, 68, .semibold, .start),
-        .detail_font = uiFont(27, 39, .regular, .start),
-        .lines = 2,
-        .detail_lines = 3,
-        .gap = if (brightness_selected) 100 else 24,
-    } });
-    result.add(.{ .meter = .{
-        .id = interaction.Id.scoped(.brightness_meter, 0),
-        .bounds = .{ .x = 602, .y = 320, .width = 330, .height = 36 },
-        .value = if (brightness_selected) @as(u16, values.brightness) * 100 else 0,
-        .track = if (brightness_selected) theme.surface else theme.background,
-        .fill = if (brightness_selected) theme.text else theme.background,
-        .thumb = if (brightness_selected) theme.accent else theme.background,
-        .presentation = .stepped,
-        .steps = 11,
-    } });
-    components.continuation(&result, 132, 587, first != 0, first + visible < items.len);
-    footer(&result, &.{ .{ .control = .back, .label = "Library" }, .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = "Open" } });
-    return result;
-}
+const device_views = @import("device_views.zig");
+pub const message = device_views.message;
+pub const confirmation = device_views.confirmation;
+pub const choice = device_views.choice;
+pub const setting = device_views.setting;
+pub const settings = device_views.settings;
 
 const wifi_views = @import("wifi_views.zig");
 pub const wifi = wifi_views.wifi;
@@ -641,8 +454,8 @@ pub fn showNotice(tree: *Tree, notice: []const u8) void {
 
 test "light and dark appearances preserve component geometry and typography" {
     const themes = @import("theme.zig");
-    const light_screens = [_]Tree{ home(themes.light, 0), library(themes.light, &catalog.games, 0, .recent, 0), library(themes.light, &catalog.games, 0, .browse, 0), library(themes.light, &catalog.games, 0, .all, 0), settings(0, .{}, "Unavailable", "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
-    const dark_screens = [_]Tree{ home(themes.dark, 0), library(themes.dark, &catalog.games, 0, .recent, 0), library(themes.dark, &catalog.games, 0, .browse, 0), library(themes.dark, &catalog.games, 0, .all, 0), settings(0, .{ .appearance = .dark }, "Unavailable", "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
+    const light_screens = [_]Tree{ foyer(themes.light, 0), library(themes.light, &catalog.games, 0, .recent, 0), library(themes.light, &catalog.games, 0, .browse, 0), library(themes.light, &catalog.games, 0, .all, 0), settings(0, .{}, "Unavailable", "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
+    const dark_screens = [_]Tree{ foyer(themes.dark, 0), library(themes.dark, &catalog.games, 0, .recent, 0), library(themes.dark, &catalog.games, 0, .browse, 0), library(themes.dark, &catalog.games, 0, .all, 0), settings(0, .{ .appearance = .dark }, "Unavailable", "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
     for (&light_screens, &dark_screens) |*light_screen, *dark_screen| {
         try std.testing.expectEqual(light_screen.len, dark_screen.len);
         for (light_screen.slice(), dark_screen.slice()) |a, b| {
@@ -680,9 +493,9 @@ test "progress feedback owns activity while terminal feedback does not" {
     try std.testing.expect(!success.hasActivity());
 }
 
-test "home reserves a stable status band above footer actions" {
+test "foyer reserves a stable status band above footer actions" {
     const themes = @import("theme.zig");
-    var screen = homeSession(themes.light, 0, catalog.games[0], true);
+    var screen = foyerSession(themes.light, 0, catalog.games[0], true);
     showFeedback(&screen, .{ .kind = .success, .message = "Connected to Wi-Fi" });
 
     var card_bottom: u16 = 0;
