@@ -469,7 +469,7 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
             .connect => "Connecting device",
             .disconnect => "Disconnecting device",
             .forget => "Forgetting device",
-            .select_audio => "Preparing game audio",
+            .select_audio => "Switching audio",
             .confirm_pairing, .submit_passkey => "Confirming pairing",
             .network_activity => "Coordinating radios",
         } };
@@ -1099,6 +1099,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
                     .local, .captive, .limited => .attention,
                     .none => .hidden,
                 };
+                game_overlay.audio_selected = retroarch.gameAudioSelected(io);
                 game_overlay.available = retroarch.availableStates(io, game);
                 switch (try runOverlay(io, &game_overlay)) {
                     .resume_game => {

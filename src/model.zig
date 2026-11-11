@@ -433,12 +433,20 @@ pub const Model = struct {
 
     pub fn updateBluetooth(self: *Model, next: bluetooth_model.Snapshot) bool {
         const previous = self.bluetooth.snapshot;
+        const previous_audio = previous.selectedAudio();
+        const next_audio = next.selectedAudio();
+        const audio_changed = if (previous_audio) |before|
+            if (next_audio) |after| !bluetooth_model.Identity.eql(before, after) else true
+        else
+            next_audio != null;
         const changed = self.bluetooth.update(next);
         if (changed) {
             if (previous.radio != .ready and next.radio == .ready)
                 self.feedback = .{ .kind = .success, .message = "Bluetooth on" }
             else if (previous.radio != .off and next.radio == .off)
                 self.feedback = .{ .kind = .success, .message = "Bluetooth off" }
+            else if (audio_changed)
+                self.feedback = .{ .kind = .success, .message = "Audio switched" }
             else if (previous.operation != .none and next.operation == .none) self.feedback = switch (previous.operation) {
                 .pairing => .{ .kind = .success, .message = "Device paired" },
                 .connection => .{ .kind = .success, .message = "Device connected" },
@@ -548,7 +556,7 @@ pub const Model = struct {
                 .local, .captive, .limited => .attention,
                 .none => .hidden,
             } else .hidden;
-            ui.systemStatus(&result, .{ .battery = self.battery_percent, .network = network });
+            ui.systemStatus(&result, .{ .battery = self.battery_percent, .network = network, .audio = self.bluetooth.snapshot.hasSelectedAudio() });
         }
         // Direct manipulation and connectivity settle in place. Routine
         // success is represented by the changed value, row, or system-status
@@ -833,6 +841,14 @@ test "radio and device snapshot transitions produce positive feedback" {
     ));
     try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
     try std.testing.expectEqualStrings("Game audio ready", state.feedback.message);
+
+    state.feedback = .{ .kind = .progress, .message = "Switching audio" };
+    _ = state.updateBluetooth(try bluetooth_model.parse(
+        "snapshot version=1 generation=3 revision=3 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
+            "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=ready battery=80 legacy=0 audio_selected=1\nend\n",
+    ));
+    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
+    try std.testing.expectEqualStrings("Audio switched", state.feedback.message);
 }
 
 test "routine connection success settles into the foyer status cluster" {

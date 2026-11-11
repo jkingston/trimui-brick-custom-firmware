@@ -275,10 +275,7 @@ pub fn launch(io: std.Io, game: *const catalog.Game, library: []const catalog.Ga
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     audio_lost_during_game = false;
-    const bluetooth_audio = blk: {
-        std.Io.Dir.cwd().access(io, "/run/brick-shell/bluetooth-audio.cfg", .{}) catch break :blk false;
-        break :blk true;
-    };
+    const bluetooth_audio = gameAudioSelected(io);
     const session = try prepare(io, arena.allocator(), game, library, "/data", "/run/brick-shell");
     const log = try std.Io.Dir.cwd().createFile(io, session.log, .{});
     defer log.close(io);
@@ -293,6 +290,11 @@ pub fn launch(io: std.Io, game: *const catalog.Game, library: []const catalog.Ga
             audio_lost_during_game = true;
         };
     return term;
+}
+
+pub fn gameAudioSelected(io: std.Io) bool {
+    std.Io.Dir.cwd().access(io, "/run/brick-shell/bluetooth-audio.cfg", .{}) catch return false;
+    return true;
 }
 
 fn statePath(allocator: std.mem.Allocator, game: *const catalog.Game, session: Session, suffix: []const u8) ![]const u8 {

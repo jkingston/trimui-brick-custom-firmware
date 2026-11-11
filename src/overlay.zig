@@ -33,6 +33,7 @@ pub const Model = struct {
     network_status: []const u8 = "Off",
     battery_percent: ?u8 = null,
     network_indicator: ui.NetworkStatus = .hidden,
+    audio_selected: bool = false,
     revision: u64 = 1,
 
     pub fn apply(self: *Model, action: input.Action) bool {
@@ -103,7 +104,7 @@ pub const Model = struct {
 
     pub fn tree(self: *const Model) ui.Tree {
         var result = switch (self.layer) {
-            .pause => ui.overlayPauseWithNetworkGame(self.appearance.colors(), self.game, self.title, self.selected, self.save_slot, settings.brightnessTone(self.brightness), if (self.network_indicator == .connected) "" else self.network_status, .{ .battery = self.battery_percent, .network = self.network_indicator }, ""),
+            .pause => ui.overlayPauseWithNetworkGame(self.appearance.colors(), self.game, self.title, self.selected, self.save_slot, settings.brightnessTone(self.brightness), if (self.network_indicator == .connected) "" else self.network_status, .{ .battery = self.battery_percent, .network = self.network_indicator, .audio = self.audio_selected }, ""),
             .states => ui.overlayStatesGame(self.appearance.colors(), self.game, self.title, self.state_slot, "", self.available),
             .save_slots => ui.saveSlotsGame(self.appearance.colors(), self.game, self.title, self.save_slot, self.available),
             .replace_confirm => ui.confirmation(self.appearance.colors(), "Replace saved state", "Replace this saved state?", "The existing state in this slot will be replaced.", "Replace state", self.confirmation),

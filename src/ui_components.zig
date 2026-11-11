@@ -218,6 +218,7 @@ pub const NetworkStatus = enum { hidden, connected, attention };
 pub const SystemStatus = struct {
     battery: ?u8 = null,
     network: NetworkStatus = .hidden,
+    audio: bool = false,
 };
 
 /// The shell has a compact status cluster, not a persistent status bar. This
@@ -225,17 +226,26 @@ pub const SystemStatus = struct {
 /// chrome in the corner. The Wi-Fi mark communicates reachability, never RSSI.
 pub fn systemStatus(result: *ui.Tree, status: SystemStatus) void {
     const right: u16 = design.geometry.width - design.spacing.margin;
-    if (status.battery) |percent|
-        result.add(.{ .battery = .{ .bounds = .{ .x = right - 60, .y = 40, .width = 60, .height = 28 }, .percent = percent } });
+    var cursor = right;
+    if (status.battery) |percent| {
+        const x = cursor -| 60;
+        result.add(.{ .battery = .{ .bounds = .{ .x = x, .y = 40, .width = 60, .height = 28 }, .percent = percent } });
+        cursor = x -| 18;
+    }
+    if (status.audio) {
+        const x = cursor -| 26;
+        result.add(.{ .headphones = .{ .bounds = .{ .x = x, .y = 42, .width = 26, .height = 24 }, .color = result.theme.text } });
+        cursor = x -| 14;
+    }
     if (status.network != .hidden)
-        networkSignal(result, .{ .x = right -| @as(u16, if (status.battery == null) 28 else 104), .y = 43, .width = 25, .height = 22 }, status.network);
+        networkSignal(result, .{ .x = cursor -| 25, .y = 43, .width = 25, .height = 22 }, status.network);
 }
 
 fn networkSignal(result: *ui.Tree, bounds: ui.Rect, status: NetworkStatus) void {
     result.add(.{ .wifi = .{
         .bounds = bounds,
-        .arcs = if (status == .connected) result.theme.accent else result.theme.muted,
-        .dot = result.theme.accent,
+        .arcs = if (status == .connected) result.theme.text else result.theme.muted,
+        .dot = if (status == .connected) result.theme.text else result.theme.accent,
     } });
 }
 
@@ -534,12 +544,13 @@ test "activity declaration is renderer-neutral" {
 test "system status owns one compact top-right cluster" {
     const theme = @import("theme.zig").light;
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
-    systemStatus(&tree, .{ .battery = 72, .network = .connected });
+    systemStatus(&tree, .{ .battery = 72, .network = .connected, .audio = true });
     try tree.validate();
-    try @import("std").testing.expectEqual(@as(usize, 2), tree.len);
+    try @import("std").testing.expectEqual(@as(usize, 3), tree.len);
     try @import("std").testing.expectEqual(@as(u16, design.geometry.width - design.spacing.margin - 60), tree.elements[0].battery.bounds.x);
-    try @import("std").testing.expect(tree.elements[1] == .wifi);
-    try @import("std").testing.expect(tree.elements[1].wifi.bounds.x < tree.elements[0].battery.bounds.x);
+    try @import("std").testing.expect(tree.elements[1] == .headphones);
+    try @import("std").testing.expect(tree.elements[2] == .wifi);
+    try @import("std").testing.expect(tree.elements[2].wifi.bounds.x < tree.elements[1].headphones.bounds.x);
 }
 
 test "feedback status band uses a hairline and trailing semantic mark" {

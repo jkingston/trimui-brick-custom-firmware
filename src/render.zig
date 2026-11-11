@@ -134,6 +134,7 @@ pub const Surface = struct {
             .action_card => |card| self.actionCard(card),
             .battery => |battery| self.drawBattery(battery),
             .wifi => |wifi| self.drawWifi(wifi),
+            .headphones => |headphones| self.drawHeadphones(headphones),
             .meter => |meter| self.drawMeter(meter),
             .activity => |activity| self.drawActivity(activity),
             .qr_code => |qr| self.drawQr(qr),
@@ -614,6 +615,34 @@ pub const Surface = struct {
             }
         }
         self.fillRounded(.{ .x = wifi.bounds.x + wifi.bounds.width / 2 -| 2, .y = wifi.bounds.y + wifi.bounds.height -| 5, .width = 5, .height = 5 }, wifi.dot, 3);
+    }
+
+    fn drawHeadphones(self: Surface, headphones: ui.Headphones) void {
+        const b = headphones.bounds;
+        const center_x: i32 = @intCast(b.width / 2);
+        const center_y: i32 = @intCast(b.height / 2);
+        const radius: i32 = @intCast(@min(b.width / 2 -| 2, b.height -| 5));
+        for (0..b.height) |y_usize| {
+            const y: i32 = @intCast(y_usize);
+            var run: ?u16 = null;
+            for (0..b.width + 1) |x_usize| {
+                const inside = if (x_usize == b.width) false else blk: {
+                    const x: i32 = @intCast(x_usize);
+                    const dx = x - center_x;
+                    const dy = y - center_y;
+                    if (dy > 0) break :blk false;
+                    const distance = dx * dx + dy * dy;
+                    break :blk distance >= (radius - 1) * (radius - 1) and distance <= (radius + 1) * (radius + 1);
+                };
+                if (inside and run == null) run = @intCast(x_usize);
+                if (!inside) if (run) |start| {
+                    self.fill(.{ .x = b.x + start, .y = b.y + @as(u16, @intCast(y_usize)), .width = @as(u16, @intCast(x_usize)) - start, .height = 1 }, headphones.color);
+                    run = null;
+                };
+            }
+        }
+        self.fillRounded(.{ .x = b.x + 1, .y = b.y + b.height -| 10, .width = 6, .height = 10 }, headphones.color, 2);
+        self.fillRounded(.{ .x = b.x + b.width -| 7, .y = b.y + b.height -| 10, .width = 6, .height = 10 }, headphones.color, 2);
     }
 
     fn drawMeter(self: Surface, meter: ui.Meter) void {

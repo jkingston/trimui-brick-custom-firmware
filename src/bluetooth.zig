@@ -52,6 +52,7 @@ pub const Device = struct {
     battery: ?u8 = null,
     battery_label: Text = .{},
     legacy: bool = false,
+    audio_selected: bool = false,
     pub fn detail(self: Device) []const u8 {
         return switch (self.state) {
             .nearby => switch (self.kind) {
@@ -86,6 +87,13 @@ pub const Snapshot = struct {
     pub fn find(self: *const Snapshot, id: Identity) ?usize {
         for (self.items(), 0..) |device, index| if (Identity.eql(device.id, id)) return index;
         return null;
+    }
+    pub fn selectedAudio(self: *const Snapshot) ?Identity {
+        for (self.items()) |device| if (device.audio_selected) return device.id;
+        return null;
+    }
+    pub fn hasSelectedAudio(self: *const Snapshot) bool {
+        return self.selectedAudio() != null;
     }
     pub fn summary(self: Snapshot) []const u8 {
         return switch (self.radio) {
@@ -303,7 +311,9 @@ pub const Model = struct {
             .select => if (self.detail_selected == 0) {
                 self.queue(if (device.state == .saved) .connect else .disconnect, device.id, false);
                 self.page = .list;
-            } else if (device.kind == .audio and device.state == .ready and self.detail_selected == 1) self.queue(.select_audio, device.id, true) else {
+            } else if (device.kind == .audio and device.state == .ready and self.detail_selected == 1) {
+                self.queue(.select_audio, if (device.audio_selected) null else device.id, !device.audio_selected);
+            } else {
                 self.page = .forget_confirm;
                 self.confirm_selected = 0;
             },
@@ -422,6 +432,7 @@ pub fn parse(packet: []const u8) !Snapshot {
             try device.battery_label.set(try std.fmt.bufPrint(&label, "{d}%", .{battery}));
         }
         device.legacy = std.mem.eql(u8, field(line, "legacy") orelse "0", "1");
+        device.audio_selected = std.mem.eql(u8, field(line, "audio_selected") orelse "0", "1");
         result.devices[result.device_count] = device;
         result.device_count += 1;
     }
@@ -433,6 +444,30 @@ test "snapshot uses opaque ids and optional battery" {
     const snapshot = try parse(packet);
     try std.testing.expectEqualStrings("Gamepad", snapshot.devices[0].name.slice());
     try std.testing.expectEqual(@as(?u8, 73), snapshot.devices[0].battery);
+}
+
+test "snapshot distinguishes ready audio from the selected game route" {
+    const packet = "snapshot version=1 generation=9 revision=3 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
+        "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=ready battery=73 legacy=0 audio_selected=1\nend\n";
+    const snapshot = try parse(packet);
+    try std.testing.expect(snapshot.devices[0].audio_selected);
+    try std.testing.expect(snapshot.hasSelectedAudio());
+}
+
+test "selected audio action returns game sound to the device" {
+    var model = Model{};
+    try std.testing.expect(model.update(try parse(
+        "snapshot version=1 generation=9 revision=3 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
+            "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=ready battery=73 legacy=0 audio_selected=1\nend\n",
+    )));
+    model.selected = 1;
+    try std.testing.expect(model.apply(.select));
+    model.detail_selected = 1;
+    try std.testing.expect(model.apply(.select));
+    const command = model.takeCommand().?;
+    try std.testing.expectEqual(CommandKind.select_audio, command.kind);
+    try std.testing.expect(command.device == null);
+    try std.testing.expect(!command.value);
 }
 
 test "failed radio is distinct from unavailable radio" {

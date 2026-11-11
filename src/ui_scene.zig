@@ -111,6 +111,7 @@ pub const ActionCard = struct {
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem.zeroes(Color), charge: Color = std.mem.zeroes(Color) };
 pub const Wifi = struct { bounds: Rect, arcs: Color, dot: Color };
+pub const Headphones = struct { bounds: Rect, color: Color };
 pub const MeterPresentation = enum { continuous, stepped };
 pub const Meter = struct {
     id: interaction.Id,
@@ -235,6 +236,7 @@ pub const Element = union(enum) {
     action_card: ActionCard,
     battery: Battery,
     wifi: Wifi,
+    headphones: Headphones,
     meter: Meter,
     activity: Activity,
     qr_code: QrCode,

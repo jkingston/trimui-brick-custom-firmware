@@ -56,7 +56,7 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
                 .disconnection => "Disconnecting…",
                 .forget => "Forgetting…",
                 else => device.detail(),
-            } else device.detail();
+            } else if (device.audio_selected) "Game audio" else device.detail();
             device_row.value = "";
             device_row.disclosure = device.state == .connected or device.state == .preparing_audio or device.state == .ready;
             if (operating) device_row.state = .busy;
@@ -87,11 +87,11 @@ pub fn details(theme: Theme, state: *const bluetooth_model.Model) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, device.name.slice());
     const audio = device.kind == .audio and device.state == .ready;
-    const labels = if (audio) [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", "Use for game audio", "Forget device" } else [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", "Forget device", "" };
+    const labels = if (audio) [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", if (device.audio_selected) "Use device speaker" else "Use for game audio", "Forget device" } else [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", "Forget device", "" };
     const count: usize = if (audio) 3 else 2;
     for (labels[0..count], 0..) |label, index| {
         var row = components.selectable(.bluetooth_details, index, state.detail_selected == index, .{ .x = 28, .y = 148 + @as(u16, @intCast(index)) * 112, .width = 968, .height = components.supporting_row_height }, label);
-        row.detail = if (index == 0) device.detail() else "";
+        row.detail = if (index == 0) (if (device.audio_selected) "Game audio" else device.detail()) else "";
         row.disclosure = index + 1 == count;
         row.overlay(&result);
     }

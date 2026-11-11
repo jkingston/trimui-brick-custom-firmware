@@ -245,6 +245,7 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .action_card => |value| focusBounds(value.bounds, value.displayedBounds()),
         .battery => |value| value.bounds,
         .wifi => |value| value.bounds,
+        .headphones => |value| value.bounds,
         .meter => |value| value.bounds,
         .activity => |value| value.bounds,
         .qr_code => |value| value.bounds,

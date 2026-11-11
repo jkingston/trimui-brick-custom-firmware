@@ -130,7 +130,7 @@ without the job that justified it there.
 | --- | --- |
 | Taskbar, dock, app switcher | None. Library is home and play is foreground; Brick does not expose routine multitasking or an app grid. |
 | Status bar | No full-width bar. `ui_components.systemStatus()` owns a compact top-right cluster on Library, Device, and Quick system surfaces. It is absent over uninterrupted play and on pages where connectivity is already the task. |
-| Battery, network, accessories | Ambient icons in the shared status cluster. They describe durable state and never become a row of prose. |
+| Battery, network, selected audio | Ambient icons in the shared status cluster. They describe durable state and never become a row of prose. Controller presence stays local to Bluetooth until losing one becomes a cross-context event. |
 | Routine success | Settle in place. The changed value, connected row, or status icon is the confirmation; do not toast “saved”, “on”, or “connected”. |
 | Progress, warning, failure | Keep it at the originating control where possible. Use the shared hairline status band only when the event has no sufficient local surface. |
 | Notification | Reserve for a cross-context event that needs attention, such as controller loss or save failure. Background sync completion is silent. There is no notification centre until real product requirements justify one. |
