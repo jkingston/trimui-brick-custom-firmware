@@ -28,6 +28,7 @@ document explains the decisions they enforce.
 | Interruptible scalar motion and frame deadlines | `src/motion.zig` |
 | Connected page transitions and source anchors | `src/navigation_motion.zig` |
 | Stable-ID viewport scrolling | `src/layout_motion.zig` |
+| Animated meters and value retargeting | `src/meter_motion.zig` |
 | Identity, control lifecycle, focus boundaries | `src/interaction.zig` |
 | Sound/haptic event policy | `src/feedback.zig` |
 | Selectable controls and notice lifecycle | `src/ui_components.zig` |
@@ -88,6 +89,13 @@ When a supported direction cannot move farther, call the controller's
 the rail briefly; reduced motion keeps the rail pulse without moving content.
 Irrelevant axes remain silent, so feedback means “the end” rather than “that
 control does not use this button.”
+
+### Meter or slider
+
+Use `ui_components.meter()` with a stable ID and a normalized 0–1000 value.
+Feed rebuilt scenes through `meter_motion.Controller`; repeated adjustments
+retarget the thumb from its visible value. Screens must not draw private tracks,
+thumbs, or raw value bars. Reduced motion updates the meter immediately.
 
 ### Motion
 

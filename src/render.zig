@@ -133,6 +133,7 @@ pub const Surface = struct {
             .focus_frame => |frame| self.focusFrame(frame),
             .menu_row => |row| self.menuRow(row),
             .battery => |battery| self.drawBattery(battery),
+            .meter => |meter| self.drawMeter(meter),
             .qr_code => |qr| self.drawQr(qr),
             .keyboard => |keyboard| self.drawKeyboard(keyboard, theme),
             .keyboard_key => |key| self.drawKeyboardKey(key.keyboard, theme, key.index, true),
@@ -501,6 +502,23 @@ pub const Surface = struct {
         self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, battery.charge);
     }
 
+    fn drawMeter(self: Surface, meter: ui.Meter) void {
+        const track_height: u16 = @min(12, meter.bounds.height);
+        const thumb_size: u16 = @min(30, meter.bounds.height);
+        const track = ui.Rect{ .x = meter.bounds.x + thumb_size / 2, .y = meter.bounds.y + (meter.bounds.height - track_height) / 2, .width = meter.bounds.width - thumb_size, .height = track_height };
+        self.fillRounded(track, meter.track, track_height / 2);
+        const value = @min(1000, meter.value);
+        if (value != 0) {
+            const filled = @max(track_height, @as(u16, @intCast(@as(u32, track.width) * value / 1000)));
+            self.fillRounded(.{ .x = track.x, .y = track.y, .width = filled, .height = track.height }, meter.fill, track_height / 2);
+        }
+        const center = track.x + @as(u16, @intCast(@as(u32, track.width) * value / 1000));
+        const thumb = ui.Rect{ .x = center - thumb_size / 2, .y = meter.bounds.y + (meter.bounds.height - thumb_size) / 2, .width = thumb_size, .height = thumb_size };
+        self.fillRounded(thumb, meter.thumb, thumb_size / 2);
+        const inset: u16 = 9;
+        self.fillRounded(.{ .x = thumb.x + inset, .y = thumb.y + inset, .width = thumb.width - 2 * inset, .height = thumb.height - 2 * inset }, meter.track, (thumb_size - 2 * inset) / 2);
+    }
+
     fn drawQr(self: Surface, qr: ui.QrCode) void {
         if (qr.width == 0) return;
         self.fill(qr.bounds, qr.background);
@@ -613,6 +631,19 @@ test "navigation transition clips the complete destination scene" {
     try std.testing.expectEqual(Surface.pack(themes.light.background), pixels[0]);
     try std.testing.expectEqual(Surface.pack(themes.dark.background), pixels[250 * width + 200]);
     try std.testing.expectEqual(Surface.pack(themes.light.background), pixels[500 * width + 500]);
+}
+
+test "meter endpoints remain inside their declared component bounds" {
+    const themes = @import("theme.zig");
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var tree = ui.Tree{ .theme = themes.light, .background = themes.light.background };
+    tree.add(.{ .meter = .{ .id = @import("interaction.zig").Id.scoped(.brightness_meter, 0), .bounds = .{ .x = 100, .y = 100, .width = 300, .height = 40 }, .value = 1000, .track = themes.light.surface, .fill = themes.light.text, .thumb = themes.light.accent } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    const background = Surface.pack(themes.light.background);
+    try std.testing.expectEqual(background, pixels[99 * width + 99]);
+    try std.testing.expectEqual(background, pixels[141 * width + 401]);
+    try std.testing.expect(pixels[120 * width + 385] != background);
 }
 
 test "lowercase and uppercase preserve distinct letterforms" {

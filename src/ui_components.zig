@@ -111,6 +111,10 @@ pub fn selectable(scope: interaction.Id.Scope, index: usize, focused: bool, boun
     return .{ .id = resolved.id, .state = resolved.state, .bounds = bounds, .label = label };
 }
 
+pub fn meter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16) void {
+    result.add(.{ .meter = .{ .id = id, .bounds = bounds, .value = @min(1000, value), .track = result.theme.surface, .fill = result.theme.text, .thumb = result.theme.accent } });
+}
+
 pub const single_row_height: u16 = 88;
 pub const supporting_row_height: u16 = 108;
 

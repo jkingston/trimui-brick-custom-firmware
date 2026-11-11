@@ -60,6 +60,7 @@ pub const MenuRow = struct {
     disclosure: bool = true,
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem.zeroes(Color), charge: Color = std.mem.zeroes(Color) };
+pub const Meter = struct { id: interaction.Id, bounds: Rect, value: u16, track: Color, fill: Color, thumb: Color };
 pub const QrCode = struct { bounds: Rect, cells: []const u8, width: u16, foreground: Color, background: Color };
 pub const Keyboard = struct { bounds: Rect, selected: u8, uppercase: bool = false, symbols: bool = false };
 pub const KeyboardKey = struct { keyboard: Keyboard, index: u8, bounds: Rect };
@@ -111,6 +112,7 @@ pub const Element = union(enum) {
     focus_frame: FocusFrame,
     menu_row: MenuRow,
     battery: Battery,
+    meter: Meter,
     qr_code: QrCode,
     keyboard: Keyboard,
     keyboard_key: KeyboardKey,
@@ -269,6 +271,20 @@ pub const Tree = struct {
         return false;
     }
 
+    pub fn meterValue(self: *const Tree, id: interaction.Id) ?u16 {
+        for (self.slice()) |element| if (element == .meter and element.meter.id == id)
+            return element.meter.value;
+        return null;
+    }
+
+    pub fn setMeterValue(self: *Tree, id: interaction.Id, value: u16) bool {
+        for (self.elements[0..self.len]) |*element| if (element.* == .meter and element.meter.id == id) {
+            element.meter.value = @min(1000, value);
+            return true;
+        };
+        return false;
+    }
+
     pub fn slice(self: *const Tree) []const Element {
         return self.elements[0..self.len];
     }
@@ -297,6 +313,16 @@ test "scene capacity fails at the construction boundary" {
     var tree = Tree{ .background = .{ .r = 0, .g = 0, .b = 0 } };
     for (0..maximum_elements) |_| tree.add(.{ .bar = .{ .bounds = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .color = tree.background } });
     try std.testing.expectEqual(maximum_elements, tree.slice().len);
+}
+
+test "meter values are addressable by stable identity and clamped" {
+    const theme = @import("theme.zig").light;
+    const id = interaction.Id.scoped(.brightness_meter, 0);
+    var tree = Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .meter = .{ .id = id, .bounds = .{ .x = 10, .y = 10, .width = 200, .height = 40 }, .value = 400, .track = theme.surface, .fill = theme.text, .thumb = theme.accent } });
+    try std.testing.expectEqual(@as(u16, 400), tree.meterValue(id).?);
+    try std.testing.expect(tree.setMeterValue(id, 1200));
+    try std.testing.expectEqual(@as(u16, 1000), tree.meterValue(id).?);
 }
 
 test "scene validation rejects overflowing and undersized supporting rows" {

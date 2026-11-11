@@ -9,6 +9,7 @@ const input_repeat = @import("input_repeat.zig");
 const interaction = @import("interaction.zig");
 const interaction_motion = @import("motion.zig");
 const layout_motion = @import("layout_motion.zig");
+const meter_motion = @import("meter_motion.zig");
 const model = @import("model.zig");
 const navigation_motion = @import("navigation_motion.zig");
 const overlay = @import("overlay.zig");
@@ -60,6 +61,7 @@ fn closeFd(io: std.Io, fd: std.posix.fd_t, nonblocking: bool) void {
 }
 
 const Display = display_scheduler.Scheduler;
+const brightness_meter_id = interaction.Id.scoped(.brightness_meter, 0);
 
 const Console = struct {
     io: std.Io,
@@ -511,9 +513,12 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     state.battery_percent = batteryPercent(io);
     var battery_deadline = nowMilliseconds(io) + 60000;
     var focus: focus_motion.Controller = .{};
+    var meter: meter_motion.Controller = .{};
     var tree = state.tree();
     focus.update(&tree, nowMilliseconds(io), state.settings.reduced_motion);
     focus.decorate(&tree, nowMilliseconds(io));
+    meter.update(&tree, brightness_meter_id, nowMilliseconds(io), state.settings.reduced_motion);
+    meter.decorate(&tree, nowMilliseconds(io));
     try display.show(&tree);
 
     var wifi_client: ?wifi_ipc.Client = wifi_ipc.Client.connect("/run/brick-wifi/control.sock") catch null;
@@ -551,7 +556,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
-        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now) or layout.active(now);
+        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or meter.active(now) or navigation.active(now) or layout.active(now);
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
@@ -791,6 +796,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             var next = state.treeWithShelfOffset(motion.offset(frame_now));
             focus.update(&next, frame_now, state.settings.reduced_motion);
             focus.decorate(&next, frame_now);
+            meter.update(&next, brightness_meter_id, frame_now, state.settings.reduced_motion);
+            meter.decorate(&next, frame_now);
             press.decorate(&next);
             if (layout_pending and !navigation.active(frame_now))
                 _ = layout.begin(&tree, &next, frame_now, state.settings.reduced_motion);
@@ -803,6 +810,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             tree = state.treeWithShelfOffset(motion.offset(frame_now));
             focus.update(&tree, frame_now, state.settings.reduced_motion);
             focus.decorate(&tree, frame_now);
+            meter.update(&tree, brightness_meter_id, frame_now, state.settings.reduced_motion);
+            meter.decorate(&tree, frame_now);
             press.decorate(&tree);
             if (navigation.active(frame_now))
                 try display.submitTransition(&navigation, frame_now)

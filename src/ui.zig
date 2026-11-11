@@ -20,6 +20,7 @@ pub const RowStyle = scene.RowStyle;
 pub const ArtworkStyle = scene.ArtworkStyle;
 pub const MenuRow = scene.MenuRow;
 pub const Battery = scene.Battery;
+pub const Meter = scene.Meter;
 pub const QrCode = scene.QrCode;
 pub const Keyboard = scene.Keyboard;
 pub const KeyboardKey = scene.KeyboardKey;
@@ -391,8 +392,7 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
         large.line_height = 135;
         large.weight = .regular;
         textLabel(&result, .{ .x = 82, .y = 223, .width = 860, .height = 135 }, values.value(.brightness), theme.text, large);
-        result.add(.{ .bar = .{ .bounds = .{ .x = 96, .y = 410, .width = 832, .height = 8 }, .color = theme.surface } });
-        result.add(.{ .bar = .{ .bounds = .{ .x = 96, .y = 410, .width = @intCast(@as(u32, values.brightness) * 832 / 10), .height = 8 }, .color = theme.text } });
+        components.meter(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 96, .y = 394, .width = 832, .height = 40 }, @as(u16, values.brightness) * 100);
         var note_font = font.caption;
         note_font.alignment = .center;
         textLabel(&result, .{ .x = 82, .y = 502, .width = 860, .height = 40 }, "Left / right to adjust", theme.muted, note_font);
