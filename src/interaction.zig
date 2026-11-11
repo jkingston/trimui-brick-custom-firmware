@@ -20,6 +20,12 @@ pub const Id = enum(u64) {
         choice,
         game_menu,
         game_menu_network,
+        network_prompt,
+        overlay_states,
+        confirmation,
+        save_slots,
+        wifi_signin,
+        bluetooth_details,
         test_scope,
     };
 

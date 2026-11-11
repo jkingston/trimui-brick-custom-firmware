@@ -126,12 +126,11 @@ pub fn networkPrompt(theme: Theme, kind: NetworkPrompt, selected: usize) Tree {
         .gap = 22,
     } });
     const top: u16 = if (actions.len == 2) 492 else 410;
-    for (actions, 0..) |label, index| result.add(.{ .menu_row = .{
-        .bounds = .{ .x = 28, .y = top + @as(u16, @intCast(index)) * 88, .width = 968, .height = 88 },
-        .label = label,
-        .selected = selected == index,
-        .disclosure = false,
-    } });
+    for (actions, 0..) |label, index| {
+        var row = components.selectable(.network_prompt, index, selected == index, .{ .x = 28, .y = top + @as(u16, @intCast(index)) * 88, .width = 968, .height = 88 }, label);
+        row.disclosure = false;
+        row.menu(&result);
+    }
     footer(&result, &.{ .{ .control = .back, .label = "Not now" }, .{ .control = .confirm, .label = "Select" } });
     return result;
 }
@@ -150,13 +149,10 @@ pub fn overlayStates(theme: Theme, game_title: []const u8, selected: usize, noti
     }
     overlayFrame(&result, "Load state", game_title);
     for (labels, details, 0..) |label, detail, index| {
-        result.add(.{ .overlay_row = .{
-            .bounds = .{ .x = 28, .y = 160 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 112 },
-            .label = label,
-            .detail = if (available[index]) detail else "Empty",
-            .selected = index == selected,
-            .disclosure = false,
-        } });
+        var row = components.selectable(.overlay_states, index, index == selected, .{ .x = 28, .y = 160 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 112 }, label);
+        row.detail = if (available[index]) detail else "Empty";
+        row.disclosure = false;
+        row.overlay(&result);
     }
     footer(&result, &.{ .{ .control = .back, .label = "Game menu" }, .{ .control = .confirm, .label = if (available[selected]) "Load" else "Empty" } });
     if (notice.len != 0) showNotice(&result, notice);
@@ -364,7 +360,11 @@ pub fn message(theme: Theme, title: []const u8, subject: []const u8, detail: []c
 
 pub fn confirmation(theme: Theme, title: []const u8, subject: []const u8, detail: []const u8, action: []const u8, selected: usize) Tree {
     var result = message(theme, title, subject, detail);
-    for ([_][]const u8{ "Cancel", action }, 0..) |label, index| result.add(.{ .menu_row = .{ .bounds = .{ .x = 28, .y = 492 + @as(u16, @intCast(index)) * 88, .width = 968, .height = 88 }, .label = label, .selected = selected == index, .disclosure = false } });
+    for ([_][]const u8{ "Cancel", action }, 0..) |label, index| {
+        var row = components.selectable(.confirmation, index, selected == index, .{ .x = 28, .y = 492 + @as(u16, @intCast(index)) * 88, .width = 968, .height = 88 }, label);
+        row.disclosure = false;
+        row.menu(&result);
+    }
     footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = "Select" } });
     return result;
 }
@@ -424,14 +424,11 @@ pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []
     header(&result, "Settings");
     const visible: usize = 5;
     const first = @min(selected -| 2, items.len - visible);
-    for (items[first .. first + visible], details[first .. first + visible], first..) |item, value, index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = geometry.settings_top + @as(u16, @intCast(index - first)) * geometry.settings_step, .width = 968, .height = geometry.settings_height },
-        .label = item,
-        .detail = "",
-        .value = value,
-        .selected = index == selected,
-        .disclosure = true,
-    } });
+    for (items[first .. first + visible], details[first .. first + visible], first..) |item, value, index| {
+        var row = components.selectable(.settings, index, index == selected, .{ .x = 28, .y = geometry.settings_top + @as(u16, @intCast(index - first)) * geometry.settings_step, .width = 968, .height = geometry.settings_height }, item);
+        row.value = value;
+        row.overlay(&result);
+    }
     components.continuation(&result, geometry.settings_top, geometry.settings_top + @as(u16, @intCast(visible)) * geometry.settings_step, first != 0, first + visible < items.len);
     footer(&result, &.{ .{ .control = .back, .label = "Home" }, .{ .control = .confirm, .label = "Open" } });
     return result;
@@ -601,13 +598,12 @@ test "game launch owns activity while launch failure remains terminal" {
 pub fn saveSlots(theme: Theme, title: []const u8, selected: usize, available: [4]bool) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     overlayFrame(&result, "Save state", title);
-    for ([_][]const u8{ "Slot 1", "Slot 2", "Slot 3" }, 0..) |label, index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = 160 + @as(u16, @intCast(index)) * 150, .width = 968, .height = 140 },
-        .label = label,
-        .detail = if (available[index]) "Saved state" else "Empty",
-        .selected = selected == index,
-        .disclosure = false,
-    } });
+    for ([_][]const u8{ "Slot 1", "Slot 2", "Slot 3" }, 0..) |label, index| {
+        var row = components.selectable(.save_slots, index, selected == index, .{ .x = 28, .y = 160 + @as(u16, @intCast(index)) * 150, .width = 968, .height = 140 }, label);
+        row.detail = if (available[index]) "Saved state" else "Empty";
+        row.disclosure = false;
+        row.overlay(&result);
+    }
     footer(&result, &.{ .{ .control = .back, .label = "Game menu" }, .{ .control = .confirm, .label = "Save" } });
     return result;
 }

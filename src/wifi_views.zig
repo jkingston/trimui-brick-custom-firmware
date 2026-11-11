@@ -3,7 +3,6 @@ const components = @import("ui_components.zig");
 const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
-const interaction = @import("interaction.zig");
 const scene = @import("ui_scene.zig");
 const wifi_model = @import("wifi.zig");
 
@@ -16,13 +15,12 @@ pub fn wifi(theme: Theme, selected: usize, status: []const u8, primary: []const 
     result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 116, .width = 928, .height = 52 }, .value = status, .color = theme.muted, .font = font.caption } });
     const labels = [_][]const u8{ primary, "Manual URL and QR" };
     const details = [_][]const u8{ "", if (has_url) "Open on another device" else "Portal URL unavailable" };
-    for (labels, details, 0..) |label, detail, index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = 210 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 },
-        .label = label,
-        .detail = detail,
-        .selected = selected == index,
-        .disclosure = index == 1 and has_url,
-    } });
+    for (labels, details, 0..) |label, detail, index| {
+        var row = components.selectable(.wifi_signin, index, selected == index, .{ .x = 28, .y = 210 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 }, label);
+        row.detail = detail;
+        row.disclosure = index == 1 and has_url;
+        row.overlay(&result);
+    }
     components.footer(&result, &.{ .{ .control = .back, .label = "Settings" }, .{ .control = .confirm, .label = "Select" } });
     return result;
 }
@@ -71,22 +69,17 @@ fn wifiValue(network: *const wifi_model.Network) []const u8 {
 pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, "Wi-Fi");
-    result.add(.{ .overlay_row = .{
-        .id = interaction.Id.scoped(.wifi_list, 0),
-        .bounds = .{ .x = 28, .y = 116, .width = 968, .height = 92 },
-        .label = "Wi-Fi",
-        .detail = "",
-        .value = if (!state.initialized) "Checking…" else switch (state.snapshot.radio) {
-            .off => "Off",
-            .stopping => "Stopping…",
-            .starting => "Starting…",
-            .ready => "On",
-            .unavailable => "Unavailable",
-            .failed => "Failed",
-        },
-        .selected = state.selected == 0,
-        .disclosure = false,
-    } });
+    var radio = components.selectable(.wifi_list, 0, state.selected == 0, .{ .x = 28, .y = 116, .width = 968, .height = 92 }, "Wi-Fi");
+    radio.value = if (!state.initialized) "Checking…" else switch (state.snapshot.radio) {
+        .off => "Off",
+        .stopping => "Stopping…",
+        .starting => "Starting…",
+        .ready => "On",
+        .unavailable => "Unavailable",
+        .failed => "Failed",
+    };
+    radio.disclosure = false;
+    radio.overlay(&result);
     result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 218, .width = 928, .height = 40 }, .value = state.status(), .color = theme.muted, .font = font.caption } });
 
     const visible: usize = 3;
@@ -98,23 +91,13 @@ pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
         const y: u16 = 258 + @as(u16, @intCast(row_index)) * 108;
         if (item < state.snapshot.network_count) {
             const network = &state.snapshot.networks[item];
-            result.add(.{ .overlay_row = .{
-                .id = interaction.Id.scoped(.wifi_list, item + 1),
-                .bounds = .{ .x = 28, .y = y, .width = 968, .height = components.supporting_row_height },
-                .label = network.name.slice(),
-                .detail = wifi_model.stateDetail(network.state),
-                .value = wifiValue(network),
-                .selected = state.selected == item + 1,
-                .disclosure = network.state != .saved and network.state != .out_of_range,
-            } });
+            var row = components.selectable(.wifi_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = y, .width = 968, .height = components.supporting_row_height }, network.name.slice());
+            row.detail = wifi_model.stateDetail(network.state);
+            row.value = wifiValue(network);
+            row.disclosure = network.state != .saved and network.state != .out_of_range;
+            row.overlay(&result);
         } else if (item == state.snapshot.network_count) {
-            result.add(.{ .overlay_row = .{
-                .id = interaction.Id.scoped(.wifi_list, item + 1),
-                .bounds = .{ .x = 28, .y = y, .width = 968, .height = components.single_row_height },
-                .label = "Add hidden network",
-                .detail = "",
-                .selected = state.selected == item + 1,
-            } });
+            components.selectable(.wifi_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = y, .width = 968, .height = components.single_row_height }, "Add hidden network").overlay(&result);
         }
     }
     components.continuation(&result, 258, 582, first != 0, first + visible < total);
@@ -150,15 +133,13 @@ pub fn wifiNetworkDetails(theme: Theme, network: *const wifi_model.Network, sele
     const labels = [_][]const u8{ primary, "Auto-connect", "Private address", "Connection info", "Forget network" };
     const values = [_][]const u8{ "", if (network.auto_connect) "On" else "Off", if (network.private_address) "On" else "Off", wifiSecurity(network.security), "" };
     const first: usize = @min(selected -| 2, labels.len - 4);
-    for (labels[first .. first + 4], values[first .. first + 4], first..) |label, value, index| result.add(.{ .overlay_row = .{
-        .id = interaction.Id.scoped(.wifi_details, index),
-        .bounds = .{ .x = 28, .y = 144 + @as(u16, @intCast(index - first)) * 112, .width = 968, .height = 104 },
-        .label = label,
-        .detail = if (index == 0) wifi_model.stateDetail(network.state) else if (index == 2) "Recommended" else "",
-        .value = value,
-        .selected = index == selected,
-        .disclosure = index == 3 or index == 4,
-    } });
+    for (labels[first .. first + 4], values[first .. first + 4], first..) |label, value, index| {
+        var row = components.selectable(.wifi_details, index, index == selected, .{ .x = 28, .y = 144 + @as(u16, @intCast(index - first)) * 112, .width = 968, .height = 104 }, label);
+        row.detail = if (index == 0) wifi_model.stateDetail(network.state) else if (index == 2) "Recommended" else "";
+        row.value = value;
+        row.disclosure = index == 3 or index == 4;
+        row.overlay(&result);
+    }
     components.continuation(&result, 144, 592, first != 0, first + 4 < labels.len);
     if (network.state == .sign_in)
         components.footer(&result, &.{ .{ .control = .back, .label = "Wi-Fi" }, .{ .control = .view, .label = "Sign-in address" }, .{ .control = .confirm, .label = "Select" } })

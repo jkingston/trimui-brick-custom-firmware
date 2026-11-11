@@ -4,7 +4,6 @@ const components = @import("ui_components.zig");
 const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
-const interaction = @import("interaction.zig");
 const scene = @import("ui_scene.zig");
 
 const Theme = scene.Theme;
@@ -14,22 +13,17 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
     const snapshot = &state.snapshot;
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, "Bluetooth");
-    result.add(.{ .overlay_row = .{
-        .id = interaction.Id.scoped(.bluetooth_list, 0),
-        .bounds = .{ .x = 28, .y = 116, .width = 968, .height = 92 },
-        .label = "Bluetooth",
-        .detail = "",
-        .value = if (!state.initialized) "Checking…" else switch (snapshot.radio) {
-            .off => "Off",
-            .stopping => "Stopping…",
-            .unavailable => "Unavailable",
-            .failed => "Failed",
-            .starting => "Starting…",
-            .ready => "On",
-        },
-        .selected = state.selected == 0,
-        .disclosure = false,
-    } });
+    var radio = components.selectable(.bluetooth_list, 0, state.selected == 0, .{ .x = 28, .y = 116, .width = 968, .height = 92 }, "Bluetooth");
+    radio.value = if (!state.initialized) "Checking…" else switch (snapshot.radio) {
+        .off => "Off",
+        .stopping => "Stopping…",
+        .unavailable => "Unavailable",
+        .failed => "Failed",
+        .starting => "Starting…",
+        .ready => "On",
+    };
+    radio.disclosure = false;
+    radio.overlay(&result);
     components.text(&result, .{ .x = 48, .y = 218, .width = 928, .height = 40 }, state.status(), if (snapshot.radio == .failed or snapshot.discovery == .failed) theme.text else theme.muted, font.caption);
 
     if (!state.initialized) {
@@ -41,33 +35,24 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
         for (0..@min(visible, total - first)) |row| {
             const item = first + row;
             if (item == snapshot.device_count) {
-                result.add(.{ .overlay_row = .{
-                    .id = interaction.Id.scoped(.bluetooth_list, item + 1),
-                    .bounds = .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.single_row_height },
-                    .label = if (snapshot.discovery == .idle) "Find devices" else "Stop searching",
-                    .detail = "",
-                    .selected = state.selected == item + 1,
-                    .disclosure = false,
-                } });
+                var action = components.selectable(.bluetooth_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.single_row_height }, if (snapshot.discovery == .idle) "Find devices" else "Stop searching");
+                action.disclosure = false;
+                action.overlay(&result);
                 continue;
             }
             const device = &snapshot.devices[item];
             const operating = snapshot.operation_device.len != 0 and bluetooth_model.Identity.eql(snapshot.operation_device, device.id);
-            result.add(.{ .overlay_row = .{
-                .id = interaction.Id.scoped(.bluetooth_list, item + 1),
-                .bounds = .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.supporting_row_height },
-                .label = device.name.slice(),
-                .detail = if (operating) switch (snapshot.operation) {
-                    .pairing => "Pairing…",
-                    .connection => "Connecting…",
-                    .disconnection => "Disconnecting…",
-                    .forget => "Forgetting…",
-                    else => device.detail(),
-                } else device.detail(),
-                .value = device.battery_label.slice(),
-                .selected = state.selected == item + 1,
-                .disclosure = device.state == .connected or device.state == .preparing_audio or device.state == .ready,
-            } });
+            var device_row = components.selectable(.bluetooth_list, item + 1, state.selected == item + 1, .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.supporting_row_height }, device.name.slice());
+            device_row.detail = if (operating) switch (snapshot.operation) {
+                .pairing => "Pairing…",
+                .connection => "Connecting…",
+                .disconnection => "Disconnecting…",
+                .forget => "Forgetting…",
+                else => device.detail(),
+            } else device.detail();
+            device_row.value = device.battery_label.slice();
+            device_row.disclosure = device.state == .connected or device.state == .preparing_audio or device.state == .ready;
+            device_row.overlay(&result);
         }
         components.continuation(&result, 258, 582, first != 0, first + visible < total);
     } else if (snapshot.radio == .off) {
@@ -100,13 +85,12 @@ pub fn details(theme: Theme, state: *const bluetooth_model.Model) Tree {
     const audio = device.kind == .audio and device.state == .ready;
     const labels = if (audio) [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", "Use for game audio", "Forget device" } else [_][]const u8{ if (device.state == .saved) "Connect" else "Disconnect", "Forget device", "" };
     const count: usize = if (audio) 3 else 2;
-    for (labels[0..count], 0..) |label, index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = 148 + @as(u16, @intCast(index)) * 112, .width = 968, .height = components.supporting_row_height },
-        .label = label,
-        .detail = if (index == 0) device.detail() else "",
-        .selected = state.detail_selected == index,
-        .disclosure = index + 1 == count,
-    } });
+    for (labels[0..count], 0..) |label, index| {
+        var row = components.selectable(.bluetooth_details, index, state.detail_selected == index, .{ .x = 28, .y = 148 + @as(u16, @intCast(index)) * 112, .width = 968, .height = components.supporting_row_height }, label);
+        row.detail = if (index == 0) device.detail() else "";
+        row.disclosure = index + 1 == count;
+        row.overlay(&result);
+    }
     components.footer(&result, &.{ .{ .control = .back, .label = "Bluetooth" }, .{ .control = .confirm, .label = "Select" } });
     return result;
 }
