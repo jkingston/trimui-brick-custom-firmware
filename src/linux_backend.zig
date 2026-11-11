@@ -4,6 +4,7 @@ const activity_motion = @import("activity_motion.zig");
 const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
+const design = @import("design.zig");
 const display_scheduler = @import("display_scheduler.zig");
 const focus_motion = @import("focus_motion.zig");
 const input_repeat = @import("input_repeat.zig");
@@ -381,6 +382,32 @@ fn beginOverlayNavigation(
     return destination;
 }
 
+/// Present the launch destination before synchronous content/core preparation
+/// can block the shell. The selected control remains the transition anchor and
+/// the shared activity cadence starts during the reveal.
+fn presentLaunch(io: std.Io, display: *Display, source: *const ui.Tree, state: *const model.Model, index: usize) !void {
+    if (index >= state.games.len) return error.InvalidGameIndex;
+    var destination = ui.gameDetail(state.settings.appearance.colors(), state.games[index], null);
+    const started = nowMilliseconds(io);
+    var activity: activity_motion.Controller = .{};
+    activity.update(&destination, started, state.settings.reduced_motion);
+    activity.decorate(&destination, started);
+    var transition: navigation_motion.Controller = .{};
+    transition.begin(source, &destination, .forward, started, state.settings.reduced_motion);
+    var now = started;
+    while (transition.active(now)) {
+        const next_frame = now + design.motion_tokens.enter.frame_ms;
+        activity.decorate(&transition.to, now);
+        try display.submitTransition(&transition, now);
+        const presented = nowMilliseconds(io);
+        if (presented < next_frame)
+            try std.Io.sleep(io, .fromMilliseconds(next_frame - presented), .awake);
+        now = nowMilliseconds(io);
+    }
+    activity.decorate(&destination, now);
+    try display.show(&destination);
+}
+
 fn saveLibraryPreferences(io: std.Io, state: *const model.Model) void {
     if (profile_input) return;
     const dir = std.Io.Dir.cwd().openDir(io, "/data/settings", .{}) catch return;
@@ -480,8 +507,6 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
         state.selected = 0;
     }
     if (state.takeLaunch()) |index| {
-        var launching = ui.gameDetail(state.settings.appearance.colors(), state.games[index], null);
-        try display.show(&launching);
         saveLibraryPreferences(io, state);
         return .{ .launch = index };
     }
@@ -706,7 +731,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                 if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                     motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
-                if (result.launch) |index| return index;
+                if (result.launch) |index| {
+                    try presentLaunch(io, &display, &tree, state, index);
+                    return index;
+                }
                 if (state.page != previous_page or state.settings.appearance != previous_appearance)
                     tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
                 layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .shelf));
@@ -752,7 +780,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                             if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                             if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                                 motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
-                            if (result.launch) |index| return index;
+                            if (result.launch) |index| {
+                                try presentLaunch(io, &display, &tree, state, index);
+                                return index;
+                            }
                             if (state.page != previous_page or state.settings.appearance != previous_appearance)
                                 tree = beginNavigation(state, &tree, previous_page, .select, nowMilliseconds(io), &navigation, &focus);
                             changed = changed or result.changed;
@@ -774,7 +805,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                         if (state.page == .games and state.library_view == .shelf and previous != state.selected)
                             motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
-                        if (result.launch) |index| return index;
+                        if (result.launch) |index| {
+                            try presentLaunch(io, &display, &tree, state, index);
+                            return index;
+                        }
                         if (state.page != previous_page or state.settings.appearance != previous_appearance)
                             tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
                         layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .shelf));

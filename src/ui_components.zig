@@ -115,6 +115,10 @@ pub fn meter(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, value: u16) 
     result.add(.{ .meter = .{ .id = id, .bounds = bounds, .value = @min(1000, value), .track = result.theme.surface, .fill = result.theme.text, .thumb = result.theme.accent } });
 }
 
+pub fn activity(result: *ui.Tree, bounds: ui.Rect, color: ui.Color) void {
+    result.add(.{ .activity = .{ .bounds = bounds, .color = color } });
+}
+
 pub const KeyboardInput = struct {
     selected: u8,
     uppercase: bool = false,
@@ -264,6 +268,13 @@ test "keyboard owns the focused key identity and visible input mode" {
     try @import("std").testing.expectEqual(interaction.Id.scoped(.keyboard_key, 17), tree.focusedId().?);
     try @import("std").testing.expect(tree.elements[0].keyboard.uppercase);
     try @import("std").testing.expect(tree.elements[0].keyboard.symbols);
+}
+
+test "activity declaration is renderer-neutral" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    activity(&tree, .{ .x = 10, .y = 20, .width = 48, .height = 26 }, theme.accent);
+    try @import("std").testing.expect(tree.hasActivity());
 }
 
 test "feedback lifecycle does not leave completion notices indefinitely" {

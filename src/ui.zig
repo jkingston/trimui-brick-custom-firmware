@@ -335,9 +335,8 @@ pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) 
         result.add(.{ .text = .{ .bounds = .{ .x = 478, .y = 438, .width = 498, .height = 84 }, .value = launch_failed.?, .color = theme.text, .font = font.caption, .lines = 2 } });
         footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Retry" } });
     } else {
-        textLabel(&result, .{ .x = 452, .y = 454, .width = 524, .height = 42 }, "Preparing game", theme.muted, font.caption);
-        result.add(.{ .bar = .{ .bounds = .{ .x = 452, .y = 516, .width = 524, .height = 4 }, .color = theme.surface } });
-        result.add(.{ .bar = .{ .bounds = .{ .x = 452, .y = 516, .width = 168, .height = 4 }, .color = theme.accent } });
+        textLabel(&result, .{ .x = 452, .y = 454, .width = 430, .height = 42 }, "Preparing game", theme.muted, font.caption);
+        components.activity(&result, .{ .x = 910, .y = 458, .width = 48, .height = 28 }, theme.accent);
     }
     return result;
 }
@@ -509,7 +508,7 @@ pub fn showFeedback(tree: *Tree, feedback: Feedback) void {
     tree.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y, .width = 6, .height = bounds.height }, .color = marker } });
     const activity_width: u16 = if (feedback.kind == .progress) 58 else 0;
     textLabel(tree, .{ .x = bounds.x + 22, .y = bounds.y + 5, .width = bounds.width - 38 - activity_width, .height = 40 }, feedback.message, tree.theme.text, font.control);
-    if (feedback.kind == .progress) tree.add(.{ .activity = .{ .bounds = .{ .x = bounds.x + bounds.width - 70, .y = bounds.y + 12, .width = 48, .height = 26 }, .color = marker } });
+    if (feedback.kind == .progress) components.activity(tree, .{ .x = bounds.x + bounds.width - 70, .y = bounds.y + 12, .width = 48, .height = 26 }, marker);
 }
 
 pub fn showNotice(tree: *Tree, notice: []const u8) void {
@@ -555,6 +554,14 @@ test "progress feedback owns activity while terminal feedback does not" {
     var success = Tree{ .theme = themes.light, .background = themes.light.background };
     showFeedback(&success, .{ .kind = .success, .message = "Connected" });
     try std.testing.expect(!success.hasActivity());
+}
+
+test "game launch owns activity while launch failure remains terminal" {
+    const themes = @import("theme.zig");
+    const launching = gameDetail(themes.light, catalog.games[0], null);
+    try std.testing.expect(launching.hasActivity());
+    const failed = gameDetail(themes.light, catalog.games[0], "CORE UNAVAILABLE");
+    try std.testing.expect(!failed.hasActivity());
 }
 
 pub fn saveSlots(theme: Theme, title: []const u8, selected: usize, available: [4]bool) Tree {

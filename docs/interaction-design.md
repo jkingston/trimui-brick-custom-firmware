@@ -130,6 +130,11 @@ draw private spinners or choose animation timing. Reduced motion preserves the
 busy signal as three static dots rather than removing it. Progress copy omits
 trailing ellipses because the activity indicator already communicates continuation.
 
+Game launch is the same contract at page scale: reveal the selected game's
+launch destination before synchronous preparation begins, start shared activity
+during that connected transition, and leave the honest busy state visible until
+the emulator owns the display. Never leave the library frozen after activation.
+
 ### Navigation and overlays
 
 Use `navigation_motion.Controller`; screens must not author page-specific
