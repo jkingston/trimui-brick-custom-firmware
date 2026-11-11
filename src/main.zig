@@ -329,6 +329,7 @@ test {
     _ = @import("motion.zig");
     _ = @import("feedback.zig");
     _ = @import("focus_motion.zig");
+    _ = @import("layout_motion.zig");
     _ = @import("navigation_motion.zig");
     _ = @import("texture_batch.zig");
     _ = @import("battery_trials.zig");

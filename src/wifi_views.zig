@@ -3,6 +3,7 @@ const components = @import("ui_components.zig");
 const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
+const interaction = @import("interaction.zig");
 const scene = @import("ui_scene.zig");
 const wifi_model = @import("wifi.zig");
 
@@ -71,6 +72,7 @@ pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, "Wi-Fi");
     result.add(.{ .overlay_row = .{
+        .id = interaction.Id.scoped(.wifi_list, 0),
         .bounds = .{ .x = 28, .y = 116, .width = 968, .height = 92 },
         .label = "Wi-Fi",
         .detail = "",
@@ -97,6 +99,7 @@ pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
         if (item < state.snapshot.network_count) {
             const network = &state.snapshot.networks[item];
             result.add(.{ .overlay_row = .{
+                .id = interaction.Id.scoped(.wifi_list, item + 1),
                 .bounds = .{ .x = 28, .y = y, .width = 968, .height = components.supporting_row_height },
                 .label = network.name.slice(),
                 .detail = wifi_model.stateDetail(network.state),
@@ -106,6 +109,7 @@ pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
             } });
         } else if (item == state.snapshot.network_count) {
             result.add(.{ .overlay_row = .{
+                .id = interaction.Id.scoped(.wifi_list, item + 1),
                 .bounds = .{ .x = 28, .y = y, .width = 968, .height = components.single_row_height },
                 .label = "Add hidden network",
                 .detail = "",
@@ -147,6 +151,7 @@ pub fn wifiNetworkDetails(theme: Theme, network: *const wifi_model.Network, sele
     const values = [_][]const u8{ "", if (network.auto_connect) "On" else "Off", if (network.private_address) "On" else "Off", wifiSecurity(network.security), "" };
     const first: usize = @min(selected -| 2, labels.len - 4);
     for (labels[first .. first + 4], values[first .. first + 4], first..) |label, value, index| result.add(.{ .overlay_row = .{
+        .id = interaction.Id.scoped(.wifi_details, index),
         .bounds = .{ .x = 28, .y = 144 + @as(u16, @intCast(index - first)) * 112, .width = 968, .height = 104 },
         .label = label,
         .detail = if (index == 0) wifi_model.stateDetail(network.state) else if (index == 2) "Recommended" else "",

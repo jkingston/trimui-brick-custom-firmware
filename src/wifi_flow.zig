@@ -191,8 +191,16 @@ pub const Model = struct {
     fn applyDetails(self: *Model, action: input.Action) bool {
         const network = self.activeNetwork() orelse return false;
         switch (action) {
-            .up => self.detail_selected -|= 1,
-            .down => self.detail_selected = @min(4, self.detail_selected + 1),
+            .up => {
+                const before = self.detail_selected;
+                self.detail_selected -|= 1;
+                return before != self.detail_selected;
+            },
+            .down => {
+                const before = self.detail_selected;
+                self.detail_selected = @min(4, self.detail_selected + 1);
+                return before != self.detail_selected;
+            },
             .back => {
                 self.page = .list;
                 self.detail_selected = 0;
@@ -419,6 +427,19 @@ test "details actions are explicit and forget is confirmed" {
     _ = state.apply(.down);
     _ = state.apply(.select);
     try std.testing.expectEqual(wifi.CommandKind.forget, state.takeRequest().?.command.kind);
+}
+
+test "details report saturated movement as a boundary" {
+    var snapshot = try sample();
+    snapshot.networks[0].current = true;
+    snapshot.networks[0].state = .connected;
+    var state = Model{};
+    _ = state.update(snapshot);
+    _ = state.apply(.down);
+    _ = state.apply(.select);
+    try std.testing.expect(!state.apply(.up));
+    state.detail_selected = 4;
+    try std.testing.expect(!state.apply(.down));
 }
 
 test "hidden WPA2 join carries name and credential without a fake identity" {

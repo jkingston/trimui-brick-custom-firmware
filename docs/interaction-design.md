@@ -27,6 +27,7 @@ document explains the decisions they enforce.
 | Typography, geometry, semantic motion roles | `src/design.zig` |
 | Interruptible scalar motion and frame deadlines | `src/motion.zig` |
 | Connected page transitions and source anchors | `src/navigation_motion.zig` |
+| Stable-ID viewport scrolling | `src/layout_motion.zig` |
 | Identity, control lifecycle, focus boundaries | `src/interaction.zig` |
 | Sound/haptic event policy | `src/feedback.zig` |
 | Selectable controls and notice lifecycle | `src/ui_components.zig` |
@@ -94,6 +95,11 @@ Use `motion.Scalar`. Call `retarget()` on every new destination, including a
 reversal. Use `nextFrameMs()` or `motion.pollTimeout()` when merging motion with
 poll/service deadlines. Reduced motion changes the value immediately and does
 not remove state acknowledgement.
+
+When a rebuilt list changes its visible window, use `layout_motion.Controller`.
+It matches controls by logical `interaction.Id`, keeps shared rows at their
+visible positions, and moves incoming rows from the same scroll direction.
+Never identify a scrolling item by its temporary visible slot.
 
 ### Asynchronous action
 

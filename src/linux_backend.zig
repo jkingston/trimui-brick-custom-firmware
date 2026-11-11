@@ -8,6 +8,7 @@ const focus_motion = @import("focus_motion.zig");
 const input_repeat = @import("input_repeat.zig");
 const interaction = @import("interaction.zig");
 const interaction_motion = @import("motion.zig");
+const layout_motion = @import("layout_motion.zig");
 const model = @import("model.zig");
 const navigation_motion = @import("navigation_motion.zig");
 const overlay = @import("overlay.zig");
@@ -328,6 +329,15 @@ fn repeatAllowed(state: *const model.Model, action: model.Action) bool {
         (state.page == .games and (action == .left or action == .right));
 }
 
+fn directional(action: model.Action) bool {
+    return action == .up or action == .down or action == .left or action == .right;
+}
+
+fn finishLayout(layout: *layout_motion.Controller, tree: *ui.Tree, now_ms: i64) void {
+    if (layout.active(now_ms)) tree.* = layout.frame(tree, now_ms);
+    layout.cancel();
+}
+
 const SessionAction = struct { changed: bool = false, launch: ?usize = null };
 
 fn navigationDirection(action: model.Action, from: model.Page, to: model.Page) navigation_motion.Direction {
@@ -527,6 +537,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     var repeat: input_repeat.Controller = .{};
     var motion: @import("shelf_motion.zig").Motion = .{};
     var navigation: navigation_motion.Controller = .{};
+    var layout: layout_motion.Controller = .{};
+    var layout_pending = false;
     var press: PressTracker = .{};
     var feedback_lifecycle = ui_components.FeedbackLifecycle{};
     var was_animating = false;
@@ -539,7 +551,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
-        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now);
+        const animation = (state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now) or layout.active(now);
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
@@ -678,6 +690,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 const previous = state.selected;
                 const previous_page = state.page;
                 navigation.cancel();
+                finishLayout(&layout, &tree, nowMilliseconds(io));
                 const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                 const boundary = !result.changed and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
@@ -686,6 +699,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 if (result.launch) |index| return index;
                 if (state.page != previous_page)
                     tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
+                layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .shelf));
                 changed = changed or result.changed or boundary;
                 if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
             };
@@ -713,6 +727,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     switch (press.observe(event, slot.builtin, slot.dropped, &tree)) {
                         .pressed => {
                             navigation.cancel();
+                            finishLayout(&layout, &tree, nowMilliseconds(io));
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                             continue;
@@ -721,6 +736,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                             const previous = state.selected;
                             const previous_page = state.page;
                             navigation.cancel();
+                            finishLayout(&layout, &tree, nowMilliseconds(io));
                             const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, .select);
                             if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
                             if (state.page == .games and state.library_view == .shelf and previous != state.selected)
@@ -740,6 +756,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         const previous = state.selected;
                         const previous_page = state.page;
                         navigation.cancel();
+                        finishLayout(&layout, &tree, nowMilliseconds(io));
                         const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                         const boundary = !result.changed and state.supportsDirection(action) and focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
@@ -748,6 +765,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         if (result.launch) |index| return index;
                         if (state.page != previous_page)
                             tree = beginNavigation(state, &tree, previous_page, action, nowMilliseconds(io), &navigation, &focus);
+                        layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .shelf));
                         changed = changed or result.changed or boundary;
                         if (result.changed or boundary) display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -767,10 +785,14 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         }
         if (changed) {
             const frame_now = nowMilliseconds(io);
-            tree = state.treeWithShelfOffset(motion.offset(frame_now));
-            focus.update(&tree, frame_now, state.settings.reduced_motion);
-            focus.decorate(&tree, frame_now);
-            press.decorate(&tree);
+            var next = state.treeWithShelfOffset(motion.offset(frame_now));
+            focus.update(&next, frame_now, state.settings.reduced_motion);
+            focus.decorate(&next, frame_now);
+            press.decorate(&next);
+            if (layout_pending and !navigation.active(frame_now))
+                _ = layout.begin(&tree, &next, frame_now, state.settings.reduced_motion);
+            layout_pending = false;
+            tree = next;
             try display.requestFrame(&tree);
         }
         if (display.frameDue()) {
@@ -781,8 +803,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             press.decorate(&tree);
             if (navigation.active(frame_now))
                 try display.submitTransition(&navigation, frame_now)
-            else
-                try display.submit(&tree);
+            else if (layout.active(frame_now)) {
+                var frame = layout.frame(&tree, frame_now);
+                try display.submit(&frame);
+            } else try display.submit(&tree);
         }
     }
 }

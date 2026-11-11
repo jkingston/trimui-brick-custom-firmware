@@ -305,6 +305,8 @@ pub fn main(init: std.process.Init) !void {
 
     var motion: @import("shelf_motion.zig").Motion = .{};
     var navigation: @import("navigation_motion.zig").Controller = .{};
+    var layout: @import("layout_motion.zig").Controller = .{};
+    var layout_pending = false;
     var repeat: @import("input_repeat.zig").Controller = .{};
     var feedback_lifecycle = @import("ui_components.zig").FeedbackLifecycle{};
     var pressed_id: ?@import("interaction.zig").Id = null;
@@ -316,7 +318,7 @@ pub fn main(init: std.process.Init) !void {
         const notice = ui.Feedback{ .kind = game_overlay.notice_kind, .message = game_overlay.notice };
         if (overlay_visible and game_overlay.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
             feedback_lifecycle.show(notice, now);
-        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now);
+        const animating = (!overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now)) or focus.active(now) or navigation.active(now) or layout.active(now);
         var repeat_timeout = repeat.timeout(now);
         if (overlay_visible) {
             const feedback_wait = feedback_lifecycle.timeout(now);
@@ -354,6 +356,7 @@ pub fn main(init: std.process.Init) !void {
                     changed = true;
                 } else if (key == 'm') {
                     navigation.cancel();
+                    layout.cancel();
                     overlay_visible = !overlay_visible;
                     if (overlay_visible) game_overlay = .{};
                     repeat.reset();
@@ -361,6 +364,7 @@ pub fn main(init: std.process.Init) !void {
                 } else if (actionForKey(key)) |pressed| {
                     if (pressed == .select) {
                         navigation.cancel();
+                        layout.cancel();
                         select_armed = true;
                         pressed_id = tree.focusedId();
                         action = null;
@@ -374,6 +378,8 @@ pub fn main(init: std.process.Init) !void {
         }
         if (action) |pressed| {
             navigation.cancel();
+            if (layout.active(timestamp)) tree = layout.frame(&tree, timestamp);
+            layout.cancel();
             if (overlay_visible) {
                 const previous_layer = game_overlay.layer;
                 const applied = game_overlay.apply(pressed);
@@ -427,19 +433,26 @@ pub fn main(init: std.process.Init) !void {
                     navigation.begin(&tree, &destination, if (model.returnsToParent(pressed, previous_page, state.page)) .back else .forward, timestamp, state.settings.reduced_motion);
                     tree = destination;
                 }
+                layout_pending = layout_pending or (applied and state.page == previous_page and (pressed == .up or pressed == .down or pressed == .left or pressed == .right) and !(state.page == .games and state.library_view == .shelf));
             }
         }
         if (changed) {
             game_overlay.appearance = state.settings.appearance;
             game_overlay.reduced_motion = state.settings.reduced_motion;
-            tree = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
-            focus.update(&tree, timestamp, state.settings.reduced_motion);
-            focus.decorate(&tree, timestamp);
-            if (pressed_id) |id| _ = tree.setInteraction(id, .pressed);
+            var next = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
+            focus.update(&next, timestamp, state.settings.reduced_motion);
+            focus.decorate(&next, timestamp);
+            if (pressed_id) |id| _ = next.setInteraction(id, .pressed);
+            if (layout_pending and !navigation.active(timestamp))
+                _ = layout.begin(&tree, &next, timestamp, state.settings.reduced_motion);
+            layout_pending = false;
+            tree = next;
             if (navigation.active(timestamp))
                 try drawTransition(&sdl, renderer, texture, pixels, &navigation, timestamp)
-            else
-                try drawTree(&sdl, renderer, texture, pixels, &tree);
+            else if (layout.active(timestamp)) {
+                var frame = layout.frame(&tree, timestamp);
+                try drawTree(&sdl, renderer, texture, pixels, &frame);
+            } else try drawTree(&sdl, renderer, texture, pixels, &tree);
         }
     }
 }

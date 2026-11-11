@@ -4,6 +4,7 @@ const components = @import("ui_components.zig");
 const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
+const interaction = @import("interaction.zig");
 const scene = @import("ui_scene.zig");
 
 const Theme = scene.Theme;
@@ -14,6 +15,7 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     components.header(&result, "Bluetooth");
     result.add(.{ .overlay_row = .{
+        .id = interaction.Id.scoped(.bluetooth_list, 0),
         .bounds = .{ .x = 28, .y = 116, .width = 968, .height = 92 },
         .label = "Bluetooth",
         .detail = "",
@@ -40,6 +42,7 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
             const item = first + row;
             if (item == snapshot.device_count) {
                 result.add(.{ .overlay_row = .{
+                    .id = interaction.Id.scoped(.bluetooth_list, item + 1),
                     .bounds = .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.single_row_height },
                     .label = if (snapshot.discovery == .idle) "Find devices" else "Stop searching",
                     .detail = "",
@@ -51,6 +54,7 @@ pub fn list(theme: Theme, state: *const bluetooth_model.Model) Tree {
             const device = &snapshot.devices[item];
             const operating = snapshot.operation_device.len != 0 and bluetooth_model.Identity.eql(snapshot.operation_device, device.id);
             result.add(.{ .overlay_row = .{
+                .id = interaction.Id.scoped(.bluetooth_list, item + 1),
                 .bounds = .{ .x = 28, .y = 258 + @as(u16, @intCast(row)) * 108, .width = 968, .height = components.supporting_row_height },
                 .label = device.name.slice(),
                 .detail = if (operating) switch (snapshot.operation) {

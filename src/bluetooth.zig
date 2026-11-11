@@ -222,8 +222,16 @@ pub const Model = struct {
             return true;
         }
         switch (action) {
-            .up => self.selected -|= 1,
-            .down => self.selected = @min(self.selected + 1, self.itemCount() -| 1),
+            .up => {
+                const before = self.selected;
+                self.selected -|= 1;
+                return before != self.selected;
+            },
+            .down => {
+                const before = self.selected;
+                self.selected = @min(self.selected + 1, self.itemCount() -| 1);
+                return before != self.selected;
+            },
             .filter => {
                 if (self.snapshot.radio != .ready) return false;
                 self.queue(if (self.snapshot.discovery == .idle) .start_search else .cancel, null, false);
@@ -260,8 +268,16 @@ pub const Model = struct {
         };
         const max: usize = if (device.kind == .audio and device.state == .ready) 2 else 1;
         switch (action) {
-            .up => self.detail_selected -|= 1,
-            .down => self.detail_selected = @min(max, self.detail_selected + 1),
+            .up => {
+                const before = self.detail_selected;
+                self.detail_selected -|= 1;
+                return before != self.detail_selected;
+            },
+            .down => {
+                const before = self.detail_selected;
+                self.detail_selected = @min(max, self.detail_selected + 1);
+                return before != self.detail_selected;
+            },
             .back => {
                 self.page = .list;
                 self.detail_selected = 0;
@@ -427,6 +443,11 @@ test "an in-flight device operation accepts only explicit cancellation" {
     const command = model.takeCommand().?;
     try std.testing.expectEqual(CommandKind.cancel, command.kind);
     try std.testing.expect(Identity.eql(snapshot.operation_device, command.device.?));
+}
+test "list reports saturated movement as a boundary" {
+    var model = Model{};
+    try std.testing.expect(!model.apply(.up));
+    try std.testing.expect(!model.apply(.down));
 }
 test "pairing prompt routes through confirmation" {
     var model = Model{};
