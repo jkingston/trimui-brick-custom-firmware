@@ -6,8 +6,21 @@ document explains the decisions they enforce.
 
 ## Product model
 
-Brick is a game that can reveal a system, not a system that happens to launch
-games. There is no routine universal home screen.
+Brick is a game-centred, controller-first personal-device OS. It takes the
+predictability and ambient awareness of a modern mobile OS, but makes play—not
+apps, documents, or multitasking—the foreground model. There is no dashboard,
+dock, or app grid.
+
+The experience has six layers with distinct jobs:
+
+| Layer | Job |
+| --- | --- |
+| Play | The full-screen foreground activity; ordinary system chrome is absent. |
+| Library | Home: resume, choose, or explore a game. |
+| Quick system | A reversible control layer over retained play context. |
+| Device | Deliberate configuration reached from Library or Quick system. |
+| Focused task | A bounded job such as joining Wi-Fi or pairing a controller. |
+| Interruption | A rare cross-context event that cannot be represented where it originated. |
 
 1. A resumable game is the boot destination. The automatic state is loaded by
    the emulator before the shell asks the player to navigate anything.
@@ -115,13 +128,14 @@ without the job that justified it there.
 
 | Element | Brick policy |
 | --- | --- |
-| Taskbar, dock, app switcher | None. Brick does not expose routine multitasking or an app grid. |
-| Status bar | No full-width bar. `ui_components.systemStatus()` owns a compact top-right cluster on shell surfaces. It is absent over play and on pages where connectivity is already the task. |
+| Taskbar, dock, app switcher | None. Library is home and play is foreground; Brick does not expose routine multitasking or an app grid. |
+| Status bar | No full-width bar. `ui_components.systemStatus()` owns a compact top-right cluster on Library, Device, and Quick system surfaces. It is absent over uninterrupted play and on pages where connectivity is already the task. |
 | Battery, network, accessories | Ambient icons in the shared status cluster. They describe durable state and never become a row of prose. |
 | Routine success | Settle in place. The changed value, connected row, or status icon is the confirmation; do not toast “saved”, “on”, or “connected”. |
 | Progress, warning, failure | Keep it at the originating control where possible. Use the shared hairline status band only when the event has no sufficient local surface. |
 | Notification | Reserve for a cross-context event that needs attention, such as controller loss or save failure. Background sync completion is silent. There is no notification centre until real product requirements justify one. |
 | Modal | Only destructive, security-sensitive, or irreversible commitments. Never use a modal merely to report completion. |
+| Menu button | Reveal Device from Library; dismiss Device back to Library; reveal or close Quick system during play. It is never a page-dependent shortcut carousel. |
 
 The status cluster owns icon order, spacing, and collapse. Screens do not place
 battery or network marks themselves. A durable state may remain visible there;
@@ -235,7 +249,11 @@ initialization, startup failure, or recovery implementation.
 ### Quick system / receding room
 
 Quick system contains only actions useful while a game is paused: Continue,
-Save state, Load state, Performance, Network, and Save and exit. The retained
+Save state, Load state, Brightness, Network, and Save and exit. Performance is
+a deliberate Device setting, not a frequent in-game control. Brightness changes
+directly with horizontal input and stays bounded rather than wrapping. Healthy
+connectivity resolves into the top-right status icon; the Network row carries
+text only when it needs attention. The retained
 game representation remains the largest object, but loses contrast and scale;
 the control column gains contrast without becoming a floating stack of cards.
 Opening and closing are one reversible transform. Reduced motion applies the

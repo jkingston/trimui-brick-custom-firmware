@@ -81,9 +81,9 @@ test "buffer-age damage rendering is pixel-identical across dissimilar screens" 
 
     var next = ui.foyer(theme.light, 1);
     try harness.show(&next);
-    next = ui.overlayPause(theme.light, "A long game title", 0, 0, "Balanced", "");
+    next = ui.overlayPause(theme.light, "A long game title", 0, 0, "Bright", "");
     try harness.show(&next);
-    next = ui.overlayPause(theme.light, "A long game title", 4, 2, "Performance", "Saved");
+    next = ui.overlayPause(theme.light, "A long game title", 4, 2, "Soft", "Saved");
     try harness.show(&next);
     next = ui.wifiPassword(theme.light, "Test network", .{ .selected = 0 }, "hunter2", false);
     try harness.show(&next);

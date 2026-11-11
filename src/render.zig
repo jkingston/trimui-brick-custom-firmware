@@ -585,6 +585,7 @@ pub const Surface = struct {
     }
 
     fn drawMeter(self: Surface, meter: ui.Meter) void {
+        if (!meter.visible) return;
         if (meter.presentation == .stepped and meter.steps >= 2) {
             const count: u16 = meter.steps;
             const gap: u16 = 8;
@@ -793,6 +794,17 @@ test "meter endpoints remain inside their declared component bounds" {
     try std.testing.expectEqual(background, pixels[99 * width + 99]);
     try std.testing.expectEqual(background, pixels[141 * width + 401]);
     try std.testing.expect(pixels[120 * width + 385] != background);
+}
+
+test "hidden stable meter slots do not erase surrounding content" {
+    const themes = @import("theme.zig");
+    const pixels = try std.testing.allocator.alloc(u32, width * height);
+    defer std.testing.allocator.free(pixels);
+    var tree = ui.Tree{ .theme = themes.light, .background = themes.light.background };
+    tree.add(.{ .bar = .{ .bounds = .{ .x = 100, .y = 100, .width = 300, .height = 40 }, .color = themes.light.text } });
+    tree.add(.{ .meter = .{ .id = @import("interaction.zig").Id.scoped(.brightness_meter, 0), .bounds = .{ .x = 100, .y = 100, .width = 300, .height = 40 }, .value = 0, .visible = false, .track = themes.light.background, .fill = themes.light.background, .thumb = themes.light.background } });
+    (Surface{ .pixels = pixels }).render(&tree);
+    try std.testing.expectEqual(Surface.pack(themes.light.text), pixels[120 * width + 200]);
 }
 
 test "activity dots remain inside their declared component bounds" {

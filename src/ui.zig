@@ -9,6 +9,7 @@ const bluetooth_model = @import("bluetooth.zig");
 const scene = @import("ui_scene.zig");
 const game_object = @import("game_object.zig");
 const retroarch = @import("retroarch.zig");
+const input = @import("input.zig");
 pub const Color = scene.Color;
 pub const Theme = scene.Theme;
 pub const Rect = scene.Rect;
@@ -49,7 +50,7 @@ fn controlTheme(source: Theme) Theme {
     return result;
 }
 
-fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const u8, context: []const u8, labels: []const []const u8, values: []const []const u8, selected: usize, back_label: []const u8, action_label: []const u8, game: ?catalog.Game) Tree {
+fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const u8, context: []const u8, labels: []const []const u8, values: []const []const u8, selected: usize, back_label: []const u8, action_control: input.HintControl, action_label: []const u8, game: ?catalog.Game) Tree {
     const theme = controlTheme(source_theme);
     var result = Tree{ .theme = theme, .background = theme.background };
     // Receding-room fallback: the game remains the dominant subject even when
@@ -89,30 +90,31 @@ fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const 
         if (values.len > index and values[index].len != 0)
             textLabel(&result, .{ .x = 632, .y = row_y + 44, .width = 344, .height = 28 }, values[index], if (active) theme.accent else theme.muted, uiFont(19, 26, if (active) .semibold else .regular, .start));
     }
-    footer(&result, &.{ .{ .control = .back, .label = back_label }, .{ .control = .confirm, .label = action_label } });
+    footer(&result, &.{ .{ .control = .back, .label = back_label }, .{ .control = action_control, .label = action_label } });
     return result;
 }
 
-pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state_slot: usize, performance: []const u8, notice: []const u8) Tree {
-    const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Save and exit" };
+pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state_slot: usize, brightness: []const u8, notice: []const u8) Tree {
+    const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Brightness", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
-    const values = [_][]const u8{ "", slots[state_slot], "", performance, "" };
-    var result = controlDeck(theme, .game_menu, "PAUSED", game_title, &labels, &values, selected, "Continue", "Select", null);
+    const values = [_][]const u8{ "", slots[state_slot], "", brightness, "" };
+    var result = controlDeck(theme, .game_menu, "PAUSED", game_title, &labels, &values, selected, "Continue", if (selected == 3) .horizontal else .confirm, if (selected == 3) "Adjust" else "Select", null);
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
 
 /// UX mock for the system-owned network route from a paused game. The actual
 /// Wi-Fi picker remains the same shell surface used from Settings.
-pub fn overlayPauseWithNetwork(theme: Theme, game_title: []const u8, selected: usize, state_slot: usize, performance: []const u8, network_status: []const u8, notice: []const u8) Tree {
-    return overlayPauseWithNetworkGame(theme, null, game_title, selected, state_slot, performance, network_status, notice);
+pub fn overlayPauseWithNetwork(theme: Theme, game_title: []const u8, selected: usize, state_slot: usize, brightness: []const u8, network_status: []const u8, status: SystemStatus, notice: []const u8) Tree {
+    return overlayPauseWithNetworkGame(theme, null, game_title, selected, state_slot, brightness, network_status, status, notice);
 }
 
-pub fn overlayPauseWithNetworkGame(theme: Theme, game: ?catalog.Game, game_title: []const u8, selected: usize, state_slot: usize, performance: []const u8, network_status: []const u8, notice: []const u8) Tree {
-    const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Network", "Save and exit" };
+pub fn overlayPauseWithNetworkGame(theme: Theme, game: ?catalog.Game, game_title: []const u8, selected: usize, state_slot: usize, brightness: []const u8, network_status: []const u8, status: SystemStatus, notice: []const u8) Tree {
+    const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Brightness", "Network", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
-    const values = [_][]const u8{ "", slots[state_slot], "", performance, network_status, "" };
-    var result = controlDeck(theme, .game_menu_network, "PAUSED", game_title, &labels, &values, selected, "Continue", "Open", game);
+    const values = [_][]const u8{ "", slots[state_slot], "", brightness, network_status, "" };
+    var result = controlDeck(theme, .game_menu_network, "PAUSED", game_title, &labels, &values, selected, "Continue", if (selected == 3) .horizontal else .confirm, if (selected == 3) "Adjust" else "Open", game);
+    systemStatus(&result, status);
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -194,7 +196,7 @@ pub fn overlayStatesGame(theme: Theme, game: ?catalog.Game, game_title: []const 
         if (available[2]) details[2] else "Empty",
         if (available[3]) details[3] else "Empty",
     };
-    result = controlDeck(theme, .overlay_states, "LOAD STATE", game_title, &labels, &values, selected, "Game menu", if (available[selected]) "Load" else "Empty", game);
+    result = controlDeck(theme, .overlay_states, "LOAD STATE", game_title, &labels, &values, selected, "Game menu", .confirm, if (available[selected]) "Load" else "Empty", game);
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -553,5 +555,5 @@ pub fn saveSlotsGame(theme: Theme, game: ?catalog.Game, title: []const u8, selec
         if (available[1]) "Replace saved state" else "Empty",
         if (available[2]) "Replace saved state" else "Empty",
     };
-    return controlDeck(theme, .save_slots, "SAVE STATE", title, &labels, &values, selected, "Game menu", "Save", game);
+    return controlDeck(theme, .save_slots, "SAVE STATE", title, &labels, &values, selected, "Game menu", .confirm, "Save", game);
 }

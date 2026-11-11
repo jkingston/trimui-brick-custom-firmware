@@ -1055,7 +1055,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
             .title = game.title,
             .system = game.system,
             .game = game.*,
-            .performance_profile = @backingInt(state.settings.performance),
+            .brightness = state.settings.brightness,
         };
         game_session: while (true) {
             const term = retroarch.launch(io, game, state.games) catch |err| {
@@ -1082,6 +1082,12 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
             while (true) {
                 refreshWifi(&state);
                 game_overlay.network_status = state.wifi.wifi_state.snapshot.settingsSummary();
+                game_overlay.battery_percent = batteryPercent(io);
+                game_overlay.network_indicator = switch (state.wifi.wifi_state.snapshot.connectivity) {
+                    .internet => .connected,
+                    .local, .captive, .limited => .attention,
+                    .none => .hidden,
+                };
                 game_overlay.available = retroarch.availableStates(io, game);
                 switch (try runOverlay(io, &game_overlay)) {
                     .resume_game => {
@@ -1129,14 +1135,14 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
                         game_overlay.selected = 0;
                         continue :game_session;
                     },
-                    .apply_performance => {
-                        state.settings.performance = @fromBackingInt(@intCast(game_overlay.performance_profile));
-                        settings.apply(io, state.settings, .performance) catch |err| {
+                    .apply_brightness => {
+                        state.settings.brightness = game_overlay.brightness;
+                        settings.apply(io, state.settings, .brightness) catch |err| {
                             state.settings = settings.load(io);
-                            game_overlay.performance_profile = @backingInt(state.settings.performance);
-                            game_overlay.notice = "Could not apply performance profile";
+                            game_overlay.brightness = state.settings.brightness;
+                            game_overlay.notice = "Brightness did not change";
                             game_overlay.notice_kind = .failure;
-                            std.log.err("Failed to apply performance profile: {s}", .{@errorName(err)});
+                            std.log.err("Failed to apply brightness: {s}", .{@errorName(err)});
                         };
                     },
                     .network_settings => {

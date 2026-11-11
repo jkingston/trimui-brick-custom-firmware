@@ -115,6 +115,7 @@ pub const Meter = struct {
     id: interaction.Id,
     bounds: Rect,
     value: u16,
+    visible: bool = true,
     track: Color,
     fill: Color,
     thumb: Color,

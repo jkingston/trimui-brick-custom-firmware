@@ -2,10 +2,11 @@
 const std = @import("std");
 const catalog = @import("catalog.zig");
 const input = @import("input.zig");
+const settings = @import("settings.zig");
 const ui = @import("ui.zig");
 
-pub const Layer = enum { pause, states, save_slots, replace_confirm, load_confirm, performance, failure };
-pub const Command = enum { resume_game, save_state, load_state, apply_performance, network_settings, exit_game };
+pub const Layer = enum { pause, states, save_slots, replace_confirm, load_confirm, failure };
+pub const Command = enum { resume_game, save_state, load_state, apply_brightness, network_settings, exit_game };
 
 const pause_count = 6;
 const state_count = 4;
@@ -18,7 +19,7 @@ pub const Model = struct {
     selected: usize = 0,
     state_slot: usize = 0,
     save_slot: usize = 0,
-    performance_profile: usize = 1,
+    brightness: u8 = 10,
     title: []const u8 = "Game",
     system: []const u8 = "",
     game: ?catalog.Game = null,
@@ -30,6 +31,8 @@ pub const Model = struct {
     confirmation: usize = 0,
     failed_command: ?Command = null,
     network_status: []const u8 = "Off",
+    battery_percent: ?u8 = null,
+    network_indicator: ui.NetworkStatus = .hidden,
     revision: u64 = 1,
 
     pub fn apply(self: *Model, action: input.Action) bool {
@@ -38,7 +41,7 @@ pub const Model = struct {
         const before_selected = self.selected;
         const before_slot = self.state_slot;
         const before_save_slot = self.save_slot;
-        const before_performance = self.performance_profile;
+        const before_brightness = self.brightness;
         const before_saved = self.saved;
         const before_pending = self.pending;
 
@@ -55,22 +58,6 @@ pub const Model = struct {
                         self.pending = if (self.layer == .replace_confirm) .save_state else .load_state;
                     },
                     .back => self.layer = if (self.layer == .replace_confirm) .save_slots else .states,
-                    .menu => self.pending = .resume_game,
-                    else => {},
-                }
-            },
-            .performance => {
-                switch (action) {
-                    .up => self.selected -|= 1,
-                    .down => self.selected = @min(2, self.selected + 1),
-                    .select => {
-                        self.performance_profile = self.selected;
-                        self.pending = .apply_performance;
-                    },
-                    .back => {
-                        self.layer = .pause;
-                        self.selected = 3;
-                    },
                     .menu => self.pending = .resume_game,
                     else => {},
                 }
@@ -93,7 +80,7 @@ pub const Model = struct {
 
         const changed = before_confirmation != self.confirmation or before_layer != self.layer or before_selected != self.selected or
             before_slot != self.state_slot or before_save_slot != self.save_slot or
-            before_performance != self.performance_profile or
+            before_brightness != self.brightness or
             before_saved != self.saved or before_pending != self.pending;
         if (changed) self.revision += 1;
         return changed;
@@ -110,19 +97,17 @@ pub const Model = struct {
         const horizontal = action == .left or action == .right;
         return switch (self.layer) {
             .pause => vertical or (horizontal and (self.selected == 1 or self.selected == 3)),
-            .states, .save_slots, .replace_confirm, .load_confirm, .performance, .failure => vertical,
+            .states, .save_slots, .replace_confirm, .load_confirm, .failure => vertical,
         };
     }
 
     pub fn tree(self: *const Model) ui.Tree {
-        const performance_values = [_][]const u8{ "Power saver", "Balanced", "Performance" };
         var result = switch (self.layer) {
-            .pause => ui.overlayPauseWithNetworkGame(self.appearance.colors(), self.game, self.title, self.selected, self.save_slot, performance_values[self.performance_profile], self.network_status, ""),
+            .pause => ui.overlayPauseWithNetworkGame(self.appearance.colors(), self.game, self.title, self.selected, self.save_slot, settings.brightnessTone(self.brightness), if (self.network_indicator == .connected) "" else self.network_status, .{ .battery = self.battery_percent, .network = self.network_indicator }, ""),
             .states => ui.overlayStatesGame(self.appearance.colors(), self.game, self.title, self.state_slot, "", self.available),
             .save_slots => ui.saveSlotsGame(self.appearance.colors(), self.game, self.title, self.save_slot, self.available),
             .replace_confirm => ui.confirmation(self.appearance.colors(), "Replace saved state", "Replace this saved state?", "The existing state in this slot will be replaced.", "Replace state", self.confirmation),
             .load_confirm => ui.confirmation(self.appearance.colors(), "Load saved state", "Return to this saved state?", "Progress since that state will be lost.", "Load state", self.confirmation),
-            .performance => ui.choice(self.appearance.colors(), "Performance", &performance_values, self.selected, self.performance_profile, "Balances responsiveness and power use.", "Game menu"),
             .failure => ui.confirmation(self.appearance.colors(), "Unable to save", "State was not saved", self.notice, "Try again", self.confirmation),
         };
         if (self.layer != .failure and self.notice.len != 0)
@@ -142,15 +127,19 @@ pub const Model = struct {
                 self.save_slot = if (self.save_slot == 0) save_slot_count - 1 else self.save_slot - 1;
                 self.saved = false;
             } else if (self.selected == 3) {
-                self.performance_profile = if (self.performance_profile == 0) 2 else self.performance_profile - 1;
-                self.pending = .apply_performance;
+                if (self.brightness != 0) {
+                    self.brightness -= 1;
+                    self.pending = .apply_brightness;
+                }
             },
             .right => if (self.selected == 1) {
                 self.save_slot = (self.save_slot + 1) % save_slot_count;
                 self.saved = false;
             } else if (self.selected == 3) {
-                self.performance_profile = (self.performance_profile + 1) % 3;
-                self.pending = .apply_performance;
+                if (self.brightness != 10) {
+                    self.brightness += 1;
+                    self.pending = .apply_brightness;
+                }
             },
             .back, .menu => self.pending = .resume_game,
             .view, .filter => {},
@@ -165,10 +154,7 @@ pub const Model = struct {
                     self.layer = .states;
                     self.selected = self.state_slot;
                 },
-                3 => {
-                    self.layer = .performance;
-                    self.selected = self.performance_profile;
-                },
+                3 => {},
                 4 => self.pending = .network_settings,
                 5 => self.pending = .exit_game,
                 else => unreachable,
@@ -242,6 +228,18 @@ test "overlay direction support excludes irrelevant horizontal input" {
     try std.testing.expect(state.supportsDirection(.left));
     state.layer = .states;
     try std.testing.expect(!state.supportsDirection(.right));
+}
+
+test "quick brightness adjusts in place without wrapping" {
+    var state = Model{ .selected = 3, .brightness = 1 };
+    try std.testing.expect(state.apply(.left));
+    try std.testing.expectEqual(@as(u8, 0), state.brightness);
+    try std.testing.expectEqual(Command.apply_brightness, state.takeCommand().?);
+    try std.testing.expect(!state.apply(.left));
+    try std.testing.expect(state.takeCommand() == null);
+    try std.testing.expect(state.apply(.right));
+    try std.testing.expectEqual(@as(u8, 1), state.brightness);
+    try std.testing.expectEqual(Command.apply_brightness, state.takeCommand().?);
 }
 
 test "saving an occupied slot requires confirmation; cancelling preserves it" {

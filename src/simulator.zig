@@ -239,6 +239,7 @@ pub fn main(init: std.process.Init) !void {
     var game_overlay = overlay.Model{};
     game_overlay.appearance = state.settings.appearance;
     game_overlay.reduced_motion = state.settings.reduced_motion;
+    game_overlay.brightness = state.settings.brightness;
     var tree = if (overlay_visible) game_overlay.tree() else state.tree();
     // SAFETY: reset initializes every field before presentation is observed.
     var presentation: scene_motion.Controller = undefined;
@@ -365,7 +366,7 @@ pub fn main(init: std.process.Init) !void {
                     presentation.layout.cancel();
                     overlay_visible = !overlay_visible;
                     if (overlay_visible) {
-                        game_overlay = .{ .appearance = state.settings.appearance, .reduced_motion = state.settings.reduced_motion };
+                        game_overlay = .{ .appearance = state.settings.appearance, .reduced_motion = state.settings.reduced_motion, .brightness = state.settings.brightness };
                         if (state.games.len != 0) {
                             const game = state.games[@min(state.game_index, state.games.len - 1)];
                             game_overlay.title = game.title;
@@ -413,7 +414,7 @@ pub fn main(init: std.process.Init) !void {
                             game_overlay.notice = "Simulator: no save written";
                             game_overlay.notice_kind = .warning;
                         },
-                        .apply_performance => {},
+                        .apply_brightness => state.settings.brightness = game_overlay.brightness,
                         .network_settings => {
                             overlay_visible = false;
                             state.page = .wifi;

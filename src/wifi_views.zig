@@ -89,7 +89,9 @@ pub fn wifiPicker(theme: Theme, state: *const wifi_model.Model) Tree {
     components.header(&result, "Wi-Fi");
     components.text(&result, .{ .x = 780, .y = 42, .width = 196, .height = 42 }, "On", if (state.selected == 0) theme.accent else theme.muted, .{ .size = 25, .line_height = 34, .weight = if (state.selected == 0) .semibold else .regular, .alignment = .end });
     components.focusAnchor(&result, .wifi_list, 0, state.selected == 0, .{ .x = 720, .y = 28, .width = 272, .height = 64 });
-    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 104, .width = 928, .height = 40 }, .value = state.status(), .color = theme.muted, .font = font.caption } });
+    var has_current = false;
+    for (state.snapshot.items()) |network| has_current = has_current or network.current;
+    result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 104, .width = 928, .height = 40 }, .value = if (has_current) "" else state.status(), .color = theme.muted, .font = font.caption } });
 
     const visible: usize = 3;
     const total = state.itemCount() - 1;

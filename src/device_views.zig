@@ -119,10 +119,10 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
 
 pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []const u8, bluetooth_summary: []const u8) scene.Tree {
     const theme = values.appearance.colors();
-    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Reduced motion", "Wi-Fi", "Bluetooth" };
-    const details = [_][]const u8{ settings_model.brightnessTone(values.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), values.value(.reduced_motion), wifi_summary, bluetooth_summary };
-    const groups = [_][]const u8{ "DISPLAY", "SYSTEM", "DISPLAY", "POWER", "INTERFACE", "INTERFACE", "CONNECTION", "CONNECTION" };
-    const stage_labels = [_][]const u8{ "PANEL OUTPUT", "POWER MODE", "SCREEN REST", "DEVICE SLEEP", "VISUAL ENVIRONMENT", "MOVEMENT", "NETWORK", "WIRELESS" };
+    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Reduced motion", "Wi-Fi", "Bluetooth", "Power" };
+    const details = [_][]const u8{ settings_model.brightnessTone(values.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), values.value(.reduced_motion), wifi_summary, bluetooth_summary, "Power controls" };
+    const groups = [_][]const u8{ "DISPLAY", "SYSTEM", "DISPLAY", "POWER", "INTERFACE", "INTERFACE", "CONNECTION", "CONNECTION", "DEVICE" };
+    const stage_labels = [_][]const u8{ "PANEL OUTPUT", "POWER MODE", "SCREEN REST", "DEVICE SLEEP", "VISUAL ENVIRONMENT", "MOVEMENT", "NETWORK", "WIRELESS", "POWER" };
     const descriptions = [_][]const u8{
         "Set the panel output.",
         "Balance speed and battery life.",
@@ -132,6 +132,7 @@ pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []
         "Settle movement immediately.",
         "Join and manage networks.",
         "Pair controllers and audio.",
+        "Turn the screen off, sleep, or shut down.",
     };
     var result = scene.Tree{ .theme = theme, .background = theme.background };
     editorialHeader(&result, "DEVICE", groups[selected]);
@@ -163,6 +164,6 @@ pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []
     components.text(&result, .{ .x = 762, .y = 306, .width = 170, .height = 32 }, if (brightness_selected) settings_model.brightnessStep(values.brightness) else "", theme.muted, uiFont(20, 28, .regular, .end));
     components.steppedMeterState(&result, interaction.Id.scoped(.brightness_meter, 0), .{ .x = 602, .y = 350, .width = 330, .height = 36 }, @as(u16, values.brightness) * 100, 11, brightness_selected);
     components.continuation(&result, 132, 587, first != 0, first + visible < items.len);
-    components.footer(&result, &.{ .{ .control = .back, .label = "Library" }, .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = "Open" } });
+    components.footer(&result, &.{ .{ .control = .back, .label = "Library" }, .{ .control = .confirm, .label = "Open" } });
     return result;
 }

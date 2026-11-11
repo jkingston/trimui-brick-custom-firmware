@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
     _ = arguments.next();
     const directory = arguments.next() orelse "output/motion-proof";
     const theme = @import("theme.zig").dark;
-    var quick = ui.overlayPause(theme, "FALLING", 2, 0, "Balanced", "");
+    var quick = ui.overlayPause(theme, "FALLING", 2, 0, "Bright", "");
     var states = ui.overlayStates(theme, "FALLING", 0, "", .{ true, false, false, true });
     try writeFrames(init.io, init.gpa, directory, "forward", &quick, &states, .forward, &.{ 0, 48, 96, 167 });
     try writeFrames(init.io, init.gpa, directory, "back", &states, &quick, .back, &.{ 0, 40, 80, 120 });

@@ -187,6 +187,7 @@ pub fn steppedMeterState(result: *ui.Tree, id: interaction.Id, bounds: ui.Rect, 
         .id = id,
         .bounds = bounds,
         .value = if (visible) @min(1000, value) else 0,
+        .visible = visible,
         .track = if (visible) result.theme.surface else result.theme.background,
         .fill = if (visible) result.theme.text else result.theme.background,
         .thumb = if (visible) result.theme.accent else result.theme.background,
@@ -321,6 +322,7 @@ pub fn header(result: *ui.Tree, title: []const u8) void {
 pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
     const size: u16 = switch (item.control) {
         .view, .filter, .menu => geometry.glyph_size,
+        .horizontal => 56,
         else => 40,
     };
     const colour = result.theme.muted;
@@ -329,7 +331,9 @@ pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void
             const symbol = switch (item.control) {
                 .confirm => "A",
                 .back => "B",
-                else => "↔",
+                // The bundled display face does not contain the Unicode
+                // left-right arrow; ASCII chevrons remain crisp at device size.
+                else => "<>",
             };
             if (item.control != .horizontal) {
                 result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = y + 1, .width = 38, .height = 38 }, .color = colour, .radius = 19 } });
@@ -420,6 +424,7 @@ pub fn footer(result: *ui.Tree, items: []const Hint) void {
 fn hintIconWidth(item: Hint) u16 {
     return switch (item.control) {
         .view, .filter, .menu => geometry.glyph_size,
+        .horizontal => 56,
         else => 40,
     };
 }

@@ -111,10 +111,7 @@ pub const Model = struct {
     /// Ambient device state belongs on shell surfaces, not over play, launch,
     /// captive sign-in, or connectivity screens that already make it the task.
     pub fn showsSystemStatus(self: *const Model) bool {
-        return switch (self.page) {
-            .foyer, .games, .settings, .setting, .views, .systems, .power, .power_confirm => true,
-            .game, .wifi, .wifi_fallback, .bluetooth => false,
-        };
+        return product_navigation.chrome(self.page).ambient_status;
     }
 
     pub fn librarySource(self: *const Model) ?usize {
@@ -270,6 +267,9 @@ pub const Model = struct {
                         self.page = .bluetooth;
                         self.selected = 0;
                         self.bluetooth.page = .list;
+                    } else if (self.selected == settings_count + 2) {
+                        self.page = .power;
+                        self.selected = 0;
                     } else {
                         self.active_setting = @fromBackingInt(@intCast(self.selected));
                         self.page = .setting;
@@ -326,7 +326,7 @@ pub const Model = struct {
                 .systems, .views => self.browse(),
                 .power => {
                     self.page = .settings;
-                    self.selected = 0;
+                    self.selected = settings_count + 2;
                 },
                 .power_confirm => {
                     self.page = .power;
@@ -335,12 +335,7 @@ pub const Model = struct {
             },
             .menu => {
                 self.remember();
-                self.page = switch (self.page) {
-                    .games, .foyer => .settings,
-                    .settings => .power,
-                    .power => .settings,
-                    else => .games,
-                };
+                self.page = product_navigation.menuDestination(self.page) orelse self.page;
                 self.selected = 0;
                 self.launch_failed = null;
             },
@@ -489,7 +484,7 @@ pub const Model = struct {
             .foyer => if (self.last_played != null) 3 else 2,
             .games => self.collection().len(),
             .game => 1,
-            .settings => settings_count + 2,
+            .settings => settings_count + 3,
             .setting => settings_model.labels(self.active_setting).len,
             .wifi => 1,
             .wifi_fallback => 1,
@@ -637,6 +632,14 @@ test "library is the root and device controls are intentional" {
     try std.testing.expectEqual(Page.games, state.page);
 }
 
+test "Menu reveals and dismisses the system instead of cycling destinations" {
+    var state = Model{ .page = .games, .selected = 2 };
+    _ = state.apply(.menu);
+    try std.testing.expectEqual(Page.settings, state.page);
+    _ = state.apply(.menu);
+    try std.testing.expectEqual(Page.games, state.page);
+}
+
 test "library preview can trail a skim and settle on release" {
     var state = Model{ .page = .games, .selected = 3, .library_preview = 1 };
     try std.testing.expect(state.settleLibraryPreview());
@@ -690,6 +693,15 @@ test "shutdown requires an explicit confirmation and cancel is default" {
     _ = state.apply(.down);
     _ = state.apply(.select);
     try std.testing.expectEqual(Power.shutdown, state.pending_power.?);
+}
+
+test "Power is an explicit Device destination and Back restores its row" {
+    var state = Model{ .page = .settings, .selected = settings_count + 2 };
+    _ = state.apply(.select);
+    try std.testing.expectEqual(Page.power, state.page);
+    _ = state.apply(.back);
+    try std.testing.expectEqual(Page.settings, state.page);
+    try std.testing.expectEqual(settings_count + 2, state.selected);
 }
 
 test "Back at the foyer is inert with or without a resumable session" {
