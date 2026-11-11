@@ -217,14 +217,14 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
     var result = Tree{ .theme = theme, .background = theme.background };
     header(&result, "Brick");
     if (recent) |game| {
-        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 486 }, if (resumable) "READY TO RESUME" else "LAST PLAYED", game.title, if (resumable) "Continue your last session" else "Play again", .primary, 2, 1);
+        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 468 }, if (resumable) "READY TO RESUME" else "LAST PLAYED", game.title, if (resumable) "Continue your last session" else "Play again", .primary, 2, 1);
         if (game.assets.cover != null or game.assets.preview != null)
             artwork(&result, game, .{ .x = 370, .y = 170, .width = 244, .height = 216 }, false, false, null, 0, 0);
-        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 229 }, "LIBRARY", "Games", "Browse your collection", .secondary, 1, 2);
-        components.actionCard(&result, .home, 2, selected == 2, .{ .x = 670, .y = 399, .width = 326, .height = 229 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
+        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 220 }, "LIBRARY", "Games", "Browse your collection", .secondary, 1, 2);
+        components.actionCard(&result, .home, 2, selected == 2, .{ .x = 670, .y = 390, .width = 326, .height = 220 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
     } else {
-        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 486 }, "LIBRARY", "Games", "Browse and play your collection", .primary, 1, 1);
-        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 486 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
+        components.actionCard(&result, .home, 0, selected == 0, .{ .x = 28, .y = 142, .width = 614, .height = 468 }, "LIBRARY", "Games", "Browse and play your collection", .primary, 1, 1);
+        components.actionCard(&result, .home, 1, selected == 1, .{ .x = 670, .y = 142, .width = 326, .height = 468 }, "DEVICE", "Settings", "Display, audio and connections", .secondary, 1, 2);
     }
     footer(&result, &.{ .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = if (recent == null) "Open" else if (selected == 0) (if (resumable) "Resume" else "Play") else "Open" } });
     return result;
@@ -543,6 +543,27 @@ test "progress feedback owns activity while terminal feedback does not" {
     var success = Tree{ .theme = themes.light, .background = themes.light.background };
     showFeedback(&success, .{ .kind = .success, .message = "Connected" });
     try std.testing.expect(!success.hasActivity());
+}
+
+test "home reserves a stable status band above footer actions" {
+    const themes = @import("theme.zig");
+    var screen = homeSession(themes.light, 0, catalog.games[0], true);
+    showFeedback(&screen, .{ .kind = .success, .message = "Connected to Wi-Fi" });
+
+    var card_bottom: u16 = 0;
+    var feedback_top: ?u16 = null;
+    for (screen.slice()) |element| switch (element) {
+        .action_card => |card| card_bottom = @max(card_bottom, card.bounds.y + card.bounds.height),
+        .bar => |bar| {
+            if (bar.bounds.height == 50 and bar.bounds.width == geometry.width - 2 * layout.margin)
+                feedback_top = bar.bounds.y;
+        },
+        else => {},
+    };
+
+    try std.testing.expect(feedback_top != null);
+    try std.testing.expect(card_bottom <= feedback_top.?);
+    try std.testing.expect(feedback_top.? + 50 < layout.footer_y - 24);
 }
 
 test "game launch owns activity while launch failure remains terminal" {

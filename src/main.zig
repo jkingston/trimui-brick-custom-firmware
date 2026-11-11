@@ -42,7 +42,8 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
     const surface = render.Surface{ .pixels = pixels };
     var state = model.Model{};
     state.settings.appearance = appearance;
-    if (std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent")) state.page = .home;
+    const home_screen = std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback");
+    if (home_screen) state.page = .home;
     if (games) |library| {
         state.games = library;
         if (library.len > 0) {
@@ -62,13 +63,18 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
     } else if (std.mem.eql(u8, screen, "settings")) {
         state.page = .settings;
     }
-    if (std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent")) {
+    if (home_screen) {
         state.selected = 0;
+        // Home always owns battery status at runtime; deterministic snapshots
+        // must cover the real header composition rather than an empty fixture.
+        state.battery_percent = 72;
         if (games != null and state.games.len != 0) state.last_played = state.game_index;
-        if (std.mem.eql(u8, screen, "home-recent")) {
+        if (std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback")) {
             state.last_played = 1;
             state.resumable = true;
         }
+        if (std.mem.eql(u8, screen, "home-feedback"))
+            state.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
     }
     if (std.mem.eql(u8, screen, "settings-overflow")) {
         state.page = .settings;
@@ -258,7 +264,7 @@ pub fn main(init: std.process.Init) !void {
             try snapshotTo(init.io, init.gpa, "", screen, null, 0, .dark, gpu);
             return;
         };
-        const screens = [_][]const u8{ "splash", "home", "home-recent", "games", "games-empty", "games-shelf", "games-grid", "game", "game-failed", "settings", "settings-overflow", "settings-feedback", "settings-progress", "brightness", "performance", "display_timeout", "suspend_timeout", "appearance", "reduced_motion", "systems", "views", "power", "shutdown", "bluetooth", "bluetooth-checking", "bluetooth-off", "bluetooth-unavailable", "bluetooth-starting", "bluetooth-stopping", "bluetooth-connecting", "bluetooth-details", "bluetooth-pairing", "bluetooth-code-entry", "bluetooth-code-display", "bluetooth-failed", "wifi", "wifi-picker-checking", "wifi-picker-off", "wifi-picker-starting", "wifi-picker-stopping", "wifi-picker-error", "wifi-details", "wifi-password", "wifi-password-uppercase", "wifi-password-symbols", "wifi-hidden-name", "wifi-hidden-security", "wifi-info", "wifi-open-confirm", "wifi-forget-confirm", "overlay", "overlay-states", "overlay-network", "overlay-network-captive", "network-request-off", "network-request-captive", "network-request-limited", "languages" };
+        const screens = [_][]const u8{ "splash", "home", "home-recent", "home-feedback", "games", "games-empty", "games-shelf", "games-grid", "game", "game-failed", "settings", "settings-overflow", "settings-feedback", "settings-progress", "brightness", "performance", "display_timeout", "suspend_timeout", "appearance", "reduced_motion", "systems", "views", "power", "shutdown", "bluetooth", "bluetooth-checking", "bluetooth-off", "bluetooth-unavailable", "bluetooth-starting", "bluetooth-stopping", "bluetooth-connecting", "bluetooth-details", "bluetooth-pairing", "bluetooth-code-entry", "bluetooth-code-display", "bluetooth-failed", "wifi", "wifi-picker-checking", "wifi-picker-off", "wifi-picker-starting", "wifi-picker-stopping", "wifi-picker-error", "wifi-details", "wifi-password", "wifi-password-uppercase", "wifi-password-symbols", "wifi-hidden-name", "wifi-hidden-security", "wifi-info", "wifi-open-confirm", "wifi-forget-confirm", "overlay", "overlay-states", "overlay-network", "overlay-network-captive", "network-request-off", "network-request-captive", "network-request-limited", "languages" };
         if (suite == null or !std.mem.eql(u8, suite.?, "damage")) for ([_]@import("theme.zig").Mode{ .light, .dark }) |appearance| for (screens) |screen| {
             try snapshotTo(init.io, init.gpa, "", screen, null, 0, appearance, gpu);
         };

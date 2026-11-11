@@ -138,18 +138,18 @@ test "focus plate preserves horizontal continuity for grids" {
 test "focus plate morphs between differently sized action cards" {
     const theme = @import("theme.zig").light;
     var first = ui.Tree{ .theme = theme, .background = theme.background };
-    first.add(.{ .action_card = .{ .id = interaction.Id.scoped(.home, 0), .state = .focused, .bounds = .{ .x = 28, .y = 142, .width = 614, .height = 486 }, .eyebrow = "Library", .label = "Games" } });
+    first.add(.{ .action_card = .{ .id = interaction.Id.scoped(.home, 0), .state = .focused, .bounds = .{ .x = 28, .y = 142, .width = 614, .height = 468 }, .eyebrow = "Library", .label = "Games" } });
     var second = ui.Tree{ .theme = theme, .background = theme.background };
-    second.add(.{ .action_card = .{ .id = interaction.Id.scoped(.home, 1), .state = .focused, .bounds = .{ .x = 670, .y = 142, .width = 326, .height = 229 }, .eyebrow = "Device", .label = "Settings" } });
+    second.add(.{ .action_card = .{ .id = interaction.Id.scoped(.home, 1), .state = .focused, .bounds = .{ .x = 670, .y = 142, .width = 326, .height = 220 }, .eyebrow = "Device", .label = "Settings" } });
     var controller = Controller{};
     controller.update(&first, 0, false);
     controller.update(&second, 10, false);
     controller.decorate(&second, 10);
     try std.testing.expectEqual(@as(i16, -642), second.elements[0].action_card.focus_offset_x);
     try std.testing.expectEqual(@as(i16, 288), second.elements[0].action_card.focus_width_delta);
-    try std.testing.expectEqual(@as(i16, 257), second.elements[0].action_card.focus_height_delta);
+    try std.testing.expectEqual(@as(i16, 248), second.elements[0].action_card.focus_height_delta);
     try std.testing.expectEqual(@as(u16, 614), second.elements[0].action_card.displayedBounds().width);
-    try std.testing.expectEqual(@as(u16, 486), second.elements[0].action_card.displayedBounds().height);
+    try std.testing.expectEqual(@as(u16, 468), second.elements[0].action_card.displayedBounds().height);
 }
 
 test "keyboard focus retargets between stable key identities" {
