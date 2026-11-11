@@ -2,6 +2,7 @@
 const std = @import("std");
 const assets = @import("asset_manifest.zig");
 const design = @import("design.zig");
+const interaction = @import("interaction.zig");
 const font = design.typeface;
 
 pub const Color = @import("color.zig").Color;
@@ -34,13 +35,17 @@ pub const RowStyle = struct {
 };
 pub const ArtworkStyle = struct { shadow: Color, edge: Color, surface: Color, text: Color };
 pub const MenuRow = struct {
+    id: interaction.Id = .none,
+    state: interaction.State = .idle,
     label_font: design.Font = font.body,
     lines: u8 = 1,
     style: RowStyle = std.mem.zeroes(RowStyle),
     bounds: Rect,
     label: []const u8,
     detail: []const u8 = "",
-    selected: bool,
+    // Compatibility input for existing views. Tree.add resolves it into state;
+    // new components should set state explicitly.
+    selected: bool = false,
     disclosure: bool = true,
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem.zeroes(Color), charge: Color = std.mem.zeroes(Color) };
@@ -62,12 +67,14 @@ pub const Cartridge = struct {
     plain_fallback: bool = false,
 };
 pub const OverlayRow = struct {
+    id: interaction.Id = .none,
+    state: interaction.State = .idle,
     style: RowStyle = std.mem.zeroes(RowStyle),
     bounds: Rect,
     label: []const u8,
     detail: []const u8,
     value: []const u8 = "",
-    selected: bool,
+    selected: bool = false,
     disclosure: bool = true,
 };
 pub const Element = union(enum) {
@@ -99,8 +106,18 @@ pub const Tree = struct {
         if (self.len == self.elements.len) @panic("UI scene capacity exceeded");
         var resolved = element;
         switch (resolved) {
-            .menu_row => |*row| row.style = self.rowStyle(row.selected),
-            .overlay_row => |*row| row.style = self.rowStyle(row.selected),
+            .menu_row => |*row| {
+                if (row.id == .none) row.id = interaction.Id.scoped(.implicit_menu, self.len);
+                if (row.selected and row.state == .idle) row.state = .focused;
+                row.selected = row.state.hasFocus();
+                row.style = self.rowStyle(row.state);
+            },
+            .overlay_row => |*row| {
+                if (row.id == .none) row.id = interaction.Id.scoped(.implicit_overlay, self.len);
+                if (row.selected and row.state == .idle) row.state = .focused;
+                row.selected = row.state.hasFocus();
+                row.style = self.rowStyle(row.state);
+            },
             .cartridge => |*item| item.style = .{ .shadow = self.theme.shadow, .edge = if (item.selected) self.theme.accent else self.theme.border, .surface = self.theme.surface, .text = self.theme.muted },
             .battery => |*item| {
                 item.outline = self.theme.text;
@@ -112,8 +129,47 @@ pub const Tree = struct {
         self.len += 1;
     }
 
-    fn rowStyle(self: *const Tree, selected: bool) RowStyle {
-        return .{ .background = if (selected) self.theme.selection else self.theme.background, .text = if (selected) self.theme.selection_text else self.theme.text, .detail = if (selected) self.theme.selection_text else self.theme.muted, .border = self.theme.border, .accent = self.theme.accent };
+    fn rowStyle(self: *const Tree, state: interaction.State) RowStyle {
+        const selected = state.hasFocus();
+        const pressed = state == .pressed;
+        const disabled = state == .disabled;
+        return .{
+            .background = if (pressed) self.theme.background else if (selected) self.theme.selection else self.theme.background,
+            .text = if (disabled) self.theme.muted else if (pressed) self.theme.text else if (selected) self.theme.selection_text else self.theme.text,
+            .detail = if (disabled) self.theme.muted else if (pressed) self.theme.muted else if (selected) self.theme.selection_text else self.theme.muted,
+            .border = if (pressed) self.theme.selection else self.theme.border,
+            .accent = self.theme.accent,
+        };
+    }
+
+    pub fn focusedId(self: *const Tree) ?interaction.Id {
+        for (self.slice()) |element| switch (element) {
+            .menu_row => |row| if (row.state.hasFocus()) return row.id,
+            .overlay_row => |row| if (row.state.hasFocus()) return row.id,
+            else => {},
+        };
+        return null;
+    }
+
+    /// Apply transient interaction state after a view has declared its content.
+    /// This keeps press/busy styling out of individual screen builders.
+    pub fn setInteraction(self: *Tree, id: interaction.Id, state: interaction.State) bool {
+        for (self.elements[0..self.len]) |*element| switch (element.*) {
+            .menu_row => |*row| if (row.id == id) {
+                row.state = state;
+                row.selected = state.hasFocus();
+                row.style = self.rowStyle(state);
+                return true;
+            },
+            .overlay_row => |*row| if (row.id == id) {
+                row.state = state;
+                row.selected = state.hasFocus();
+                row.style = self.rowStyle(state);
+                return true;
+            },
+            else => {},
+        };
+        return false;
     }
 
     pub fn slice(self: *const Tree) []const Element {
@@ -153,4 +209,14 @@ test "scene validation rejects overflowing and undersized supporting rows" {
     tree.len = 0;
     tree.add(.{ .overlay_row = .{ .bounds = .{ .x = 0, .y = 0, .width = 100, .height = 88 }, .label = "Network", .detail = "Connected", .selected = false } });
     try std.testing.expectError(error.SupportingRowTooShort, tree.validate());
+}
+
+test "tree resolves selection into durable interaction state" {
+    var tree = Tree{ .background = .{ .r = 0, .g = 0, .b = 0 } };
+    tree.add(.{ .menu_row = .{ .bounds = .{ .x = 0, .y = 0, .width = 100, .height = 88 }, .label = "Play", .selected = true } });
+    const id = tree.focusedId().?;
+    try std.testing.expectEqual(interaction.State.focused, tree.elements[0].menu_row.state);
+    try std.testing.expect(tree.setInteraction(id, .pressed));
+    try std.testing.expectEqual(interaction.State.pressed, tree.elements[0].menu_row.state);
+    try std.testing.expect(tree.elements[0].menu_row.selected);
 }

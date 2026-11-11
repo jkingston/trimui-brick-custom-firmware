@@ -292,13 +292,15 @@ pub fn main(init: std.process.Init) !void {
 
     var motion: @import("shelf_motion.zig").Motion = .{};
     var repeat: @import("input_repeat.zig").Controller = .{};
+    var pressed_id: ?@import("interaction.zig").Id = null;
+    var select_armed = false;
     var was_animating = false;
     while (true) {
         const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
         motion.reduced = state.settings.reduced_motion;
         const animating = !overlay_visible and state.page == .games and state.library_view == .shelf and motion.active(now);
         const repeat_timeout = repeat.timeout(now);
-        const timeout = if (animating) (if (repeat_timeout < 0) @import("design.zig").motion.frame_ms else @min(@import("design.zig").motion.frame_ms, repeat_timeout)) else if (was_animating) 0 else repeat_timeout;
+        const timeout = @import("motion.zig").pollTimeout(animating, was_animating, repeat_timeout);
         // SAFETY: event is inspected only when SDL reports an initialized event.
         var event: Event = undefined;
         const received = sdl.waitEvent(&event, timeout) != 0;
@@ -309,7 +311,14 @@ pub fn main(init: std.process.Init) !void {
         if (received) {
             if (event.event_type == sdl_quit) break;
             if (event.event_type == sdl_key_release) {
-                if (actionForKey(event.key.keysym.sym)) |released| repeat.release(released);
+                if (actionForKey(event.key.keysym.sym)) |released| {
+                    repeat.release(released);
+                    if (released == .select and select_armed) {
+                        select_armed = false;
+                        pressed_id = null;
+                        action = .select;
+                    }
+                }
             } else if (event.event_type == sdl_key_down and event.key.repeat == 0) {
                 const key = event.key.keysym.sym;
                 if (key == 'p') {
@@ -323,8 +332,15 @@ pub fn main(init: std.process.Init) !void {
                     repeat.reset();
                     changed = true;
                 } else if (actionForKey(key)) |pressed| {
-                    action = pressed;
-                    if (pressed == .up or pressed == .down or pressed == .left or pressed == .right) repeat.press(pressed, timestamp);
+                    if (pressed == .select) {
+                        select_armed = true;
+                        pressed_id = tree.focusedId();
+                        action = null;
+                        changed = true;
+                    } else {
+                        action = pressed;
+                        if (pressed == .up or pressed == .down or pressed == .left or pressed == .right) repeat.press(pressed, timestamp);
+                    }
                 }
             }
         }
@@ -363,6 +379,7 @@ pub fn main(init: std.process.Init) !void {
         if (changed) {
             game_overlay.appearance = state.settings.appearance;
             tree = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
+            if (pressed_id) |id| _ = tree.setInteraction(id, .pressed);
             try drawTree(&sdl, renderer, texture, pixels, &tree);
         }
     }

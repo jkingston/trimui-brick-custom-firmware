@@ -45,14 +45,10 @@ pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state
     var result = Tree{ .theme = theme, .background = theme.background };
     overlayFrame(&result, "Game menu", game_title);
     for (labels, 0..) |label, index| {
-        result.add(.{ .overlay_row = .{
-            .bounds = menu.overlayRow(index),
-            .label = label,
-            .detail = "",
-            .value = if (index == 1) slots[state_slot] else if (index == 3) performance else "",
-            .selected = index == selected,
-            .disclosure = index == 2,
-        } });
+        var row = components.selectable(.game_menu, index, index == selected, menu.overlayRow(index), label);
+        row.value = if (index == 1) slots[state_slot] else if (index == 3) performance else "";
+        row.disclosure = index == 2;
+        row.overlay(&result);
     }
     footer(&result, &.{ .{ .control = .back, .label = "Continue" }, .{ .control = .confirm, .label = "Select" } });
     if (notice.len != 0) showNotice(&result, notice);
@@ -68,14 +64,10 @@ pub fn overlayPauseWithNetwork(theme: Theme, game_title: []const u8, selected: u
     var result = Tree{ .theme = theme, .background = theme.background };
     overlayFrame(&result, "Game menu", game_title);
     for (labels, values, 0..) |label, value, index| {
-        result.add(.{ .overlay_row = .{
-            .bounds = .{ .x = 28, .y = 148 + @as(u16, @intCast(index)) * 80, .width = 968, .height = 78 },
-            .label = label,
-            .detail = "",
-            .value = value,
-            .selected = index == selected,
-            .disclosure = index == 2 or index == 4,
-        } });
+        var row = components.selectable(.game_menu_network, index, index == selected, .{ .x = 28, .y = 148 + @as(u16, @intCast(index)) * 80, .width = 968, .height = 78 }, label);
+        row.value = value;
+        row.disclosure = index == 2 or index == 4;
+        row.overlay(&result);
     }
     footer(&result, &.{ .{ .control = .back, .label = "Continue" }, .{ .control = .confirm, .label = "Open" } });
     if (notice.len != 0) showNotice(&result, notice);
@@ -223,13 +215,12 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
         artwork(&result, game, .{ .x = 665, .y = 161, .width = 311, .height = 269 }, false, 0, 0);
     }
     const items: []const []const u8 = if (recent != null) &.{ if (resumable) "Resume" else "Play again", "Games", "Settings" } else &.{ "Games", "Settings" };
-    for (items, 0..) |item, index| result.add(.{ .menu_row = .{
-        .bounds = .{ .x = 28, .y = (if (recent != null) @as(u16, 453) else 238) + @as(u16, @intCast(index)) * (if (recent != null) @as(u16, 74) else 150), .width = 968, .height = if (recent != null) 74 else 150 },
-        .label = item,
-        .label_font = if (recent == null) .{ .size = 56, .line_height = 67 } else font.body,
-        .selected = selected == index,
-        .disclosure = false,
-    } });
+    for (items, 0..) |item, index| {
+        var row = components.selectable(.home, index, selected == index, .{ .x = 28, .y = (if (recent != null) @as(u16, 453) else 238) + @as(u16, @intCast(index)) * (if (recent != null) @as(u16, 74) else 150), .width = 968, .height = if (recent != null) 74 else 150 }, item);
+        row.label_font = if (recent == null) .{ .size = 56, .line_height = 67 } else font.body;
+        row.disclosure = false;
+        row.menu(&result);
+    }
     footer(&result, &.{ .{ .control = .menu, .label = "Power" }, .{ .control = .confirm, .label = if (recent == null) "Open" else if (selected == 0) (if (resumable) "Resume" else "Play") else "Open" } });
     return result;
 }
@@ -259,14 +250,11 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
             const first = if (selected > 1) @min(selected - 1, count - visible) else 0;
             for (first..first + visible) |index| {
                 const entry = collection.at(index);
-                result.add(.{ .menu_row = .{
-                    .bounds = .{ .x = 28, .y = 138 + @as(u16, @intCast(index - first)) * 134, .width = 968, .height = 134 },
-                    .label = entry.title,
-                    .detail = if (collection.system == null) entry.system else "",
-                    .selected = index == selected,
-                    .disclosure = false,
-                    .lines = if (index == selected) 2 else 1,
-                } });
+                var row = components.selectable(.library, index, index == selected, .{ .x = 28, .y = 138 + @as(u16, @intCast(index - first)) * 134, .width = 968, .height = 134 }, entry.title);
+                row.detail = if (collection.system == null) entry.system else "";
+                row.disclosure = false;
+                row.lines = if (index == selected) 2 else 1;
+                row.menu(&result);
             }
         },
         .grid => {
@@ -347,14 +335,12 @@ pub fn choice(theme: Theme, title: []const u8, labels: []const []const u8, selec
     const first = @min(selected -| 2, labels.len - visible);
     const bottom: u16 = if (note.len != 0 or @import("std").mem.eql(u8, title, "Appearance")) 530 else 676;
     const step = (bottom - 138) / @as(u16, @intCast(@max(1, visible)));
-    for (first..first + visible) |index| result.add(.{ .overlay_row = .{
-        .bounds = .{ .x = 28, .y = 138 + @as(u16, @intCast(index - first)) * step, .width = 968, .height = step },
-        .label = labels[index],
-        .value = if (active == index) "✓" else "",
-        .detail = "",
-        .selected = selected == index,
-        .disclosure = false,
-    } });
+    for (first..first + visible) |index| {
+        var row = components.selectable(.choice, index, selected == index, .{ .x = 28, .y = 138 + @as(u16, @intCast(index - first)) * step, .width = 968, .height = step }, labels[index]);
+        row.value = if (active == index) "✓" else "";
+        row.disclosure = false;
+        row.overlay(&result);
+    }
     components.continuation(&result, 138, bottom, first != 0, first + visible < labels.len);
     if (note.len != 0) result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 538, .width = 928, .height = 88 }, .value = note, .color = theme.muted, .font = font.caption, .lines = 2 } });
     footer(&result, &.{ .{ .control = .back, .label = back }, .{ .control = .confirm, .label = "Select" } });

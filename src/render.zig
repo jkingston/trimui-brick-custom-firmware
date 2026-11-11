@@ -213,6 +213,7 @@ pub const Surface = struct {
 
     fn menuRow(self: Surface, row: ui.MenuRow) void {
         self.fillRounded(row.bounds, row.style.background, geometry.radius);
+        if (row.state == .pressed) self.stroke(row.bounds, row.style.border, 4);
         var title_font = row.label_font;
         title_font.ink_centered = true;
         var detail_font = font.caption;
@@ -231,10 +232,19 @@ pub const Surface = struct {
 
     fn drawOverlayRow(self: Surface, item: ui.OverlayRow) void {
         if (!self.prepainted_overlay_rows) self.fillRounded(item.bounds, item.style.background, geometry.radius);
+        if (item.state == .pressed) self.stroke(item.bounds, item.style.border, 4);
         for (@import("row_layout.zig").overlay(item)) |part|
             self.drawTextBounded(part.bounds.x, part.bounds.y, part.bounds.width, part.value, part.color, part.font);
         if (item.disclosure)
             self.drawChevron(item.bounds.x + item.bounds.width - 38, item.bounds.y + (item.bounds.height - 24) / 2, item.style.text);
+    }
+
+    fn stroke(self: Surface, bounds: ui.Rect, color: ui.Color, thickness: u16) void {
+        const edge = @min(thickness, @min(bounds.width / 2, bounds.height / 2));
+        self.fill(.{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = edge }, color);
+        self.fill(.{ .x = bounds.x, .y = bounds.y + bounds.height - edge, .width = bounds.width, .height = edge }, color);
+        self.fill(.{ .x = bounds.x, .y = bounds.y, .width = edge, .height = bounds.height }, color);
+        self.fill(.{ .x = bounds.x + bounds.width - edge, .y = bounds.y, .width = edge, .height = bounds.height }, color);
     }
 
     fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {

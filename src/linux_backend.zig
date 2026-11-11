@@ -5,10 +5,13 @@ const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
 const display_scheduler = @import("display_scheduler.zig");
 const input_repeat = @import("input_repeat.zig");
+const interaction = @import("interaction.zig");
+const interaction_motion = @import("motion.zig");
 const model = @import("model.zig");
 const overlay = @import("overlay.zig");
 const retroarch = @import("retroarch.zig");
 const ui = @import("ui.zig");
+const ui_components = @import("ui_components.zig");
 const settings = @import("settings.zig");
 const bluetooth_ipc = @import("bluetooth_ipc.zig");
 const wifi_ipc = @import("wifi_ipc.zig");
@@ -242,6 +245,48 @@ fn actionForEvent(event: InputEvent, builtin: bool, dropped: *bool) ?model.Actio
     };
 }
 
+fn selectButtonEvent(event: InputEvent, builtin: bool) ?bool {
+    if (event.event_type != ev_key or (event.value != 0 and event.value != 1)) return null;
+    const action: ?model.Action = switch (event.code) {
+        btn_east => if (builtin) .select else .back,
+        btn_south => if (builtin) .back else .select,
+        else => null,
+    };
+    if (action != .select) return null;
+    return event.value == 1;
+}
+
+const PressResult = enum { none, pressed, activated, cancelled };
+const PressTracker = struct {
+    id: ?interaction.Id = null,
+    armed: bool = false,
+
+    noinline fn observe(self: *PressTracker, event: InputEvent, builtin: bool, dropped: bool, tree: *const ui.Tree) PressResult {
+        if (event.event_type == ev_syn and event.code == syn_dropped) {
+            self.clear();
+            return .cancelled;
+        }
+        if (dropped) return .none;
+        const down = selectButtonEvent(event, builtin) orelse return .none;
+        if (down) {
+            self.armed = true;
+            self.id = tree.focusedId();
+            return .pressed;
+        }
+        if (!self.armed) return .none;
+        self.clear();
+        return .activated;
+    }
+
+    fn clear(self: *PressTracker) void {
+        self.* = .{};
+    }
+
+    noinline fn decorate(self: PressTracker, tree: *ui.Tree) void {
+        if (self.id) |id| _ = tree.setInteraction(id, .pressed);
+    }
+};
+
 fn directionForEvent(event: InputEvent) ?model.Action {
     if (event.event_type == ev_abs) return switch (event.code) {
         abs_hat0_x => if (event.value < 0) .left else .right,
@@ -309,6 +354,10 @@ fn wifiChanging(state: *const model.Model) bool {
         else => {},
     };
     return state.wifi.wifi_state.snapshot.radio == .starting or state.wifi.wifi_state.snapshot.radio == .stopping;
+}
+
+fn sameFeedback(a: ui.Feedback, b: ui.Feedback) bool {
+    return a.kind == b.kind and std.mem.eql(u8, a.message, b.message);
 }
 
 fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_client: ?*wifi_ipc.Client, bluetooth_client: ?*bluetooth_ipc.Client, bluetooth_request: *u32, action: model.Action) !SessionAction {
@@ -438,12 +487,16 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     var poll_fds: [max_gamepads + 3]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var motion: @import("shelf_motion.zig").Motion = .{};
+    var press: PressTracker = .{};
+    var feedback_lifecycle = ui_components.FeedbackLifecycle{};
     var was_animating = false;
     var save_deadline: ?i64 = null;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
         const now = nowMilliseconds(io);
+        if (!sameFeedback(feedback_lifecycle.feedback, state.feedback))
+            feedback_lifecycle.show(state.feedback, now);
         motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
         const animation = state.page == .games and state.library_view == .shelf and motion.active(now);
@@ -467,6 +520,9 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             const captive_wait: i32 = @intCast(@max(0, captive_deadline - now));
             timeout = if (timeout < 0) captive_wait else @min(timeout, captive_wait);
         }
+        const feedback_wait = feedback_lifecycle.timeout(now);
+        if (feedback_wait >= 0) timeout = if (timeout < 0) feedback_wait else @min(timeout, feedback_wait);
+        timeout = interaction_motion.pollTimeout(animation, was_animating, timeout);
         for (gamepads.slots, 0..) |slot, index| {
             poll_fds[index].fd = slot.fd;
             poll_fds[index].revents = 0;
@@ -483,6 +539,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             save_deadline = null;
         };
         var changed = animation or was_animating;
+        if (feedback_lifecycle.tick(nowMilliseconds(io))) {
+            if (feedback_lifecycle.phase == .hidden) state.feedback = .{};
+            changed = true;
+        }
         var rescan_inputs = false;
         if ((poll_fds[max_gamepads + 2].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;
         if ((poll_fds[max_gamepads + 2].revents & std.posix.POLL.IN) != 0) {
@@ -591,6 +651,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 closeFd(io, slot.fd, true);
                 slot.* = .{};
                 repeat.reset();
+                press.clear();
                 rescan_inputs = true;
                 continue;
             }
@@ -603,7 +664,29 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
                 for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
                     observeRepeat(&repeat, event, nowMilliseconds(io));
-                    if (actionForEvent(event, slot.builtin, &slot.dropped)) |action| {
+                    const event_action = actionForEvent(event, slot.builtin, &slot.dropped);
+                    switch (press.observe(event, slot.builtin, slot.dropped, &tree)) {
+                        .pressed => {
+                            changed = true;
+                            display.recordInput(event.seconds * 1_000_000 + event.microseconds);
+                            continue;
+                        },
+                        .activated => {
+                            const previous = state.selected;
+                            const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, .select);
+                            if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
+                            if (state.page == .games and state.library_view == .shelf and previous != state.selected)
+                                motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
+                            if (result.launch) |index| return index;
+                            changed = changed or result.changed;
+                            display.recordInput(event.seconds * 1_000_000 + event.microseconds);
+                            if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
+                            continue;
+                        },
+                        .cancelled => changed = true,
+                        .none => {},
+                    }
+                    if (event_action) |action| {
                         const previous = state.selected;
                         const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
@@ -620,16 +703,21 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         }
         if (rescan_inputs) {
             const inputs_changed = try gamepads.rescan(io);
-            if (inputs_changed) repeat.reset();
+            if (inputs_changed) {
+                repeat.reset();
+                press.clear();
+            }
             changed = inputs_changed or changed;
             if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
         }
         if (changed) {
             tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
+            press.decorate(&tree);
             try display.requestFrame(&tree);
         }
         if (display.frameDue()) {
             tree = state.treeWithShelfOffset(motion.offset(nowMilliseconds(io)));
+            press.decorate(&tree);
             try display.submit(&tree);
         }
     }
@@ -652,6 +740,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     if (profile_input) try markReady(io);
     var poll_fds: [max_gamepads + 1]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
+    var press: PressTracker = .{};
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
@@ -683,6 +772,7 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                 closeFd(io, slot.fd, true);
                 slot.* = .{};
                 repeat.reset();
+                press.clear();
                 rescan_inputs = true;
                 continue;
             }
@@ -695,7 +785,29 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
                 if (bytes_read % @sizeOf(InputEvent) != 0) return error.InvalidInputEvent;
                 for (std.mem.bytesAsSlice(InputEvent, buffer[0..bytes_read])) |event| {
                     observeRepeat(&repeat, event, nowMilliseconds(io));
-                    if (actionForEvent(event, slot.builtin, &slot.dropped)) |action| {
+                    const event_action = actionForEvent(event, slot.builtin, &slot.dropped);
+                    switch (press.observe(event, slot.builtin, slot.dropped, &tree)) {
+                        .pressed => {
+                            changed = true;
+                            display.recordInput(event.seconds * 1_000_000 + event.microseconds);
+                            continue;
+                        },
+                        .activated => {
+                            if (state.apply(.select)) changed = true;
+                            display.recordInput(event.seconds * 1_000_000 + event.microseconds);
+                            if (state.takeCommand()) |command| {
+                                if (command == .save_state or command == .load_state) {
+                                    var status = ui.message(state.appearance.colors(), if (command == .save_state) "Save state" else "Load state", if (command == .save_state) "Saving state…" else "Loading state…", "");
+                                    try display.show(&status);
+                                }
+                                return command;
+                            }
+                            continue;
+                        },
+                        .cancelled => changed = true,
+                        .none => {},
+                    }
+                    if (event_action) |action| {
                         if (state.apply(action)) {
                             changed = true;
                             display.recordInput(event.seconds * 1_000_000 + event.microseconds);
@@ -713,15 +825,20 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
             }
         }
         if (rescan_inputs) {
-            if (try gamepads.rescan(io)) repeat.reset();
+            if (try gamepads.rescan(io)) {
+                repeat.reset();
+                press.clear();
+            }
             if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
         }
         if (changed) {
             tree = state.tree();
+            press.decorate(&tree);
             try display.requestFrame(&tree);
         }
         if (display.frameDue()) {
             tree = state.tree();
+            press.decorate(&tree);
             try display.submit(&tree);
         }
     }
@@ -915,6 +1032,20 @@ test "input capability bitmaps and external gamepad conventions" {
     try std.testing.expectEqual(model.Action.select, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_south, .value = 1 }, false, &dropped).?);
     try std.testing.expectEqual(model.Action.back, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 1 }, false, &dropped).?);
     try std.testing.expectEqual(model.Action.left, actionForEvent(.{ .seconds = 0, .microseconds = 0, .event_type = ev_abs, .code = abs_hat0_x, .value = -1 }, false, &dropped).?);
+}
+
+test "select press decorates before release activates" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    tree.add(.{ .menu_row = .{ .bounds = .{ .x = 0, .y = 0, .width = 200, .height = 88 }, .label = "Play", .selected = true } });
+    var press: PressTracker = .{};
+    const down = InputEvent{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 1 };
+    try std.testing.expectEqual(PressResult.pressed, press.observe(down, true, false, &tree));
+    press.decorate(&tree);
+    try std.testing.expectEqual(interaction.State.pressed, tree.elements[0].menu_row.state);
+    const up = InputEvent{ .seconds = 0, .microseconds = 0, .event_type = ev_key, .code = btn_east, .value = 0 };
+    try std.testing.expectEqual(PressResult.activated, press.observe(up, true, false, &tree));
+    try std.testing.expect(press.id == null);
 }
 
 fn performPower(io: std.Io, command: model.Power) !void {

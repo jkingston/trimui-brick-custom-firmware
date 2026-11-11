@@ -3,6 +3,7 @@ const design = @import("design.zig");
 const font = design.typeface;
 const geometry = design.geometry;
 const input = @import("input.zig");
+const interaction = @import("interaction.zig");
 const ui = @import("ui_scene.zig");
 
 pub const Hint = struct { control: input.HintControl, label: []const u8 };
@@ -16,6 +17,86 @@ pub const Feedback = struct {
         return self.message.len != 0;
     }
 };
+
+pub const FeedbackPhase = enum { hidden, visible };
+pub const FeedbackLifecycle = struct {
+    feedback: Feedback = .{},
+    phase: FeedbackPhase = .hidden,
+    deadline_ms: ?i64 = null,
+    dwell_ms: i64 = 1800,
+
+    pub fn show(self: *FeedbackLifecycle, value: Feedback, now_ms: i64) void {
+        self.feedback = value;
+        self.phase = if (value.visible()) .visible else .hidden;
+        self.deadline_ms = if (value.visible() and value.kind != .progress) now_ms + self.dwell_ms else null;
+    }
+
+    pub fn dismiss(self: *FeedbackLifecycle, now_ms: i64) void {
+        if (self.phase == .hidden) return;
+        self.deadline_ms = now_ms;
+    }
+
+    pub fn tick(self: *FeedbackLifecycle, now_ms: i64) bool {
+        if (self.deadline_ms == null or now_ms < self.deadline_ms.?) return false;
+        self.phase = .hidden;
+        self.feedback = .{};
+        self.deadline_ms = null;
+        return true;
+    }
+
+    pub fn timeout(self: FeedbackLifecycle, now_ms: i64) i32 {
+        const due = self.deadline_ms orelse return -1;
+        return @intCast(@max(@as(i64, 0), @min(due - now_ms, @as(i64, @import("std").math.maxInt(i32)))));
+    }
+};
+
+/// Shared declaration for selectable rows. Screen code supplies content and
+/// geometry; this component supplies stable identity and interaction state.
+pub const Selectable = struct {
+    id: interaction.Id,
+    bounds: ui.Rect,
+    label: []const u8,
+    detail: []const u8 = "",
+    value: []const u8 = "",
+    state: interaction.State = .idle,
+    disclosure: bool = true,
+    label_font: design.Font = font.body,
+    lines: u8 = 1,
+
+    pub fn menu(self: Selectable, result: *ui.Tree) void {
+        result.add(.{ .menu_row = .{
+            .id = self.id,
+            .state = self.state,
+            .bounds = self.bounds,
+            .label = self.label,
+            .detail = self.detail,
+            .disclosure = self.disclosure,
+            .label_font = self.label_font,
+            .lines = self.lines,
+        } });
+    }
+
+    pub fn overlay(self: Selectable, result: *ui.Tree) void {
+        result.add(.{ .overlay_row = .{
+            .id = self.id,
+            .state = self.state,
+            .bounds = self.bounds,
+            .label = self.label,
+            .detail = self.detail,
+            .value = self.value,
+            .disclosure = self.disclosure,
+        } });
+    }
+};
+
+pub fn selection(scope: interaction.Id.Scope, index: usize, focused: bool) struct { id: interaction.Id, state: interaction.State } {
+    return .{ .id = interaction.Id.scoped(scope, index), .state = if (focused) .focused else .idle };
+}
+
+pub fn selectable(scope: interaction.Id.Scope, index: usize, focused: bool, bounds: ui.Rect, label: []const u8) Selectable {
+    const resolved = selection(scope, index, focused);
+    return .{ .id = resolved.id, .state = resolved.state, .bounds = bounds, .label = label };
+}
 
 pub const single_row_height: u16 = 88;
 pub const supporting_row_height: u16 = 108;
@@ -125,4 +206,22 @@ test "standard supporting rows fit both text lines" {
     const required = font.body.line_height + 6 + font.caption.line_height;
     try @import("std").testing.expect(supporting_row_height >= required);
     try @import("std").testing.expect(single_row_height >= font.body.line_height);
+}
+
+test "selectable owns identity and interaction state" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    const selected = selection(.test_scope, 3, true);
+    (Selectable{ .id = selected.id, .state = selected.state, .bounds = .{ .x = 0, .y = 0, .width = 100, .height = 88 }, .label = "Play" }).menu(&tree);
+    try @import("std").testing.expectEqual(selected.id, tree.focusedId().?);
+}
+
+test "feedback lifecycle does not leave completion notices indefinitely" {
+    var notice = FeedbackLifecycle{};
+    notice.show(.{ .kind = .success, .message = "Saved" }, 0);
+    try @import("std").testing.expectEqual(FeedbackPhase.visible, notice.phase);
+    try @import("std").testing.expectEqual(@as(i32, 1800), notice.timeout(0));
+    _ = notice.tick(notice.dwell_ms);
+    try @import("std").testing.expectEqual(FeedbackPhase.hidden, notice.phase);
+    try @import("std").testing.expectEqual(@as(i32, -1), notice.timeout(5000));
 }

@@ -44,8 +44,44 @@ pub const Geometry = struct {
     glyph_size: u16,
     hint_gap: u16,
 };
-pub const Easing = enum { quadratic_out };
+/// Curves describe intent rather than a component implementation. Spatial
+/// entrances settle, exits get out of the way, and effect changes remain
+/// neutral. Components must use a semantic MotionRole instead of inventing a
+/// duration or curve locally.
+pub const Easing = enum { standard, accelerate, decelerate };
 pub const Motion = struct { duration_ms: u16, frame_ms: u16, easing: Easing, reduced: bool = false };
+pub const MotionRole = enum { press, focus, content, enter, exit, feedback };
+pub const MotionTokens = struct {
+    press: Motion,
+    focus: Motion,
+    content: Motion,
+    enter: Motion,
+    exit: Motion,
+    feedback: Motion,
+
+    pub fn get(self: MotionTokens, role: MotionRole) Motion {
+        return switch (role) {
+            inline else => |tag| @field(self, @tagName(tag)),
+        };
+    }
+
+    pub fn validate(comptime self: MotionTokens) void {
+        inline for (@typeInfo(MotionTokens).@"struct".field_names) |name| {
+            const token = @field(self, name);
+            if (token.duration_ms == 0 or token.frame_ms == 0)
+                @compileError("Invalid motion timing");
+        }
+    }
+};
+
+pub const motion_tokens = MotionTokens{
+    .press = .{ .duration_ms = 64, .frame_ms = 16, .easing = .standard },
+    .focus = .{ .duration_ms = 100, .frame_ms = 16, .easing = .decelerate },
+    .content = .{ .duration_ms = 150, .frame_ms = 16, .easing = .decelerate },
+    .enter = .{ .duration_ms = 167, .frame_ms = 16, .easing = .decelerate },
+    .exit = .{ .duration_ms = 120, .frame_ms = 16, .easing = .accelerate },
+    .feedback = .{ .duration_ms = 120, .frame_ms = 16, .easing = .standard },
+};
 pub const Config = struct {
     typography: Typography,
     spacing: Spacing,
@@ -108,12 +144,23 @@ pub const config = Config{
         .glyph_size = 64,
         .hint_gap = 16,
     },
-    .motion = .{ .duration_ms = 150, .frame_ms = 16, .easing = .quadratic_out },
+    // Compatibility token for the existing shelf while reusable components
+    // migrate to motion_tokens by semantic role.
+    .motion = motion_tokens.content,
 };
 comptime {
     config.validate();
+    motion_tokens.validate();
 }
 pub const typeface = config.typography;
 pub const spacing = config.spacing;
 pub const geometry = config.geometry;
 pub const motion = config.motion;
+
+test "motion roles encode interaction intent" {
+    const std = @import("std");
+    try std.testing.expect(motion_tokens.press.duration_ms < motion_tokens.focus.duration_ms);
+    try std.testing.expect(motion_tokens.exit.duration_ms < motion_tokens.enter.duration_ms);
+    try std.testing.expectEqual(Easing.accelerate, motion_tokens.exit.easing);
+    try std.testing.expectEqual(Easing.decelerate, motion_tokens.enter.easing);
+}

@@ -17,6 +17,11 @@ sink. Display scheduling, scene retention and texture retention are independent
 modules; the Linux event loop owns device and service integration rather than
 rendering policy.
 
+New interactive components follow the compact state, motion, feedback and
+physical-validation contract in
+[`docs/interaction-design.md`](docs/interaction-design.md). Screens compose
+those behaviors; they do not define private timings or input mechanics.
+
 Place this repository beside the Brick base repository, then run:
 
 ```sh

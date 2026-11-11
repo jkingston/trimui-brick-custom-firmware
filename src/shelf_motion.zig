@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const design = @import("design.zig");
 
 pub const Motion = struct {
     from: i32 = 0,
     started_ms: i64 = 0,
     reduced: bool = @import("design.zig").motion.reduced,
-    const duration_ms = @import("design.zig").motion.duration_ms;
+    const token = design.motion_tokens.content;
 
     pub fn offset(self: Motion, now_ms: i64) i16 {
-        const elapsed = std.math.clamp(now_ms - self.started_ms, 0, duration_ms);
-        const remaining: i64 = duration_ms - elapsed;
-        return switch (@import("design.zig").motion.easing) {
-            .quadratic_out => @intCast(@divTrunc(@as(i64, self.from) * remaining * remaining, duration_ms * duration_ms)),
-        };
+        const elapsed = std.math.clamp(now_ms - self.started_ms, 0, token.duration_ms);
+        const remaining: i64 = token.duration_ms - elapsed;
+        return @intCast(@divTrunc(@as(i64, self.from) * remaining * remaining, @as(i64, token.duration_ms) * token.duration_ms));
     }
 
     pub fn retarget(self: *Motion, delta: i32, now_ms: i64) void {
@@ -25,7 +24,7 @@ pub const Motion = struct {
     }
 
     pub fn active(self: Motion, now_ms: i64) bool {
-        return self.from != 0 and now_ms - self.started_ms < duration_ms;
+        return self.from != 0 and now_ms - self.started_ms < token.duration_ms;
     }
 };
 

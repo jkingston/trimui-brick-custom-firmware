@@ -325,6 +325,9 @@ test {
     _ = @import("bluetooth_views.zig");
     _ = @import("frame_pacer.zig");
     _ = @import("input_latency.zig");
+    _ = @import("interaction.zig");
+    _ = @import("motion.zig");
+    _ = @import("feedback.zig");
     _ = @import("texture_batch.zig");
     _ = @import("battery_trials.zig");
     _ = @import("bluetooth.zig");

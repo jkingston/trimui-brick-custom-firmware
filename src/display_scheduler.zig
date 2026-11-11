@@ -4,6 +4,7 @@
 const std = @import("std");
 const render = @import("render.zig");
 const ui = @import("ui_scene.zig");
+const input_latency = @import("input_latency.zig");
 
 const framebuffer_path = "/dev/fb0";
 const blank_path = "/sys/class/graphics/fb0/blank";
@@ -78,8 +79,10 @@ pub const Scheduler = struct {
     draw_page: usize,
     unblanked: bool = false,
     dirty: bool = false,
+    profiling: bool = false,
+    latency: input_latency.Pending = .{},
 
-    pub fn open(io: std.Io, _: bool) !Scheduler {
+    pub fn open(io: std.Io, profiling: bool) !Scheduler {
         var size_buffer: [64]u8 = undefined;
         const size = try readAttribute(io, virtual_size_path, &size_buffer);
         const comma = std.mem.findScalar(u8, size, ',') orelse return error.InvalidFramebufferGeometry;
@@ -114,6 +117,7 @@ pub const Scheduler = struct {
             .variable = variable,
             .page_count = page_count,
             .draw_page = draw_page,
+            .profiling = profiling,
         };
     }
 
@@ -130,12 +134,18 @@ pub const Scheduler = struct {
     }
 
     fn present(self: *Scheduler, tree: *const ui.Tree) !void {
+        const render_started_us = std.Io.Timestamp.now(self.io, .awake).toMicroseconds();
         self.surface.render(tree);
         self.variable.xoffset = 0;
         self.variable.yoffset = @intCast(self.draw_page * render.height);
         self.variable.activate = fb_activate_vertical_blank;
         if (std.posix.errno(std.os.linux.ioctl(self.fd, fb_io_pan_display, @intFromPtr(&self.variable))) != .SUCCESS)
             return error.FramebufferPresentFailed;
+        const flip_us = std.Io.Timestamp.now(self.io, .awake).toMicroseconds();
+        if (self.profiling) if (self.latency.finish(render_started_us, flip_us)) |sample|
+            // One value per presented input frame keeps on-device telemetry
+            // cheap; host tooling calculates percentiles from these samples.
+            std.log.info("UI input-to-flip: {d}us", .{sample.newest_to_flip_us});
         self.draw_page = (self.draw_page + 1) % self.page_count;
         const pixels: [*]u32 = @ptrCast(@alignCast(self.memory.ptr));
         self.surface.pixels = pixels[self.draw_page * render.width * render.height ..][0 .. render.width * render.height];
@@ -146,7 +156,10 @@ pub const Scheduler = struct {
         }
     }
 
-    pub fn recordInput(_: *Scheduler, _: i64) void {}
+    pub fn recordInput(self: *Scheduler, event_us: i64) void {
+        if (!self.profiling) return;
+        self.latency.recordAt(event_us, std.Io.Timestamp.now(self.io, .awake).toMicroseconds());
+    }
     pub fn requestFrame(self: *Scheduler, _: ?*const ui.Tree) !void {
         self.dirty = true;
     }

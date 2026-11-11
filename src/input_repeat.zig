@@ -2,7 +2,10 @@
 
 const input = @import("input.zig");
 
-pub const initial_delay_ms: i64 = 600;
+// Direct-control navigation should acknowledge a hold before it feels stalled,
+// then accelerate smoothly enough for long libraries without becoming
+// uncontrollable near a target.
+pub const initial_delay_ms: i64 = 375;
 
 pub const Controller = struct {
     held: ?input.Action = null,
@@ -38,9 +41,9 @@ pub const Controller = struct {
     }
 
     fn period(repeats: u8) i64 {
-        if (repeats < 5) return 125;
-        if (repeats < 14) return 90;
-        return 70;
+        if (repeats < 4) return 110;
+        if (repeats < 12) return 85;
+        return 65;
     }
 };
 
@@ -49,14 +52,14 @@ const std = @import("std");
 test "repeat waits, accelerates, and stops on release" {
     var repeat: Controller = .{};
     repeat.press(.down, 1000);
-    try std.testing.expectEqual(@as(i32, 600), repeat.timeout(1000));
-    try std.testing.expect(repeat.due(1599) == null);
-    try std.testing.expectEqual(input.Action.down, repeat.due(1600).?);
-    try std.testing.expectEqual(@as(i32, 125), repeat.timeout(1600));
-    for (0..4) |_| _ = repeat.due(repeat.next_ms);
-    try std.testing.expectEqual(@as(i32, 90), repeat.timeout(repeat.next_ms - 90));
-    for (0..9) |_| _ = repeat.due(repeat.next_ms);
-    try std.testing.expectEqual(@as(i32, 70), repeat.timeout(repeat.next_ms - 70));
+    try std.testing.expectEqual(@as(i32, 375), repeat.timeout(1000));
+    try std.testing.expect(repeat.due(1374) == null);
+    try std.testing.expectEqual(input.Action.down, repeat.due(1375).?);
+    try std.testing.expectEqual(@as(i32, 110), repeat.timeout(1375));
+    for (0..3) |_| _ = repeat.due(repeat.next_ms);
+    try std.testing.expectEqual(@as(i32, 85), repeat.timeout(repeat.next_ms - 85));
+    for (0..8) |_| _ = repeat.due(repeat.next_ms);
+    try std.testing.expectEqual(@as(i32, 65), repeat.timeout(repeat.next_ms - 65));
     repeat.release(.down);
     try std.testing.expectEqual(@as(i32, -1), repeat.timeout(5000));
 }
@@ -66,5 +69,5 @@ test "a different direction replaces the held direction" {
     repeat.press(.down, 0);
     repeat.press(.left, 100);
     repeat.release(.down);
-    try std.testing.expectEqual(input.Action.left, repeat.due(700).?);
+    try std.testing.expectEqual(input.Action.left, repeat.due(475).?);
 }
