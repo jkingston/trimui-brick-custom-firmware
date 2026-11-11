@@ -179,8 +179,6 @@ pub const Cartridge = struct {
     dim: u8 = 0,
     tilt: i16 = 0,
     clip_left: u16 = 0,
-    plain_fallback: bool = false,
-
     pub fn displayBounds(self: Cartridge) Rect {
         return .{
             .x = @intCast(std.math.clamp(@as(i32, self.bounds.x) + self.focus_offset_x, 0, std.math.maxInt(u16))),

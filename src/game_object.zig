@@ -22,11 +22,27 @@ pub const Spec = struct {
 
 pub fn add(tree: *scene.Tree, game: catalog.Game, spec: Spec) void {
     const sprite = switch (spec.presentation) {
-        .cover => game.assets.cover,
+        .cover => game.assets.cover orelse game.assets.preview orelse game.assets.card orelse game.assets.sprite,
         .cartridge, .spatial => game.assets.card orelse game.assets.sprite,
     };
-    if (sprite == null and game.assets.preview == null)
-        return authoredIdentity(tree, game, spec);
+
+    // A cover composition should remain immersive even before optional asset
+    // matching completes. Bundled titles use authored art; unknown titles use
+    // the deliberately neutral library cover rather than a placeholder panel.
+    const authored_cover = sprite == null and (spec.presentation == .cover or spec.presentation == .spatial);
+    if (authored_cover) {
+        const bounds = safeBounds(spec.bounds);
+        tree.add(.{ .cover = .{ .bounds = bounds, .kind = game.cover } });
+        if (spec.dim != 0) tree.add(.{ .scrim = .{ .bounds = bounds, .color = tree.theme.background, .alpha = spec.dim } });
+        if (spec.id != .none) tree.add(.{ .focus_frame = .{
+            .id = spec.id,
+            .state = if (spec.focused) .focused else .idle,
+            .bounds = bounds,
+            .presentation = .quiet,
+        } });
+        if (spec.active) activeMark(tree, bounds);
+        return;
+    }
 
     tree.add(.{ .cartridge = .{
         .id = spec.id,
@@ -39,31 +55,8 @@ pub fn add(tree: *scene.Tree, game: catalog.Game, spec: Spec) void {
         .dim = spec.dim,
         .tilt = spec.tilt,
         .clip_left = spec.clip_left,
-        .plain_fallback = spec.presentation == .cover,
     } });
     if (spec.active) activeMark(tree, safeBounds(spec.bounds));
-}
-
-fn authoredIdentity(tree: *scene.Tree, game: catalog.Game, spec: Spec) void {
-    if (spec.bounds.x >= design.geometry.width or spec.bounds.y >= design.geometry.height) return;
-    const bounds = safeBounds(spec.bounds);
-    if (spec.presentation != .spatial)
-        tree.add(.{ .bar = .{ .bounds = bounds, .color = tree.theme.surface, .radius = design.geometry.radius } });
-    addText(tree, .{ .x = bounds.x + 20, .y = bounds.y + 20, .width = bounds.width -| 40, .height = 36 }, game.system, if (spec.focused or spec.active) tree.theme.accent else tree.theme.muted, .{ .size = 20, .line_height = 28, .weight = .semibold, .alignment = if (spec.presentation == .spatial) .center else .start });
-    addText(tree, .{ .x = bounds.x + 20, .y = bounds.y + @min(@as(u16, 82), bounds.height / 3), .width = bounds.width -| 40, .height = bounds.height -| 112 }, game.title, tree.theme.text, .{
-        .size = if (spec.focused) 48 else 30,
-        .line_height = if (spec.focused) 58 else 38,
-        .weight = if (spec.focused) .semibold else .medium,
-        .family = .display,
-        .alignment = if (spec.presentation == .spatial) .center else .start,
-    });
-    if (spec.active) activeMark(tree, bounds);
-    if (spec.id != .none) tree.add(.{ .focus_frame = .{
-        .id = spec.id,
-        .state = if (spec.focused) .focused else .idle,
-        .bounds = bounds,
-        .presentation = .quiet,
-    } });
 }
 
 fn activeMark(tree: *scene.Tree, bounds: scene.Rect) void {
@@ -91,6 +84,7 @@ test "missing artwork remains an authored focus object" {
     const id = interaction.Id.scoped(.library, 3);
     add(&tree, game, .{ .bounds = .{ .x = 48, .y = 120, .width = 320, .height = 360 }, .id = id, .focused = true });
     try std.testing.expectEqual(id, tree.focusedId().?);
-    try std.testing.expect(tree.len >= 4);
+    try std.testing.expectEqual(@as(usize, 2), tree.len);
+    try std.testing.expectEqual(game.cover, tree.elements[0].cover.kind);
     try tree.validate();
 }

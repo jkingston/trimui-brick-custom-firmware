@@ -307,7 +307,6 @@ fn fingerprint(element: ui.Element) Signature {
             hashAny(&hash, value.dim);
             hashAny(&hash, value.tilt);
             hashAny(&hash, value.clip_left);
-            hashAny(&hash, value.plain_fallback);
         },
         inline else => |value| hashAny(&hash, value),
     }

@@ -71,6 +71,10 @@ select a `MotionRole`; they do not construct private motion styles.
 
 ## Visual language
 
+- Immersive and minimal are the same constraint: the game, physical-media
+  object, or current device state owns the scene while controls recede. Empty
+  chrome is not minimalism, and extra panels are not immersion. Prefer one
+  subject, one spatial relationship, and one immediate action.
 - Hierarchy comes from scale, spacing, weight, and composition—not decorative
   markers. Selection rails, glowing edges, nested pills, and ornamental cards
   are not part of Brick's language.
@@ -144,8 +148,9 @@ an independent `active` state. Density changes geometry and information amount;
 it must not swap to a different selection metaphor.
 
 Missing artwork is not an empty grey card. Use system name, title typography,
-and the same proportions as real artwork so a collection remains authored when
-metadata is incomplete.
+or an authentic physical-media form so a collection remains authored when
+metadata is incomplete. Bundled titles use authored covers. Browse preserves
+cover proportions and depth; it does not stretch art into a generic card.
 
 ### Values and visual evidence
 

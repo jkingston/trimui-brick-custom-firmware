@@ -49,26 +49,31 @@ fn controlTheme(source: Theme) Theme {
     return result;
 }
 
-fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const u8, context: []const u8, labels: []const []const u8, values: []const []const u8, selected: usize, back_label: []const u8, action_label: []const u8) Tree {
+fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const u8, context: []const u8, labels: []const []const u8, values: []const []const u8, selected: usize, back_label: []const u8, action_label: []const u8, game: ?catalog.Game) Tree {
     const theme = controlTheme(source_theme);
     var result = Tree{ .theme = theme, .background = theme.background };
     // Receding-room fallback: the game remains the dominant subject even when
     // no compositor-owned last frame is available. A future retained texture
     // can replace this left stage without changing control geometry or focus.
     textLabel(&result, .{ .x = 48, .y = 42, .width = 520, .height = 34 }, "QUICK SYSTEM", theme.muted, uiFont(21, 28, .semibold, .start));
-    result.add(.{ .text_block = .{
-        .bounds = .{ .x = 48, .y = 154, .width = 500, .height = 330 },
-        .title = context,
-        .detail = title,
-        .color = theme.text,
-        .detail_color = theme.accent,
-        .title_font = displayFont(58, 68, .semibold, .start),
-        .detail_font = uiFont(22, 30, .semibold, .start),
-        .lines = 3,
-        .detail_lines = 1,
-        .gap = 24,
-    } });
-    textLabel(&result, .{ .x = 48, .y = 548, .width = 500, .height = 70 }, "Paused. Ready to continue.", theme.muted, uiFont(24, 34, .regular, .start));
+    if (game) |current| {
+        game_object.add(&result, current, .{ .bounds = .{ .x = 72, .y = 106, .width = 300, .height = 390 }, .presentation = .cover, .dim = 42 });
+        textLabel(&result, .{ .x = 48, .y = 530, .width = 500, .height = 52 }, context, theme.text, uiFont(37, 46, .semibold, .start));
+        textLabel(&result, .{ .x = 48, .y = 582, .width = 500, .height = 34 }, title, theme.accent, uiFont(20, 28, .semibold, .start));
+    } else {
+        result.add(.{ .text_block = .{
+            .bounds = .{ .x = 48, .y = 154, .width = 500, .height = 330 },
+            .title = context,
+            .detail = title,
+            .color = theme.text,
+            .detail_color = theme.accent,
+            .title_font = displayFont(58, 68, .semibold, .start),
+            .detail_font = uiFont(22, 30, .semibold, .start),
+            .lines = 3,
+            .detail_lines = 1,
+            .gap = 24,
+        } });
+    }
 
     const step: u16 = if (labels.len > 5) 82 else 94;
     const top: u16 = if (labels.len > 5) 94 else 120;
@@ -88,7 +93,7 @@ pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state
     const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
     const values = [_][]const u8{ "", slots[state_slot], "", performance, "" };
-    var result = controlDeck(theme, .game_menu, "PAUSED", game_title, &labels, &values, selected, "Continue", "Select");
+    var result = controlDeck(theme, .game_menu, "PAUSED", game_title, &labels, &values, selected, "Continue", "Select", null);
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -96,10 +101,14 @@ pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state
 /// UX mock for the system-owned network route from a paused game. The actual
 /// Wi-Fi picker remains the same shell surface used from Settings.
 pub fn overlayPauseWithNetwork(theme: Theme, game_title: []const u8, selected: usize, state_slot: usize, performance: []const u8, network_status: []const u8, notice: []const u8) Tree {
+    return overlayPauseWithNetworkGame(theme, null, game_title, selected, state_slot, performance, network_status, notice);
+}
+
+pub fn overlayPauseWithNetworkGame(theme: Theme, game: ?catalog.Game, game_title: []const u8, selected: usize, state_slot: usize, performance: []const u8, network_status: []const u8, notice: []const u8) Tree {
     const labels = [_][]const u8{ "Continue", "Save state", "Load state", "Performance", "Network", "Save and exit" };
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
     const values = [_][]const u8{ "", slots[state_slot], "", performance, network_status, "" };
-    var result = controlDeck(theme, .game_menu_network, "PAUSED", game_title, &labels, &values, selected, "Continue", "Open");
+    var result = controlDeck(theme, .game_menu_network, "PAUSED", game_title, &labels, &values, selected, "Continue", "Open", game);
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -160,6 +169,10 @@ pub fn networkPrompt(theme: Theme, kind: NetworkPrompt, selected: usize) Tree {
 }
 
 pub fn overlayStates(theme: Theme, game_title: []const u8, selected: usize, notice: []const u8, available: [4]bool) Tree {
+    return overlayStatesGame(theme, null, game_title, selected, notice, available);
+}
+
+pub fn overlayStatesGame(theme: Theme, game: ?catalog.Game, game_title: []const u8, selected: usize, notice: []const u8, available: [4]bool) Tree {
     const labels = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3", "Automatic save" };
     const details = [_][]const u8{ "Manual save", "Manual save", "Manual save", "Latest session" };
     var result = Tree{ .theme = theme, .background = theme.background };
@@ -177,7 +190,7 @@ pub fn overlayStates(theme: Theme, game_title: []const u8, selected: usize, noti
         if (available[2]) details[2] else "Empty",
         if (available[3]) details[3] else "Empty",
     };
-    result = controlDeck(theme, .overlay_states, "LOAD STATE", game_title, &labels, &values, selected, "Game menu", if (available[selected]) "Load" else "Empty");
+    result = controlDeck(theme, .overlay_states, "LOAD STATE", game_title, &labels, &values, selected, "Game menu", if (available[selected]) "Load" else "Empty", game);
     if (notice.len != 0) showNotice(&result, notice);
     return result;
 }
@@ -243,7 +256,7 @@ pub fn homeSession(theme: Theme, selected: usize, recent: ?catalog.Game, resumab
     const detail: []const u8 = if (with_recent)
         (if (resumable) "Your last session is ready." else "Start the last game again.")
     else
-        "Your library is the shortest path from power-on to play.";
+        "";
     result.add(.{ .text_block = .{
         .bounds = .{ .x = 48, .y = 142, .width = if (with_recent) 510 else 820, .height = 300 },
         .title = title,
@@ -339,10 +352,10 @@ fn shelfPose(relative: i8, offset: i16) ShelfPose {
     const position = @as(i32, relative) * 1000 + offset;
     const distance = @abs(position);
     const center = 512 + @divTrunc(position * 278, 1000);
-    const width: i32 = if (distance < 1000) 390 - @as(i32, @intCast(distance * 170 / 1000)) else 220;
-    const height: i32 = if (distance < 1000) 330 - @as(i32, @intCast(distance * 70 / 1000)) else 260;
+    const width: i32 = if (distance < 1000) 300 - @as(i32, @intCast(distance * 80 / 1000)) else 220;
+    const height: i32 = if (distance < 1000) 400 - @as(i32, @intCast(distance * 100 / 1000)) else 300;
     return .{
-        .bounds = .{ .x = @intCast(@max(0, center - @divTrunc(width, 2))), .y = @intCast(154 + @divTrunc(330 - height, 2)), .width = @intCast(width), .height = @intCast(height) },
+        .bounds = .{ .x = @intCast(@max(0, center - @divTrunc(width, 2))), .y = @intCast(122 + @divTrunc(400 - height, 2)), .width = @intCast(width), .height = @intCast(height) },
         .clip_left = @intCast(@max(0, @divTrunc(width, 2) - center)),
         .dim = @intCast(@min(71, distance * 71 / 1000)),
         .tilt = 0,
@@ -352,8 +365,8 @@ fn shelfPose(relative: i8, offset: i16) ShelfPose {
 pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) Tree {
     const failed = launch_failed != null;
     var result = Tree{ .theme = theme, .background = theme.background };
-    header(&result, if (failed) "Unable to start" else "Starting game");
-    artwork(&result, game, .{ .x = 48, .y = 154, .width = 348, .height = 392 }, false, true, null, if (failed) 28 else 0, 0);
+    if (failed) header(&result, "Unable to start");
+    artwork(&result, game, .{ .x = 48, .y = if (failed) 154 else 120, .width = 348, .height = if (failed) 392 else 430 }, false, true, null, if (failed) 28 else 0, 0);
 
     var title_font = font.body;
     title_font.size = 50;
@@ -370,10 +383,10 @@ pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) 
         .gap = 18,
     } });
     if (failed) {
-        components.feedbackBanner(&result, .{ .x = 452, .y = 430, .width = 524, .height = 84 }, .{ .kind = .failure, .message = launch_failed.? });
+        textLabel(&result, .{ .x = 452, .y = 430, .width = 524, .height = 52 }, launch_failed.?, theme.text, uiFont(28, 40, .regular, .start));
         footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Retry" } });
     } else {
-        textLabel(&result, .{ .x = 452, .y = 454, .width = 430, .height = 42 }, "Preparing game", theme.muted, font.caption);
+        textLabel(&result, .{ .x = 452, .y = 454, .width = 430, .height = 42 }, "Starting", theme.muted, font.caption);
         components.activity(&result, .{ .x = 910, .y = 458, .width = 48, .height = 28 }, theme.accent);
     }
     return result;
@@ -455,10 +468,10 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
         return result;
     }
     const note: []const u8 = switch (item) {
-        .display_timeout => "Turn off the display after inactivity. The device remains awake.",
-        .suspend_timeout => "Enter low-power sleep after inactivity when available. Bluetooth disconnects.",
-        .performance => "Balances responsiveness and power use. Demanding games may need Performance.",
-        .reduced_motion => "Removes shelf animation and settles movement immediately.",
+        .display_timeout => "The device stays awake.",
+        .suspend_timeout => "Bluetooth disconnects during sleep.",
+        .performance => "Balance response and battery life.",
+        .reduced_motion => "Settle movement immediately.",
         else => "",
     };
     return choice(theme, settings_model.title(item), settings_model.labels(item), selected, active, note, "Settings");
@@ -681,11 +694,15 @@ test "game launch owns activity while launch failure remains terminal" {
 }
 
 pub fn saveSlots(theme: Theme, title: []const u8, selected: usize, available: [4]bool) Tree {
+    return saveSlotsGame(theme, null, title, selected, available);
+}
+
+pub fn saveSlotsGame(theme: Theme, game: ?catalog.Game, title: []const u8, selected: usize, available: [4]bool) Tree {
     const labels = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
     const values = [_][]const u8{
         if (available[0]) "Replace saved state" else "Empty",
         if (available[1]) "Replace saved state" else "Empty",
         if (available[2]) "Replace saved state" else "Empty",
     };
-    return controlDeck(theme, .save_slots, "SAVE STATE", title, &labels, &values, selected, "Game menu", "Save");
+    return controlDeck(theme, .save_slots, "SAVE STATE", title, &labels, &values, selected, "Game menu", "Save", game);
 }

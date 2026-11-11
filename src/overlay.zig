@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const catalog = @import("catalog.zig");
 const input = @import("input.zig");
 const ui = @import("ui.zig");
 
@@ -20,6 +21,7 @@ pub const Model = struct {
     performance_profile: usize = 1,
     title: []const u8 = "Game",
     system: []const u8 = "",
+    game: ?catalog.Game = null,
     notice: []const u8 = "",
     notice_kind: ui.FeedbackKind = .success,
     saved: bool = false,
@@ -115,9 +117,9 @@ pub const Model = struct {
     pub fn tree(self: *const Model) ui.Tree {
         const performance_values = [_][]const u8{ "Power saver", "Balanced", "Performance" };
         var result = switch (self.layer) {
-            .pause => ui.overlayPauseWithNetwork(self.appearance.colors(), self.title, self.selected, self.save_slot, performance_values[self.performance_profile], self.network_status, ""),
-            .states => ui.overlayStates(self.appearance.colors(), self.title, self.state_slot, "", self.available),
-            .save_slots => ui.saveSlots(self.appearance.colors(), self.title, self.save_slot, self.available),
+            .pause => ui.overlayPauseWithNetworkGame(self.appearance.colors(), self.game, self.title, self.selected, self.save_slot, performance_values[self.performance_profile], self.network_status, ""),
+            .states => ui.overlayStatesGame(self.appearance.colors(), self.game, self.title, self.state_slot, "", self.available),
+            .save_slots => ui.saveSlotsGame(self.appearance.colors(), self.game, self.title, self.save_slot, self.available),
             .replace_confirm => ui.confirmation(self.appearance.colors(), "Replace saved state", "Replace this saved state?", "The existing state in this slot will be replaced.", "Replace state", self.confirmation),
             .load_confirm => ui.confirmation(self.appearance.colors(), "Load saved state", "Return to this saved state?", "Progress since that state will be lost.", "Load state", self.confirmation),
             .performance => ui.choice(self.appearance.colors(), "Performance", &performance_values, self.selected, self.performance_profile, "Balances responsiveness and power use.", "Game menu"),
@@ -280,4 +282,18 @@ test "back returns from submenus and Menu resumes from every layer" {
         _ = state.apply(.menu);
         try std.testing.expectEqual(Command.resume_game, state.takeCommand().?);
     }
+}
+
+test "state layers preserve the paused game object" {
+    var state = Model{ .game = catalog.games[0], .title = catalog.games[0].title, .layer = .states, .available = .{ true, false, false, true } };
+    var tree = state.tree();
+    var has_cover = false;
+    for (tree.slice()) |element| has_cover = has_cover or element == .cover;
+    try std.testing.expect(has_cover);
+
+    state.layer = .save_slots;
+    tree = state.tree();
+    has_cover = false;
+    for (tree.slice()) |element| has_cover = has_cover or element == .cover;
+    try std.testing.expect(has_cover);
 }

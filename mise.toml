@@ -31,9 +31,10 @@ zig build -Dtarget=aarch64-linux-gnu -Dcpu=cortex_a53 -Doptimize=ReleaseSmall \
 # Includes three retained layer pairs, the deterministic screen oracle, and the
 # shared interaction-state, press/boundary feedback, feedback-lifecycle,
 # focus/navigation/viewport/activity/keyboard/card motion, retained scenes,
-# contextual-launch and latency. The 968 KiB ceiling includes the reusable
-# action-card renderer and keeps a measured limit rather than dropping it.
-test "$(stat -c %s output/check/bin/brick-shell)" -le 991232
+# contextual-launch and latency. The 976 KiB ceiling includes immersive
+# cover fallbacks and the game-aware Quick system while retaining a measured
+# device budget rather than dropping the limit.
+test "$(stat -c %s output/check/bin/brick-shell)" -le 999424
 '''
 
 [tasks.check]

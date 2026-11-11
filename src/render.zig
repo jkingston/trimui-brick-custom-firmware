@@ -393,12 +393,6 @@ pub const Surface = struct {
             if (cartridge.selected) self.stroke(bounds, cartridge.style.edge, if (cartridge.state == .pressed or cartridge.state == .boundary) 6 else 4);
             return;
         }
-        if (cartridge.plain_fallback) {
-            self.fill(bounds, cartridge.style.surface);
-            self.drawTextBounded(bounds.x + 16, bounds.y + bounds.height / 2, bounds.width -| 32, "No artwork", cartridge.style.text, font.caption);
-            if (cartridge.selected) self.stroke(bounds, cartridge.style.edge, if (cartridge.state == .pressed or cartridge.state == .boundary) 6 else 4);
-            return;
-        }
         const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
             .{ .width = 15, .height = 9 }
         else if (platformIs(cartridge.platform, "snes"))

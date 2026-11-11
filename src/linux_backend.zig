@@ -1095,6 +1095,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
             .reduced_motion = state.settings.reduced_motion,
             .title = game.title,
             .system = game.system,
+            .game = game.*,
             .performance_profile = @backingInt(state.settings.performance),
         };
         game_session: while (true) {

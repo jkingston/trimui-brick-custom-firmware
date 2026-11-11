@@ -367,7 +367,15 @@ pub fn main(init: std.process.Init) !void {
                     navigation.cancel();
                     layout.cancel();
                     overlay_visible = !overlay_visible;
-                    if (overlay_visible) game_overlay = .{};
+                    if (overlay_visible) {
+                        game_overlay = .{ .appearance = state.settings.appearance, .reduced_motion = state.settings.reduced_motion };
+                        if (state.games.len != 0) {
+                            const game = state.games[@min(state.game_index, state.games.len - 1)];
+                            game_overlay.title = game.title;
+                            game_overlay.system = game.system;
+                            game_overlay.game = game;
+                        }
+                    }
                     repeat.reset();
                     changed = true;
                 } else if (actionForKey(key)) |pressed| {
