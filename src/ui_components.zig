@@ -134,6 +134,31 @@ pub fn activity(result: *ui.Tree, bounds: ui.Rect, color: ui.Color) void {
     result.add(.{ .activity = .{ .bounds = bounds, .color = color } });
 }
 
+/// Shared transient or terminal status surface. Meaning is carried by a
+/// compact trailing status mark and copy, never by a decorative edge stripe.
+pub fn feedbackBanner(result: *ui.Tree, bounds: ui.Rect, feedback: Feedback) void {
+    if (!feedback.visible()) return;
+    const marker = switch (feedback.kind) {
+        .failure => result.theme.danger,
+        .warning => result.theme.muted,
+        .progress, .success => result.theme.accent,
+    };
+    result.add(.{ .bar = .{ .bounds = bounds, .color = result.theme.surface, .radius = geometry.radius } });
+    const status_width: u16 = 58;
+    var message_font = font.control;
+    message_font.ink_centered = true;
+    text(result, .{ .x = bounds.x + 18, .y = bounds.y + (bounds.height -| message_font.line_height) / 2, .width = bounds.width - 36 - status_width, .height = message_font.line_height }, feedback.message, result.theme.text, message_font);
+    const status = ui.Rect{ .x = bounds.x + bounds.width - 18 - status_width, .y = bounds.y + (bounds.height -| 32) / 2, .width = status_width, .height = 32 };
+    if (feedback.kind == .progress) {
+        activity(result, status, marker);
+    } else {
+        var status_font = font.control;
+        status_font.alignment = .center;
+        status_font.ink_centered = true;
+        text(result, status, if (feedback.kind == .success) "✓" else "!", marker, status_font);
+    }
+}
+
 pub const KeyboardInput = struct {
     selected: u8,
     uppercase: bool = false,
@@ -218,23 +243,55 @@ pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void
 
 pub fn footer(result: *ui.Tree, items: []const Hint) void {
     if (items.len == 0) return;
+    std.debug.assert(items.len <= 8);
     const bounds = ui.Rect{ .x = design.spacing.margin, .y = geometry.footer_y, .width = geometry.width - 2 * design.spacing.margin, .height = 44 };
     result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y - 24, .width = bounds.width, .height = 1 }, .color = result.theme.border } });
 
     const anchored_left = items[0].control == .back or items[0].control == .menu;
     const first_right: usize = if (anchored_left) 1 else 0;
+    var label_widths: [8]u16 = @splat(0);
+    var left_width: u16 = 0;
     if (anchored_left) {
-        const width = hintWidth(items[0]);
-        hint(result, bounds.x, bounds.y, width - hintIconWidth(items[0]) - geometry.hint_gap / 2, items[0]);
+        label_widths[0] = @min(desiredLabelWidth(items[0]), 240);
+        left_width = hintWidth(items[0], label_widths[0]);
+        hint(result, bounds.x, bounds.y, label_widths[0], items[0]);
+    }
+
+    const right_count = items.len - first_right;
+    const group_gap: u16 = 28;
+    const separation: u16 = if (anchored_left and right_count != 0) 48 else 0;
+    const right_available = bounds.width -| left_width -| separation;
+    var fixed_width: u16 = if (right_count > 1) @as(u16, @intCast(right_count - 1)) * group_gap else 0;
+    var desired_total: u16 = 0;
+    for (items[first_right..], first_right..) |item, item_index| {
+        fixed_width +|= hintIconWidth(item) + geometry.hint_gap / 2;
+        label_widths[item_index] = desiredLabelWidth(item);
+        desired_total +|= label_widths[item_index];
+    }
+    const label_budget = right_available -| fixed_width;
+    if (desired_total > label_budget and right_count != 0) {
+        // Preserve the immediate/confirm action at the far right. Supporting
+        // controls progressively become icon-only before groups can collide.
+        const last = items.len - 1;
+        label_widths[last] = @min(label_widths[last], label_budget);
+        var remaining = label_budget - label_widths[last];
+        var support_total: u16 = 0;
+        for (first_right..last) |item_index| support_total +|= label_widths[item_index];
+        for (first_right..last) |item_index| {
+            const desired = label_widths[item_index];
+            label_widths[item_index] = if (support_total == 0) 0 else @intCast(@as(u32, desired) * remaining / support_total);
+            remaining -|= label_widths[item_index];
+            support_total -|= desired;
+        }
     }
 
     var cursor: u16 = bounds.x + bounds.width;
     var index = items.len;
     while (index > first_right) {
         index -= 1;
-        const width = hintWidth(items[index]);
+        const width = hintWidth(items[index], label_widths[index]);
         cursor -|= width;
-        hint(result, cursor, bounds.y, width - hintIconWidth(items[index]) - geometry.hint_gap / 2, items[index]);
+        hint(result, cursor, bounds.y, label_widths[index], items[index]);
         if (index > first_right) cursor -|= 28;
     }
 }
@@ -246,8 +303,11 @@ fn hintIconWidth(item: Hint) u16 {
     };
 }
 
-fn hintWidth(item: Hint) u16 {
-    const label_width: u16 = @intCast(@min(@as(usize, 180), item.label.len * 24));
+fn desiredLabelWidth(item: Hint) u16 {
+    return @intCast(@min(@as(usize, 240), item.label.len * 22));
+}
+
+fn hintWidth(item: Hint, label_width: u16) u16 {
     return hintIconWidth(item) + geometry.hint_gap / 2 + label_width;
 }
 
@@ -277,6 +337,16 @@ test "four long footer controls use bounded non-overlapping slots" {
             inline else => |value| value.bounds,
         };
         try @import("std").testing.expect(@as(u32, bounds.x) + bounds.width <= geometry.width);
+    }
+    for (tree.slice(), 0..) |element, index| {
+        if (element != .text or std.mem.eql(u8, element.text.value, "A") or std.mem.eql(u8, element.text.value, "B")) continue;
+        const label = element.text;
+        for (tree.slice()[index + 1 ..]) |other| {
+            if (other != .text or std.mem.eql(u8, other.text.value, "A") or std.mem.eql(u8, other.text.value, "B")) continue;
+            const separate = @as(u32, label.bounds.x) + label.bounds.width <= other.text.bounds.x or
+                @as(u32, other.text.bounds.x) + other.text.bounds.width <= label.bounds.x;
+            try @import("std").testing.expect(separate);
+        }
     }
 }
 
@@ -325,6 +395,16 @@ test "activity declaration is renderer-neutral" {
     var tree = ui.Tree{ .theme = theme, .background = theme.background };
     activity(&tree, .{ .x = 10, .y = 20, .width = 48, .height = 26 }, theme.accent);
     try @import("std").testing.expect(tree.hasActivity());
+}
+
+test "feedback banner uses a trailing semantic mark without an edge stripe" {
+    const theme = @import("theme.zig").light;
+    var tree = ui.Tree{ .theme = theme, .background = theme.background };
+    feedbackBanner(&tree, .{ .x = 48, .y = 600, .width = 928, .height = 56 }, .{ .kind = .failure, .message = "Could not connect" });
+    try @import("std").testing.expectEqual(@as(usize, 3), tree.len);
+    try @import("std").testing.expectEqual(@as(u16, 928), tree.elements[0].bar.bounds.width);
+    try @import("std").testing.expectEqual("!", tree.elements[2].text.value);
+    try @import("std").testing.expectEqual(theme.danger, tree.elements[2].text.color);
 }
 
 test "feedback lifecycle does not leave completion notices indefinitely" {

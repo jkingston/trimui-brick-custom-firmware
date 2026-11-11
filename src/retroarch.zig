@@ -24,12 +24,12 @@ pub const Failure = enum {
 
     pub fn message(self: Failure) []const u8 {
         return switch (self) {
-            .missing_core => "EMULATOR NOT INSTALLED",
-            .missing_content => "GAME FILE UNAVAILABLE",
-            .missing_bios => "ADD NEOGEO.ZIP TO BIOS",
-            .save_storage => "SAVE STORAGE UNAVAILABLE",
-            .legacy_conflict => "LEGACY SAVES NEED REVIEW",
-            .emulator => "GAME FAILED - SEE LAST LOG",
+            .missing_core => "Emulator not installed",
+            .missing_content => "Game file unavailable",
+            .missing_bios => "Neo Geo BIOS is missing",
+            .save_storage => "Save storage unavailable",
+            .legacy_conflict => "Legacy saves need review",
+            .emulator => "Game could not start",
         };
     }
 

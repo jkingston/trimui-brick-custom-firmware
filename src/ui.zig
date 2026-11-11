@@ -328,8 +328,7 @@ pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?[]const u8) 
         .gap = 18,
     } });
     if (failed) {
-        result.add(.{ .bar = .{ .bounds = .{ .x = 452, .y = 438, .width = 6, .height = 84 }, .color = theme.danger } });
-        result.add(.{ .text = .{ .bounds = .{ .x = 478, .y = 438, .width = 498, .height = 84 }, .value = launch_failed.?, .color = theme.text, .font = font.caption, .lines = 2 } });
+        components.feedbackBanner(&result, .{ .x = 452, .y = 430, .width = 524, .height = 84 }, .{ .kind = .failure, .message = launch_failed.? });
         footer(&result, &.{ .{ .control = .back, .label = "Games" }, .{ .control = .confirm, .label = "Retry" } });
     } else {
         textLabel(&result, .{ .x = 452, .y = 454, .width = 430, .height = 42 }, "Preparing game", theme.muted, font.caption);
@@ -495,17 +494,10 @@ pub fn languageProof(theme: Theme) Tree {
 
 pub fn showFeedback(tree: *Tree, feedback: Feedback) void {
     if (!feedback.visible()) return;
-    const bounds = Rect{ .x = layout.margin, .y = layout.footer_y - 58, .width = geometry.width - 2 * layout.margin, .height = 50 };
-    const marker = switch (feedback.kind) {
-        .failure => tree.theme.danger,
-        .warning => tree.theme.muted,
-        .progress, .success => tree.theme.accent,
-    };
-    tree.add(.{ .bar = .{ .bounds = bounds, .color = tree.theme.surface } });
-    tree.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y, .width = 6, .height = bounds.height }, .color = marker } });
-    const activity_width: u16 = if (feedback.kind == .progress) 58 else 0;
-    textLabel(tree, .{ .x = bounds.x + 22, .y = bounds.y + 5, .width = bounds.width - 38 - activity_width, .height = 40 }, feedback.message, tree.theme.text, font.control);
-    if (feedback.kind == .progress) components.activity(tree, .{ .x = bounds.x + bounds.width - 70, .y = bounds.y + 12, .width = 48, .height = 26 }, marker);
+    // Keep transient feedback above the footer keyline so action hints remain
+    // stable and readable while status comes and goes.
+    const bounds = Rect{ .x = layout.margin, .y = layout.footer_y - 82, .width = geometry.width - 2 * layout.margin, .height = 50 };
+    components.feedbackBanner(tree, bounds, feedback);
 }
 
 pub fn showNotice(tree: *Tree, notice: []const u8) void {

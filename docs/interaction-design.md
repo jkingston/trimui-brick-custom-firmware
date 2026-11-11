@@ -53,6 +53,9 @@ select a `MotionRole`; they do not construct private motion styles.
   typefaces in a screen.
 - Footers are one hairline action rail: navigation/context at the left,
   immediate actions grouped at the right. Keep labels short and action-led.
+  The shared footer preserves the primary action and collapses supporting
+  labels toward icon-only before controls can collide; screens never assign
+  footer slots.
 
 ## Interaction states
 
@@ -157,6 +160,11 @@ indicator and `activity_motion.Controller` owns its cadence. Screens must not
 draw private spinners or choose animation timing. Reduced motion preserves the
 busy signal as three static dots rather than removing it. Progress copy omits
 trailing ellipses because the activity indicator already communicates continuation.
+
+Use `ui_components.feedbackBanner()` for transient or terminal status. It uses
+one quiet surface with a trailing semantic mark. Do not use coloured edge
+stripes, toast shadows, or a new status ornament per screen. Failure copy is
+sentence case and says what happened; recovery belongs to the available action.
 
 Game launch is the same contract at page scale: reveal the selected game's
 launch destination before synchronous preparation begins, start shared activity
