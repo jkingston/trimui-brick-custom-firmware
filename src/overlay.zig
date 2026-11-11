@@ -108,7 +108,7 @@ pub const Model = struct {
             .save_slots => ui.saveSlotsGame(self.appearance.colors(), self.game, self.title, self.save_slot, self.available),
             .replace_confirm => ui.confirmation(self.appearance.colors(), "Replace saved state", "Replace this saved state?", "The existing state in this slot will be replaced.", "Replace state", self.confirmation),
             .load_confirm => ui.confirmation(self.appearance.colors(), "Load saved state", "Return to this saved state?", "Progress since that state will be lost.", "Load state", self.confirmation),
-            .failure => ui.confirmation(self.appearance.colors(), "Unable to save", "State was not saved", self.notice, "Try again", self.confirmation),
+            .failure => ui.confirmation(self.appearance.colors(), "Save state", "State not saved", self.notice, "Try again", self.confirmation),
         };
         if (self.layer != .failure and self.notice.len != 0)
             ui.showFeedback(&result, .{ .kind = self.notice_kind, .message = self.notice });

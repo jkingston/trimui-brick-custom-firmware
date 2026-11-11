@@ -432,6 +432,7 @@ A new interactive component is not complete until:
 - forward/back focus restoration is tested;
 - routine page changes use shared press-cut handling; connected handoffs use the shared navigation controller and cancel cleanly;
 - reduced motion, muted sound, and disabled haptics preserve usability;
+- semantic text colours pass the shared contrast tests in both appearances;
 - deterministic unit tests cover its state transitions and motion endpoints;
 - active animation cannot block beyond its next frame deadline;
 - the physical-device pass checks frame cadence and button-to-photon latency.

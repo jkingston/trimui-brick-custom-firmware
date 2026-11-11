@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+const std = @import("std");
 const Color = @import("color.zig").Color;
 
 pub const Mode = enum {
@@ -39,7 +40,7 @@ pub const light = Theme{
     .surface = rgb(0xe3e2dc),
     .text = rgb(0x0d1111),
     .muted = rgb(0x626a69),
-    .accent = rgb(0x007f86),
+    .accent = rgb(0x00757c),
     .selection = rgb(0x0d1111),
     .selection_text = rgb(0xf7f7f2),
     .border = rgb(0xc4c8c5),
@@ -64,3 +65,28 @@ pub const dark = Theme{
     .scrim = rgb(0x050707),
     .on_scrim = rgb(0xf2f2ec),
 };
+
+fn linearChannel(value: u8) f64 {
+    const channel: f64 = @as(f64, @floatFromInt(value)) / 255.0;
+    return if (channel <= 0.04045) channel / 12.92 else std.math.pow(f64, (channel + 0.055) / 1.055, 2.4);
+}
+
+fn luminance(color: Color) f64 {
+    return 0.2126 * linearChannel(color.r) + 0.7152 * linearChannel(color.g) + 0.0722 * linearChannel(color.b);
+}
+
+fn contrast(first: Color, second: Color) f64 {
+    const a = luminance(first);
+    const b = luminance(second);
+    return (@max(a, b) + 0.05) / (@min(a, b) + 0.05);
+}
+
+test "semantic text colours remain legible in both appearances" {
+    for ([_]Theme{ light, dark }) |theme| {
+        try std.testing.expect(contrast(theme.text, theme.background) >= 7.0);
+        try std.testing.expect(contrast(theme.muted, theme.background) >= 4.5);
+        try std.testing.expect(contrast(theme.accent, theme.background) >= 4.5);
+        try std.testing.expect(contrast(theme.danger, theme.background) >= 4.5);
+        try std.testing.expect(contrast(theme.selection_text, theme.selection) >= 7.0);
+    }
+}

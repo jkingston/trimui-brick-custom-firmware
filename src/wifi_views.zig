@@ -15,7 +15,7 @@ pub fn wifi(theme: Theme, selected: usize, status: []const u8, primary: []const 
     components.header(&result, "Wi-Fi sign in");
     result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 116, .width = 928, .height = 52 }, .value = status, .color = theme.muted, .font = font.caption } });
     const labels = [_][]const u8{ primary, "Manual URL and QR" };
-    const details = [_][]const u8{ "", if (has_url) "Open on another device" else "Portal URL unavailable" };
+    const details = [_][]const u8{ "", if (has_url) "Open on another device" else "No sign-in link was found" };
     for (labels, details, 0..) |label, detail, index| {
         var row = components.selectable(.wifi_signin, index, selected == index, .{ .x = 28, .y = 210 + @as(u16, @intCast(index)) * 112, .width = 968, .height = 104 }, label);
         row.detail = detail;

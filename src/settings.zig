@@ -178,9 +178,9 @@ pub fn labels(setting: Setting) []const []const u8 {
 pub fn title(setting: Setting) []const u8 {
     return switch (setting) {
         .brightness => "Brightness",
-        .performance => "Performance",
+        .performance => "Power mode",
         .display_timeout => "Screen off",
-        .suspend_timeout => "Suspend",
+        .suspend_timeout => "Auto sleep",
         .appearance => "Appearance",
         .reduced_motion => "Reduced motion",
     };

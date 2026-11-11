@@ -119,7 +119,7 @@ pub fn setting(item: settings_model.Setting, selected: usize, active: usize, val
 
 pub fn settings(selected: usize, values: settings_model.Values, wifi_summary: []const u8, bluetooth_summary: []const u8) scene.Tree {
     const theme = values.appearance.colors();
-    const items = [_][]const u8{ "Brightness", "Performance", "Screen off", "Suspend", "Appearance", "Reduced motion", "Wi-Fi", "Bluetooth", "Power" };
+    const items = [_][]const u8{ "Brightness", "Power mode", "Screen off", "Auto sleep", "Appearance", "Reduced motion", "Wi-Fi", "Bluetooth", "Power" };
     const details = [_][]const u8{ settings_model.brightnessTone(values.brightness), values.value(.performance), values.value(.display_timeout), values.value(.suspend_timeout), values.value(.appearance), values.value(.reduced_motion), wifi_summary, bluetooth_summary, "Power controls" };
     const groups = [_][]const u8{ "DISPLAY", "SYSTEM", "DISPLAY", "POWER", "INTERFACE", "INTERFACE", "CONNECTION", "CONNECTION", "DEVICE" };
     const stage_labels = [_][]const u8{ "PANEL OUTPUT", "POWER MODE", "SCREEN REST", "DEVICE SLEEP", "VISUAL ENVIRONMENT", "MOVEMENT", "NETWORK", "WIRELESS", "POWER" };

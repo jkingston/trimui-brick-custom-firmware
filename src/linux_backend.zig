@@ -421,7 +421,7 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
         if (settings.apply(io, state.settings, setting)) |_| {
             state.feedback = .{ .kind = .success, .message = switch (setting) {
                 .brightness => "Brightness saved",
-                .performance => "Performance mode saved",
+                .performance => "Power mode saved",
                 .display_timeout => "Screen-off timeout saved",
                 .suspend_timeout => "Suspend timeout saved",
                 .appearance => "Appearance changed",
@@ -429,7 +429,14 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
             } };
         } else |_| {
             state.settings = settings.load(io);
-            state.feedback = .{ .kind = .failure, .message = "Could not apply setting" };
+            state.feedback = .{ .kind = .failure, .message = switch (setting) {
+                .brightness => "Brightness is unchanged",
+                .performance => "Power mode is unchanged",
+                .display_timeout => "Screen-off timing is unchanged",
+                .suspend_timeout => "Sleep timing is unchanged",
+                .appearance => "Appearance is unchanged",
+                .reduced_motion => "Motion setting is unchanged",
+            } };
         }
     }
     if (state.takeWifiRequest()) |pending| {
@@ -479,7 +486,11 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
         }, "");
         try display.show(&status);
         performPower(io, command) catch {
-            state.feedback = .{ .kind = .failure, .message = if (command == .suspend_device) "Unable to sleep. The device is still awake." else "Could not complete power action" };
+            state.feedback = .{ .kind = .failure, .message = switch (command) {
+                .screen_off => "The screen is still on",
+                .suspend_device => "The device is still awake",
+                .shutdown => "The device is still on",
+            } };
         };
         state.page = .foyer;
         state.selected = 0;
@@ -1099,7 +1110,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
                         if (!game_overlay.available[3]) {
                             game_overlay.layer = .failure;
                             game_overlay.failed_command = .exit_game;
-                            game_overlay.notice = "No automatic state was saved. Return to the game and try again.";
+                            game_overlay.notice = "Continue the game, then try again.";
                             game_overlay.notice_kind = .failure;
                             continue;
                         }
@@ -1111,7 +1122,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
                             game_overlay.layer = .failure;
                             game_overlay.confirmation = 0;
                             game_overlay.failed_command = .save_state;
-                            game_overlay.notice = "Could not write the saved state. Check free space on the SD card.";
+                            game_overlay.notice = "Check available space, then try again.";
                             game_overlay.notice_kind = .failure;
                             std.log.err("Failed to save state: {s}", .{@errorName(err)});
                             continue;
@@ -1125,7 +1136,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
                     .load_state => {
                         retroarch.loadState(io, game, state.games, game_overlay.state_slot) catch |err| {
                             game_overlay.layer = .states;
-                            game_overlay.notice = "Could not load that saved state";
+                            game_overlay.notice = "That saved state didn't open";
                             game_overlay.notice_kind = .failure;
                             std.log.err("Failed to load state: {s}", .{@errorName(err)});
                             continue;

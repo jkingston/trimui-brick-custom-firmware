@@ -234,7 +234,7 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         }
         if (std.mem.eql(u8, screen, "overlay-brightness")) game_overlay.selected = 3;
         if (std.mem.eql(u8, screen, "overlay-states")) game_overlay.available = .{ true, false, false, true };
-        if (game_overlay.layer == .failure) game_overlay.notice = "The state could not be saved. The game is still open.";
+        if (game_overlay.layer == .failure) game_overlay.notice = "Check available space, then try again.";
         break :blk game_overlay.tree();
     } else state.tree();
     try tree.validate();
