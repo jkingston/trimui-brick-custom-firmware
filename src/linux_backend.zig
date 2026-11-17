@@ -990,29 +990,120 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
         const game_index = boot_game orelse (try runSession(io, &state, false)) orelse continue;
         boot_game = null;
         const game = &state.games[game_index];
-        const term = retroarch.launch(io, game, state.games) catch |err| {
-            state.launchFailed(retroarch.Failure.fromError(err));
-            continue;
+        var game_overlay = overlay.Model{
+            .appearance = state.settings.appearance,
+            .reduced_motion = state.settings.reduced_motion,
+            .title = game.title,
+            .system = game.system,
+            .game = game.*,
+            .brightness = state.settings.brightness,
         };
-        switch (term) {
-            .exited => |status| if (status != 0) {
-                state.launchFailed(.emulator);
-                continue;
-            },
-            else => {
-                state.launchFailed(.emulator);
-                continue;
-            },
-        }
-        state.recordPlayed(game_index);
-        state.resumable = retroarch.availableStates(io, game)[3];
-        saveLibraryPreferences(io, &state);
-        state.launch_failed = null;
-        state.page = .games;
-        if (state.collection().positionOf(game_index)) |position| {
-            state.library_selection = position;
-            state.selected = position;
-            state.library_preview = position;
+        game_session: while (true) {
+            const term = retroarch.launch(io, game, state.games) catch |err| {
+                state.launchFailed(retroarch.Failure.fromError(err));
+                break :game_session;
+            };
+            switch (term) {
+                .exited => |status| if (status != 0) {
+                    state.launchFailed(.emulator);
+                    break :game_session;
+                },
+                else => {
+                    state.launchFailed(.emulator);
+                    break :game_session;
+                },
+            }
+            state.recordPlayed(game_index);
+            state.resumable = retroarch.availableStates(io, game)[3];
+            saveLibraryPreferences(io, &state);
+            if (retroarch.takeAudioLoss())
+                game_overlay.notice = "Bluetooth audio disconnected. Reconnect it, then relaunch the game.";
+
+            while (true) {
+                refreshWifi(&state);
+                game_overlay.network_status = state.wifi.wifi_state.snapshot.settingsSummary();
+                game_overlay.battery_percent = batteryPercent(io);
+                game_overlay.network_indicator = switch (state.wifi.wifi_state.snapshot.connectivity) {
+                    .internet => .connected,
+                    .local, .captive, .limited => .attention,
+                    .none => .hidden,
+                };
+                game_overlay.audio_selected = retroarch.gameAudioSelected(io);
+                game_overlay.available = retroarch.availableStates(io, game);
+                switch (try runOverlay(io, &game_overlay)) {
+                    .resume_game => {
+                        game_overlay.layer = .pause;
+                        game_overlay.selected = 0;
+                        continue :game_session;
+                    },
+                    .exit_game => {
+                        if (!game_overlay.available[3]) {
+                            game_overlay.layer = .failure;
+                            game_overlay.failed_command = .exit_game;
+                            game_overlay.notice = "Continue the game, then try again.";
+                            continue;
+                        }
+                        state.launch_failed = null;
+                        state.page = .games;
+                        if (state.collection().positionOf(game_index)) |position| {
+                            state.library_selection = position;
+                            state.selected = position;
+                            state.library_preview = position;
+                        }
+                        break :game_session;
+                    },
+                    .save_state => {
+                        retroarch.saveState(io, game, state.games, game_overlay.save_slot) catch |err| {
+                            game_overlay.saved = false;
+                            game_overlay.layer = .failure;
+                            game_overlay.confirmation = 0;
+                            game_overlay.failed_command = .save_state;
+                            game_overlay.notice = "Check available space, then try again.";
+                            std.log.err("Failed to save state: {s}", .{@errorName(err)});
+                            continue;
+                        };
+                        game_overlay.layer = .pause;
+                        game_overlay.selected = 1;
+                        game_overlay.saved = true;
+                        game_overlay.notice = "State saved";
+                    },
+                    .load_state => {
+                        retroarch.loadState(io, game, state.games, game_overlay.state_slot) catch |err| {
+                            game_overlay.layer = .states;
+                            game_overlay.notice = "That saved state didn't open";
+                            std.log.err("Failed to load state: {s}", .{@errorName(err)});
+                            continue;
+                        };
+                        game_overlay.notice = "";
+                        game_overlay.layer = .pause;
+                        game_overlay.selected = 0;
+                        continue :game_session;
+                    },
+                    .apply_brightness => {
+                        state.settings.brightness = game_overlay.brightness;
+                        settings.apply(io, state.settings, .brightness) catch |err| {
+                            state.settings = settings.load(io);
+                            game_overlay.brightness = state.settings.brightness;
+                            game_overlay.notice = "Brightness did not change";
+                            std.log.err("Failed to apply brightness: {s}", .{@errorName(err)});
+                        };
+                    },
+                    .network_settings => {
+                        state.page = .wifi;
+                        state.selected = 0;
+                        state.wifi.page = .list;
+                        _ = try runSession(io, &state, true);
+                        const resume_game = state.page == .games;
+                        state.page = .games;
+                        state.selected = 0;
+                        if (resume_game) {
+                            game_overlay.layer = .pause;
+                            game_overlay.selected = 0;
+                            continue :game_session;
+                        }
+                    },
+                }
+            }
         }
     }
 }

@@ -1,0 +1,218 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Brick Linux <brick-linux@localhost>
+Date: Tue, 17 Nov 2026 00:00:00 +0000
+Subject: [PATCH] plain_drm: create format-correct framebuffers
+
+The legacy ADDFB ioctl was called with depth 24 for every surface, including
+RGB565 game surfaces. The kernel rejects that depth/bpp combination, but the
+driver ignored the ioctl result and then presented framebuffer ID zero. On the
+Brick that disables the game plane and leaves the blank modeset buffer visible.
+
+Create framebuffers with ADDFB2 and the surface's explicit fourcc instead.
+Check every allocation step, propagate failures rather than running black, and
+release surface buffers when their geometry changes.
+---
+ gfx/drivers/drm_gfx.c | 96 ++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 76 insertions(+), 20 deletions(-)
+
+--- a/gfx/drivers/drm_gfx.c
++++ b/gfx/drivers/drm_gfx.c
+@@ -196,11 +196,29 @@
+    struct drm_video *_drmvars = data;
+    struct drm_surface *surface = *sp;
+ 
++   if (!surface)
++      return;
++
+    for (i = 0; i < surface->numpages; i++)
++   {
++      struct drm_mode_destroy_dumb destroy_dumb = {0};
+       surface->pages[i].used = false;
+ 
+-   free(surface->pages);
++      if (surface->pages[i].buf.fb_id)
++         drmModeRmFB(drm.fd, surface->pages[i].buf.fb_id);
++      if (surface->pages[i].buf.map &&
++          surface->pages[i].buf.map != MAP_FAILED)
++         munmap(surface->pages[i].buf.map, surface->pages[i].buf.size);
++      if (surface->pages[i].buf.handle)
++      {
++         destroy_dumb.handle = surface->pages[i].buf.handle;
++         drmIoctl(drm.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
++      }
++      if (surface->pages[i].page_used_mutex)
++         slock_free(surface->pages[i].page_used_mutex);
++   }
+ 
++   free(surface->pages);
+    free(surface);
+    *sp = NULL;
+ }
+@@ -212,7 +230,7 @@
+       surface->aspect = aspect;
+ }
+ 
+-static void drm_surface_setup(void *data,  int src_width, int src_height,
++static bool drm_surface_setup(void *data, int src_width, int src_height,
+       int pitch, int bpp, uint32_t pixformat,
+       int alpha, float aspect, int numpages, int layer,
+       struct drm_surface **sp)
+@@ -224,6 +242,8 @@
+    *sp = calloc (1, sizeof(struct drm_surface));
+ 
+    surface = *sp;
++   if (!surface)
++      return false;
+ 
+    /* Setup surface parameters */
+    surface->numpages = numpages;
+@@ -244,6 +264,12 @@
+     * and initialize variables inside each page's struct. */
+    surface->pages = (struct drm_page*)
+       calloc(surface->numpages, sizeof(struct drm_page));
++   if (!surface->pages)
++   {
++      free(surface);
++      *sp = NULL;
++      return false;
++   }
+ 
+    for (i = 0; i < surface->numpages; i++)
+    {
+@@ -261,13 +287,17 @@
+       int ret                      = modeset_create_dumbfb(
+             drm.fd, &surface->pages[i].buf, bpp, pixformat);
+ 
+-      if (ret)
++      if (ret < 0)
+       {
+-         RARCH_ERR("[DRM] Can't create fb.\n");
++         RARCH_ERR("[DRM] Can't create %dx%d framebuffer in format 0x%08x.\n",
++               src_width, src_height, pixformat);
++         drm_surface_free(_drmvars, sp);
++         return false;
+       }
+    }
+ 
+    surface->flip_page = 0;
++   return true;
+ }
+ 
+ static bool drm_page_flip(struct drm_surface *surface)
+@@ -557,7 +587,10 @@
+ {
+    struct drm_mode_create_dumb create_dumb = {0};
+    struct drm_mode_map_dumb map_dumb       = {0};
+-   struct drm_mode_fb_cmd cmd_dumb         = {0};
++   struct drm_mode_destroy_dumb destroy_dumb = {0};
++   uint32_t handles[4] = {0};
++   uint32_t pitches[4] = {0};
++   uint32_t offsets[4] = {0};
+ 
+    create_dumb.width  = buf->width;
+    create_dumb.height = buf->height;
+@@ -566,23 +599,36 @@
+    create_dumb.pitch  = 0;
+    create_dumb.size   = 0;
+    create_dumb.handle = 0;
+-   drmIoctl(drm.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb);
++   if (drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb) < 0)
++   {
++      RARCH_ERR("[DRM] Failed to allocate dumb buffer.\n");
++      return -1;
++   }
+ 
+-   /* Create the buffer. We just copy values here... */
+-   cmd_dumb.width        = create_dumb.width;
+-   cmd_dumb.height       = create_dumb.height;
+-   cmd_dumb.bpp          = create_dumb.bpp;
+-   cmd_dumb.pitch        = create_dumb.pitch;
+-   cmd_dumb.handle       = create_dumb.handle;
+-   cmd_dumb.depth        = 24;
+-
+-   /* Map the buffer */
+-   drmIoctl(drm.fd,DRM_IOCTL_MODE_ADDFB,&cmd_dumb);
+-   map_dumb.handle=create_dumb.handle;
+-   drmIoctl(drm.fd,DRM_IOCTL_MODE_MAP_DUMB,&map_dumb);
++   handles[0] = create_dumb.handle;
++   pitches[0] = create_dumb.pitch;
++   if (drmModeAddFB2(fd, create_dumb.width, create_dumb.height,
++            pixformat, handles, pitches, offsets, &buf->fb_id, 0) != 0)
++   {
++      RARCH_ERR("[DRM] Failed to create framebuffer for format 0x%08x.\n",
++            pixformat);
++      destroy_dumb.handle = create_dumb.handle;
++      drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
++      return -1;
++   }
++
++   map_dumb.handle = create_dumb.handle;
++   if (drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map_dumb) < 0)
++   {
++      RARCH_ERR("[DRM] Failed to prepare dumb buffer mapping.\n");
++      drmModeRmFB(fd, buf->fb_id);
++      destroy_dumb.handle = create_dumb.handle;
++      drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
++      buf->fb_id = 0;
++      return -1;
++   }
+ 
+    buf->pixel_format = pixformat;
+-   buf->fb_id = cmd_dumb.fb_id;
+    buf->stride = create_dumb.pitch;
+    buf->size = create_dumb.size;
+    buf->handle = create_dumb.handle;
+@@ -593,7 +639,12 @@
+    if (buf->map == MAP_FAILED)
+    {
+       RARCH_ERR("[DRM] Cannot mmap dumb buffer.\n");
+-      return 0;
++      drmModeRmFB(fd, buf->fb_id);
++      destroy_dumb.handle = create_dumb.handle;
++      drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
++      buf->fb_id = 0;
++      buf->handle = 0;
++      return -1;
+    }
+ 
+    return 0;
+@@ -768,7 +819,7 @@
+          drm_surface_free(_drmvars, &_drmvars->main_surface);
+ 
+       /* We need to recreate the main surface and it's pages (buffers). */
+-      drm_surface_setup(_drmvars,
++      if (!drm_surface_setup(_drmvars,
+             width,
+             height,
+             pitch,
+@@ -778,7 +829,8 @@
+             _drmvars->current_aspect,
+             3,
+             0,
+-            &_drmvars->main_surface);
++            &_drmvars->main_surface))
++         return false;
+ 
+       /* We need to change the plane to read from the main surface */
+       drm_plane_setup(_drmvars->main_surface);
+@@ -831,7 +883,7 @@
+     * menu surface is NULL, we allocate a new one.*/
+    if (!_drmvars->menu_surface)
+    {
+-      drm_surface_setup(_drmvars,
++      if (!drm_surface_setup(_drmvars,
+             width,
+             height,
+             width * 4,
+@@ -841,7 +893,8 @@
+             _drmvars->current_aspect,
+             2,
+             0,
+-            &_drmvars->menu_surface);
++            &_drmvars->menu_surface))
++         return;
+ 
+       /* We need to re-setup the ONLY plane as the setup
+        * depends on input buffers dimensions. */
+-- 
+2.51.0
