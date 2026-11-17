@@ -981,6 +981,11 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
             state.resumable = retroarch.availableStates(io, &state.games[index])[3];
     }
     var boot_game: ?usize = if (profile == null) state.bootTarget() else null;
+    // A retained session intentionally bypasses runSession, which normally
+    // publishes readiness after opening the display and inputs. Tell init the
+    // shell completed startup before handing the display directly to the game;
+    // otherwise its bounded readiness check kills a healthy cold resume.
+    if (boot_game != null) try markReady(io);
     while (true) {
         const game_index = boot_game orelse (try runSession(io, &state, false)) orelse continue;
         boot_game = null;
