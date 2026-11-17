@@ -260,6 +260,9 @@ pub fn main(init: std.process.Init) !void {
             if (index == 0) try @import("main.zig").writePpm(init.io, try std.Io.Dir.path.join(arena.allocator(), &.{ directory, "detail.ppm" }), pixels);
             _ = state.apply(.select);
             if (state.takeLaunch() != index) return error.LaunchMismatch;
+            // Simulate a clean emulator return; this verifies shell history
+            // semantics without claiming the simulator executed a core.
+            state.recordPlayed(index);
             const argv = retroarch.arguments(&game);
             std.log.info("Launch intent: {s} / {s}", .{ argv[4], game.rom_path });
             tree = state.tree();
@@ -267,6 +270,7 @@ pub fn main(init: std.process.Init) !void {
             _ = state.apply(.down);
         }
         if (state.games.len > 0 and state.selected != state.games.len - 1) return error.BoundaryMismatch;
+        if (state.games.len > 0 and state.recent[0] != state.games.len - 1) return error.HistoryMismatch;
         _ = state.apply(.up);
         tree = state.tree();
         try drawTree(&sdl, renderer, texture, pixels, &tree);
@@ -309,25 +313,15 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var motion: @import("shelf_motion.zig").Motion = .{};
     var layout_pending = false;
     var repeat: @import("input_repeat.zig").Controller = .{};
-    var feedback_lifecycle = @import("ui_components.zig").FeedbackLifecycle{};
     var pressed_id: ?@import("interaction.zig").Id = null;
     var select_armed = false;
     var was_animating = false;
     while (true) {
         const now = std.Io.Timestamp.now(init.io, .awake).toMilliseconds();
-        motion.reduced = state.settings.reduced_motion;
-        const notice = ui.Feedback{ .kind = game_overlay.notice_kind, .message = game_overlay.notice };
-        if (overlay_visible and game_overlay.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
-            feedback_lifecycle.show(notice, now);
-        const animating = (!overlay_visible and state.page == .games and state.library_view == .browse and motion.active(now)) or presentation.active(now);
-        var repeat_timeout = repeat.timeout(now);
-        if (overlay_visible) {
-            const feedback_wait = feedback_lifecycle.timeout(now);
-            if (feedback_wait >= 0) repeat_timeout = if (repeat_timeout < 0) feedback_wait else @min(repeat_timeout, feedback_wait);
-        }
+        const animating = presentation.active(now);
+        const repeat_timeout = repeat.timeout(now);
         const timeout = @import("motion.zig").pollTimeout(animating, was_animating, repeat_timeout);
         // SAFETY: event is inspected only when SDL reports an initialized event.
         var event: Event = undefined;
@@ -336,10 +330,6 @@ pub fn main(init: std.process.Init) !void {
         var action: ?input.Action = repeat.due(timestamp);
         var repeated = action != null;
         var changed = animating or was_animating;
-        if (overlay_visible and feedback_lifecycle.tick(timestamp)) {
-            if (game_overlay.layer != .failure) game_overlay.notice = "";
-            changed = true;
-        }
         was_animating = animating;
         if (received) {
             if (event.event_type == sdl_quit) break;
@@ -425,7 +415,6 @@ pub fn main(init: std.process.Init) !void {
                     changed = true;
                 }
             } else {
-                const previous = state.selected;
                 const retained_preview = state.library_preview;
                 const previous_page = state.page;
                 const previous_appearance = state.settings.appearance;
@@ -449,8 +438,6 @@ pub fn main(init: std.process.Init) !void {
                 }
                 const boundary = !applied and state.supportsDirection(pressed) and presentation.focus.boundary(pressed, timestamp, state.settings.reduced_motion);
                 changed = applied or boundary or changed;
-                if (state.page == .games and state.library_view == .browse and previous != state.selected)
-                    motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), timestamp);
                 const launch = state.takeLaunch();
                 if (launch) |index| {
                     const argv = retroarch.arguments(&state.games[index]);
@@ -465,13 +452,13 @@ pub fn main(init: std.process.Init) !void {
                     presentation.cutTo(&destination, timestamp, state.settings.reduced_motion, brightness_meter_id);
                     tree = destination;
                 }
-                layout_pending = layout_pending or (applied and state.page == previous_page and (pressed == .up or pressed == .down or pressed == .left or pressed == .right) and !(state.page == .games and state.library_view == .browse));
+                layout_pending = layout_pending or (applied and state.page == previous_page and (pressed == .up or pressed == .down or pressed == .left or pressed == .right));
             }
         }
         if (changed) {
             game_overlay.appearance = state.settings.appearance;
             game_overlay.reduced_motion = state.settings.reduced_motion;
-            var next = if (overlay_visible) game_overlay.tree() else state.treeWithShelfOffset(motion.offset(timestamp));
+            var next = if (overlay_visible) game_overlay.tree() else state.tree();
             presentation.decorate(&next, timestamp, state.settings.reduced_motion, if (overlay_visible) null else brightness_meter_id);
             if (pressed_id) |id| _ = next.setInteraction(id, .pressed);
             if (layout_pending and !presentation.navigation.active(timestamp))

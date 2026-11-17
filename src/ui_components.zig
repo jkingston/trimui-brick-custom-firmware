@@ -23,38 +23,6 @@ pub const Feedback = struct {
     }
 };
 
-pub const FeedbackPhase = enum { hidden, visible };
-pub const FeedbackLifecycle = struct {
-    feedback: Feedback = .{},
-    phase: FeedbackPhase = .hidden,
-    deadline_ms: ?i64 = null,
-    dwell_ms: i64 = 1800,
-
-    pub fn show(self: *FeedbackLifecycle, value: Feedback, now_ms: i64) void {
-        self.feedback = value;
-        self.phase = if (value.visible()) .visible else .hidden;
-        self.deadline_ms = if (value.visible() and value.kind != .progress) now_ms + self.dwell_ms else null;
-    }
-
-    pub fn dismiss(self: *FeedbackLifecycle, now_ms: i64) void {
-        if (self.phase == .hidden) return;
-        self.deadline_ms = now_ms;
-    }
-
-    pub fn tick(self: *FeedbackLifecycle, now_ms: i64) bool {
-        if (self.deadline_ms == null or now_ms < self.deadline_ms.?) return false;
-        self.phase = .hidden;
-        self.feedback = .{};
-        self.deadline_ms = null;
-        return true;
-    }
-
-    pub fn timeout(self: FeedbackLifecycle, now_ms: i64) i32 {
-        const due = self.deadline_ms orelse return -1;
-        return @intCast(@max(@as(i64, 0), @min(due - now_ms, @as(i64, @import("std").math.maxInt(i32)))));
-    }
-};
-
 /// Shared declaration for selectable rows. Screen code supplies content and
 /// geometry; this component supplies stable identity and interaction state.
 pub const Selectable = struct {
@@ -218,6 +186,7 @@ pub const NetworkStatus = enum { hidden, connected, attention };
 pub const SystemStatus = struct {
     battery: ?u8 = null,
     network: NetworkStatus = .hidden,
+    bluetooth: NetworkStatus = .hidden,
     audio: bool = false,
 };
 
@@ -237,6 +206,11 @@ pub fn systemStatus(result: *ui.Tree, status: SystemStatus) void {
         result.add(.{ .headphones = .{ .bounds = .{ .x = x, .y = 42, .width = 26, .height = 24 }, .color = result.theme.text } });
         cursor = x -| 14;
     }
+    if (status.bluetooth != .hidden) {
+        const x = cursor -| 18;
+        result.add(.{ .bluetooth = .{ .bounds = .{ .x = x, .y = 40, .width = 18, .height = 28 }, .color = if (status.bluetooth == .connected) result.theme.text else result.theme.accent } });
+        cursor = x -| 14;
+    }
     if (status.network != .hidden)
         networkSignal(result, .{ .x = cursor -| 25, .y = 43, .width = 25, .height = 22 }, status.network);
 }
@@ -247,35 +221,6 @@ fn networkSignal(result: *ui.Tree, bounds: ui.Rect, status: NetworkStatus) void 
         .arcs = if (status == .connected) result.theme.text else result.theme.muted,
         .dot = if (status == .connected) result.theme.text else result.theme.accent,
     } });
-}
-
-/// Shared transient or terminal status surface. It occupies a stable status
-/// band without becoming a floating toast: one hairline, one message, and one
-/// semantic mark let the underlying screen remain the visual subject.
-pub fn feedbackBanner(result: *ui.Tree, bounds: ui.Rect, feedback: Feedback) void {
-    if (!feedback.visible()) return;
-    const marker = switch (feedback.kind) {
-        .failure => result.theme.danger,
-        .warning => result.theme.muted,
-        .progress, .success => result.theme.accent,
-    };
-    result.add(.{ .bar = .{ .bounds = .{ .x = bounds.x, .y = bounds.y, .width = bounds.width, .height = 1 }, .color = result.theme.border } });
-    const status_width: u16 = 58;
-    var message_font = font.caption;
-    message_font.size = 24;
-    message_font.line_height = 32;
-    message_font.weight = .medium;
-    message_font.ink_centered = true;
-    text(result, .{ .x = bounds.x, .y = bounds.y + 12, .width = bounds.width - status_width, .height = message_font.line_height }, feedback.message, result.theme.text, message_font);
-    const status = ui.Rect{ .x = bounds.x + bounds.width - status_width, .y = bounds.y + 12, .width = status_width, .height = 32 };
-    if (feedback.kind == .progress) {
-        activity(result, status, marker);
-    } else {
-        var status_font = font.control;
-        status_font.alignment = .center;
-        status_font.ink_centered = true;
-        text(result, status, if (feedback.kind == .success) "✓" else "!", marker, status_font);
-    }
 }
 
 pub const KeyboardInput = struct {
@@ -551,25 +496,4 @@ test "system status owns one compact top-right cluster" {
     try @import("std").testing.expect(tree.elements[1] == .headphones);
     try @import("std").testing.expect(tree.elements[2] == .wifi);
     try @import("std").testing.expect(tree.elements[2].wifi.bounds.x < tree.elements[1].headphones.bounds.x);
-}
-
-test "feedback status band uses a hairline and trailing semantic mark" {
-    const theme = @import("theme.zig").light;
-    var tree = ui.Tree{ .theme = theme, .background = theme.background };
-    feedbackBanner(&tree, .{ .x = 48, .y = 600, .width = 928, .height = 56 }, .{ .kind = .failure, .message = "Could not connect" });
-    try @import("std").testing.expectEqual(@as(usize, 3), tree.len);
-    try @import("std").testing.expectEqual(@as(u16, 928), tree.elements[0].bar.bounds.width);
-    try @import("std").testing.expectEqual(@as(u16, 1), tree.elements[0].bar.bounds.height);
-    try @import("std").testing.expectEqual("!", tree.elements[2].text.value);
-    try @import("std").testing.expectEqual(theme.danger, tree.elements[2].text.color);
-}
-
-test "feedback lifecycle does not leave completion notices indefinitely" {
-    var notice = FeedbackLifecycle{};
-    notice.show(.{ .kind = .success, .message = "Saved" }, 0);
-    try @import("std").testing.expectEqual(FeedbackPhase.visible, notice.phase);
-    try @import("std").testing.expectEqual(@as(i32, 1800), notice.timeout(0));
-    _ = notice.tick(notice.dwell_ms);
-    try @import("std").testing.expectEqual(FeedbackPhase.hidden, notice.phase);
-    try @import("std").testing.expectEqual(@as(i32, -1), notice.timeout(5000));
 }

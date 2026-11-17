@@ -3,11 +3,17 @@ const std = @import("std");
 const model = @import("model.zig");
 const ui = @import("ui.zig");
 
-const Preferences = struct { view: []const u8, rom: []const u8, system: ?[]const u8 = null, last_rom: []const u8 = "" };
+const Preferences = struct {
+    view: []const u8,
+    rom: []const u8,
+    system: ?[]const u8 = null,
+    last_rom: []const u8 = "",
+    recent: []const []const u8 = &.{},
+};
 
 fn viewFromName(name: []const u8) ?ui.LibraryView {
     if (std.mem.eql(u8, name, "recent") or std.mem.eql(u8, name, "list")) return .recent;
-    if (std.mem.eql(u8, name, "browse") or std.mem.eql(u8, name, "shelf")) return .browse;
+    if (std.mem.eql(u8, name, "browse") or std.mem.eql(u8, name, "shelf")) return .recent;
     if (std.mem.eql(u8, name, "all") or std.mem.eql(u8, name, "grid")) return .all;
     return null;
 }
@@ -24,26 +30,46 @@ pub fn load(io: std.Io, dir: std.Io.Dir, state: *model.Model) void {
             if (std.mem.eql(u8, label, system.label) and state.hasSystem(index)) state.system = index;
         }
     }
+    var selected_source: ?usize = null;
     for (state.games, 0..) |game, index| {
         if (std.mem.eql(u8, game.rom_path, saved.last_rom)) state.last_played = index;
-        if (std.mem.eql(u8, game.rom_path, saved.rom)) {
-            if (state.collection().positionOf(index)) |position| {
-                state.library_selection = position;
-                if (state.page == .games) {
-                    state.selected = position;
-                    state.library_preview = position;
-                }
-            }
-        }
+        if (std.mem.eql(u8, game.rom_path, saved.rom)) selected_source = index;
     }
+    for (saved.recent) |path| {
+        for (state.games, 0..) |game, index| if (std.mem.eql(u8, game.rom_path, path)) {
+            var duplicate = false;
+            for (state.recent[0..state.recent_len]) |source| duplicate = duplicate or source == index;
+            if (!duplicate and state.recent_len < state.recent.len) {
+                state.recent[state.recent_len] = index;
+                state.recent_len += 1;
+            }
+            break;
+        };
+    }
+    // Old preferences had only `last_rom`; preserve it as the first factual
+    // history item instead of inventing history from alphabetical order.
+    if (state.recent_len == 0) if (state.last_played) |index| {
+        state.recent[0] = index;
+        state.recent_len = 1;
+    };
+    if (selected_source) |index| if (state.collection().positionOf(index)) |position| {
+        state.library_selection = position;
+        if (state.page == .games) {
+            state.selected = position;
+            state.library_preview = position;
+        }
+    };
 }
 
 pub fn save(io: std.Io, dir: std.Io.Dir, state: *const model.Model) !void {
+    var recent: [model.maximum_history][]const u8 = @splat("");
+    for (state.recent[0..state.recent_len], 0..) |source, index| recent[index] = state.games[source].rom_path;
     const saved = Preferences{
         .view = @tagName(state.library_view),
         .rom = if (state.librarySource()) |index| state.games[index].rom_path else "",
         .system = if (state.system != null) state.collection().label() else null,
         .last_rom = if (state.last_played) |index| state.games[index].rom_path else "",
+        .recent = recent[0..state.recent_len],
     };
     const contents = try std.json.Stringify.valueAlloc(std.heap.page_allocator, saved, .{});
     defer std.heap.page_allocator.free(contents);
@@ -54,13 +80,13 @@ pub fn save(io: std.Io, dir: std.Io.Dir, state: *const model.Model) !void {
 test "library preferences restore by path after the library is reordered" {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
-    var state = model.Model{ .page = .games, .selected = 1, .library_view = .browse };
+    var state = model.Model{ .page = .games, .selected = 1, .library_view = .all };
     try save(std.testing.io, temporary.dir, &state);
     const original = state.games[1];
     const reordered = [_]@import("catalog.zig").Game{original};
     state = .{ .games = &reordered };
     load(std.testing.io, temporary.dir, &state);
-    try std.testing.expectEqual(ui.LibraryView.browse, state.library_view);
+    try std.testing.expectEqual(ui.LibraryView.all, state.library_view);
     try std.testing.expectEqual(@as(usize, 0), state.selected);
     try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "library.json", .data = "broken" });
     load(std.testing.io, temporary.dir, &state);
@@ -74,4 +100,25 @@ test "legacy widget names migrate to product density names" {
     var state = model.Model{};
     load(std.testing.io, temporary.dir, &state);
     try std.testing.expectEqual(ui.LibraryView.all, state.library_view);
+}
+
+test "removed flow preferences retain game and system selection" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    for ([_][]const u8{ "browse", "shelf" }) |view| {
+        const saved = Preferences{ .view = view, .rom = (model.Model{}).games[2].rom_path, .system = "Game Boy", .last_rom = (model.Model{}).games[2].rom_path };
+        const contents = try std.json.Stringify.valueAlloc(std.testing.allocator, saved, .{});
+        defer std.testing.allocator.free(contents);
+        try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "library.json", .data = contents });
+        var state = model.Model{ .page = .games };
+        load(std.testing.io, temporary.dir, &state);
+        try std.testing.expectEqual(ui.LibraryView.recent, state.library_view);
+        try std.testing.expectEqualStrings("Game Boy", state.collection().label());
+        try std.testing.expectEqual(@as(?usize, 2), state.librarySource());
+        try std.testing.expectEqual(@as(?usize, 2), state.last_played);
+        try save(std.testing.io, temporary.dir, &state);
+        const migrated = try temporary.dir.readFileAlloc(std.testing.io, "library.json", std.testing.allocator, .limited(16384));
+        defer std.testing.allocator.free(migrated);
+        try std.testing.expect(std.mem.indexOf(u8, migrated, "\"recent\"") != null);
+    }
 }

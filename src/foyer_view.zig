@@ -39,7 +39,6 @@ pub fn session(theme: scene.Theme, selected: usize, recent: ?catalog.Game, resum
     } });
     if (recent) |game| game_object.add(&result, game, .{
         .bounds = .{ .x = 652, .y = 126, .width = 296, .height = 356 },
-        .presentation = .cover,
     });
 
     const action_x = if (with_recent) [_]u16{ 48, 332, 606 } else [_]u16{ 48, 414, 0 };

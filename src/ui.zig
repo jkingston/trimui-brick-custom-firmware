@@ -19,11 +19,11 @@ pub const FocusFrame = scene.FocusFrame;
 pub const Bar = scene.Bar;
 pub const Scrim = scene.Scrim;
 pub const RowStyle = scene.RowStyle;
-pub const ArtworkStyle = scene.ArtworkStyle;
 pub const MenuRow = scene.MenuRow;
 pub const ActionCard = scene.ActionCard;
 pub const CardEmphasis = scene.CardEmphasis;
 pub const Battery = scene.Battery;
+pub const Bluetooth = scene.Bluetooth;
 pub const Meter = scene.Meter;
 pub const Activity = scene.Activity;
 pub const QrCode = scene.QrCode;
@@ -32,8 +32,8 @@ pub const KeyboardKey = scene.KeyboardKey;
 pub const Cover = scene.Cover;
 /// One library with progressively denser ways to move through it. Names encode
 /// the player's intent rather than the widget used to render the collection.
-pub const LibraryView = enum { recent, browse, all };
-pub const Cartridge = scene.Cartridge;
+pub const LibraryView = enum { recent, all };
+pub const Artwork = scene.Artwork;
 pub const OverlayRow = scene.OverlayRow;
 pub const Element = scene.Element;
 pub const Tree = scene.Tree;
@@ -58,7 +58,7 @@ fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const 
     // can replace this left stage without changing control geometry or focus.
     textLabel(&result, .{ .x = 48, .y = 42, .width = 520, .height = 34 }, "QUICK SYSTEM", theme.muted, uiFont(21, 28, .semibold, .start));
     if (game) |current| {
-        game_object.add(&result, current, .{ .bounds = .{ .x = 72, .y = 106, .width = 300, .height = 390 }, .presentation = .cover, .dim = 42 });
+        game_object.add(&result, current, .{ .bounds = .{ .x = 72, .y = 106, .width = 300, .height = 390 }, .dim = 42 });
         textLabel(&result, .{ .x = 48, .y = 530, .width = 500, .height = 52 }, context, theme.text, uiFont(37, 46, .semibold, .start));
         textLabel(&result, .{ .x = 48, .y = 582, .width = 500, .height = 34 }, title, theme.accent, uiFont(20, 28, .semibold, .start));
     } else {
@@ -99,7 +99,7 @@ pub fn overlayPause(theme: Theme, game_title: []const u8, selected: usize, state
     const slots = [_][]const u8{ "Slot 1", "Slot 2", "Slot 3" };
     const values = [_][]const u8{ "", slots[state_slot], "", brightness, "" };
     var result = controlDeck(theme, .game_menu, "PAUSED", game_title, &labels, &values, selected, "Continue", if (selected == 3) .horizontal else .confirm, if (selected == 3) "Adjust" else "Select", null);
-    if (notice.len != 0) showNotice(&result, notice);
+    if (notice.len != 0) taskIssue(&result, notice);
     return result;
 }
 
@@ -115,7 +115,7 @@ pub fn overlayPauseWithNetworkGame(theme: Theme, game: ?catalog.Game, game_title
     const values = [_][]const u8{ "", slots[state_slot], "", brightness, network_status, "" };
     var result = controlDeck(theme, .game_menu_network, "PAUSED", game_title, &labels, &values, selected, "Continue", if (selected == 3) .horizontal else .confirm, if (selected == 3) "Adjust" else "Open", game);
     systemStatus(&result, status);
-    if (notice.len != 0) showNotice(&result, notice);
+    if (notice.len != 0) taskIssue(&result, notice);
     return result;
 }
 
@@ -187,7 +187,7 @@ pub fn overlayStatesGame(theme: Theme, game: ?catalog.Game, game_title: []const 
     if (!any) {
         result = message(theme, "Load state", "No saved states", "Save a state from the game menu to return to this point later.");
         footer(&result, &.{.{ .control = .back, .label = "Game menu" }});
-        if (notice.len != 0) showNotice(&result, notice);
+        if (notice.len != 0) taskIssue(&result, notice);
         return result;
     }
     const values = [_][]const u8{
@@ -197,7 +197,7 @@ pub fn overlayStatesGame(theme: Theme, game: ?catalog.Game, game_title: []const 
         if (available[3]) details[3] else "Empty",
     };
     result = controlDeck(theme, .overlay_states, "LOAD STATE", game_title, &labels, &values, selected, "Game menu", .confirm, if (available[selected]) "Load" else "Empty", game);
-    if (notice.len != 0) showNotice(&result, notice);
+    if (notice.len != 0) taskIssue(&result, notice);
     return result;
 }
 
@@ -230,47 +230,37 @@ fn editorialHeader(result: *Tree, section: []const u8, context: []const u8) void
         textLabel(result, .{ .x = 510, .y = 35, .width = 336, .height = 40 }, context, result.theme.muted, uiFont(25, 32, .regular, .end));
 }
 
-fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, cart: bool, selected: bool, identity: ?interaction.Id, dim: u8, tilt: i16) void {
+fn artwork(result: *Tree, game: catalog.Game, bounds: Rect, selected: bool, identity: ?interaction.Id, dim: u8) void {
     game_object.add(result, game, .{
         .bounds = bounds,
-        .presentation = if (cart) .spatial else .cover,
         .id = identity orelse .none,
         .focused = selected,
         .dim = dim,
-        .tilt = tilt,
     });
-}
-
-fn caption(result: *Tree, game: catalog.Game) void {
-    var title_font = font.body;
-    title_font.weight = .medium;
-    title_font.alignment = .center;
-    title_font.line_height = 51;
-    var system_font = font.caption;
-    system_font.alignment = .center;
-    result.add(.{ .text_block = .{ .bounds = .{ .x = 48, .y = 530, .width = 928, .height = 148 }, .title = game.title, .detail = game.system, .color = result.theme.text, .detail_color = result.theme.muted, .title_font = title_font, .detail_font = system_font } });
 }
 
 const foyer_view = @import("foyer_view.zig");
 pub const foyer = foyer_view.foyer;
 pub const foyerSession = foyer_view.session;
 
-pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view: LibraryView, shelf_offset: i16) Tree {
-    return libraryCollection(theme, .{ .games = games }, selected, selected, view, shelf_offset);
+pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view: LibraryView) Tree {
+    return libraryCollection(theme, .{ .games = games }, selected, selected, view);
 }
 
-pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected: usize, preview_selected: usize, view: LibraryView, shelf_offset: i16) Tree {
+pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected: usize, preview_selected: usize, view: LibraryView) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     editorialHeader(&result, switch (view) {
         .recent => "Recent",
-        .browse => "Browse",
         .all => "All games",
     }, collection.label());
     const count = collection.len();
     if (count == 0) {
-        textLabel(&result, .{ .x = 48, .y = 224, .width = 928, .height = 64 }, "No games yet", theme.text, font.title);
-        result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 312, .width = 864, .height = 100 }, .value = "Add games to the Roms folder on your SD card.", .color = theme.muted, .font = font.body, .lines = 2 } });
-        footer(&result, &.{.{ .control = .back, .label = "Back" }});
+        textLabel(&result, .{ .x = 48, .y = 224, .width = 928, .height = 64 }, if (view == .recent) "Nothing played yet" else "No games found", theme.text, font.title);
+        result.add(.{ .text = .{ .bounds = .{ .x = 48, .y = 312, .width = 864, .height = 100 }, .value = if (view == .recent) "Games appear here after you play them." else "Add games to the Roms folder on your SD card.", .color = theme.muted, .font = font.body, .lines = 2 } });
+        if (view == .recent)
+            footer(&result, &.{ .{ .control = .view, .label = "All games" }, .{ .control = .menu, .label = "Device" } })
+        else
+            footer(&result, &.{.{ .control = .menu, .label = "Device" }});
         return result;
     }
     const game = collection.at(@min(preview_selected, count - 1));
@@ -289,7 +279,7 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                     .scale = .row,
                 });
             }
-            artwork(&result, game, .{ .x = 566, .y = 132, .width = 382, .height = 408 }, false, true, null, 0, 0);
+            artwork(&result, game, .{ .x = 566, .y = 132, .width = 382, .height = 408 }, true, null, 0);
             textLabel(&result, .{ .x = 566, .y = 558, .width = 382, .height = 38 }, game.system, theme.muted, uiFont(24, 32, .regular, .center));
         },
         .all => {
@@ -301,53 +291,24 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
                 const row_y: u16 = 116 + @as(u16, @intCast(index - first)) * 62;
                 components.editorialChoice(&result, .library, index, active, .{
                     .label = entry.title,
-                    .bounds = .{ .x = 48, .y = row_y, .width = 724, .height = 52 },
+                    .bounds = .{ .x = 48, .y = row_y, .width = 650, .height = 52 },
                     .focus_bounds = .{ .x = 48, .y = row_y, .width = 880, .height = 52 },
                     .scale = .compact,
                 });
-                textLabel(&result, .{ .x = 792, .y = row_y, .width = 136, .height = 52 }, entry.system, if (active) theme.accent else theme.muted, uiFont(20, 30, if (active) .semibold else .regular, .end));
+                textLabel(&result, .{ .x = 718, .y = row_y, .width = 210, .height = 52 }, entry.system, if (active) theme.accent else theme.muted, uiFont(20, 30, if (active) .semibold else .regular, .end));
             }
             components.continuation(&result, 116, 612, first != 0, first + visible < count);
         },
-        .browse => {
-            const order = [_]i8{ -1, 1, 0 };
-            for (order) |relative| {
-                const index = @as(i64, @intCast(selected)) + relative;
-                if (index < 0 or index >= count) continue;
-                const pose = shelfPose(relative, shelf_offset);
-                const source_index: usize = @intCast(index);
-                artwork(&result, collection.at(source_index), pose.bounds, true, relative == 0, if (relative == 0) interaction.Id.scoped(.library, source_index) else null, pose.dim, pose.tilt);
-                if (result.elements[result.len - 1] == .cartridge) result.elements[result.len - 1].cartridge.clip_left = pose.clip_left;
-            }
-            if (game.assets.card != null or game.assets.sprite != null or game.assets.preview != null)
-                caption(&result, game);
-        },
     }
-    footer(&result, &.{ .{ .control = .menu, .label = "Device" }, .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = "Density" }, .{ .control = .confirm, .label = "Play" } });
+    footer(&result, &.{ .{ .control = .menu, .label = "Device" }, .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = if (view == .recent) "All games" else "Recent" }, .{ .control = .confirm, .label = "Play" } });
     return result;
-}
-
-const ShelfPose = struct { bounds: Rect, dim: u8, tilt: i16, clip_left: u16 };
-
-fn shelfPose(relative: i8, offset: i16) ShelfPose {
-    const position = @as(i32, relative) * 1000 + offset;
-    const distance = @abs(position);
-    const center = 512 + @divTrunc(position * 278, 1000);
-    const width: i32 = if (distance < 1000) 300 - @as(i32, @intCast(distance * 80 / 1000)) else 220;
-    const height: i32 = if (distance < 1000) 400 - @as(i32, @intCast(distance * 100 / 1000)) else 300;
-    return .{
-        .bounds = .{ .x = @intCast(@max(0, center - @divTrunc(width, 2))), .y = @intCast(122 + @divTrunc(400 - height, 2)), .width = @intCast(width), .height = @intCast(height) },
-        .clip_left = @intCast(@max(0, @divTrunc(width, 2) - center)),
-        .dim = @intCast(@min(71, distance * 71 / 1000)),
-        .tilt = 0,
-    };
 }
 
 pub fn gameDetail(theme: Theme, game: catalog.Game, launch_failed: ?retroarch.Failure) Tree {
     const failed = launch_failed != null;
     var result = Tree{ .theme = theme, .background = theme.background };
     if (failed) header(&result, "Can't open this game");
-    artwork(&result, game, .{ .x = 48, .y = if (failed) 154 else 120, .width = 348, .height = if (failed) 392 else 430 }, false, true, null, if (failed) 28 else 0, 0);
+    artwork(&result, game, .{ .x = 48, .y = if (failed) 154 else 120, .width = 348, .height = if (failed) 392 else 430 }, true, null, if (failed) 28 else 0);
 
     var title_font = font.body;
     title_font.size = 50;
@@ -449,22 +410,20 @@ pub fn languageProof(theme: Theme) Tree {
     return result;
 }
 
-pub fn showFeedback(tree: *Tree, feedback: Feedback) void {
-    if (!feedback.visible()) return;
-    // Keep transient feedback above the footer keyline so action hints remain
-    // stable and readable while status comes and goes.
-    const bounds = Rect{ .x = layout.margin, .y = geometry.feedback_y, .width = geometry.width - 2 * layout.margin, .height = geometry.feedback_height };
-    components.feedbackBanner(tree, bounds, feedback);
-}
-
-pub fn showNotice(tree: *Tree, notice: []const u8) void {
-    showFeedback(tree, .{ .kind = .success, .message = notice });
+/// Persistent task-local recovery text. It does not animate, time out, cover
+/// content, or claim global attention; leaving the task dismisses it.
+pub fn taskIssue(tree: *Tree, message_text: []const u8) void {
+    var issue_font = font.caption;
+    issue_font.size = 23;
+    issue_font.line_height = 32;
+    issue_font.weight = .medium;
+    textLabel(tree, .{ .x = layout.margin, .y = geometry.feedback_y + 8, .width = geometry.width - 2 * layout.margin, .height = 34 }, message_text, tree.theme.danger, issue_font);
 }
 
 test "light and dark appearances preserve component geometry and typography" {
     const themes = @import("theme.zig");
-    const light_screens = [_]Tree{ foyer(themes.light, 0), library(themes.light, &catalog.games, 0, .recent, 0), library(themes.light, &catalog.games, 0, .browse, 0), library(themes.light, &catalog.games, 0, .all, 0), settings(0, .{}, "Unavailable", "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
-    const dark_screens = [_]Tree{ foyer(themes.dark, 0), library(themes.dark, &catalog.games, 0, .recent, 0), library(themes.dark, &catalog.games, 0, .browse, 0), library(themes.dark, &catalog.games, 0, .all, 0), settings(0, .{ .appearance = .dark }, "Unavailable", "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
+    const light_screens = [_]Tree{ foyer(themes.light, 0), library(themes.light, &catalog.games, 0, .recent), library(themes.light, &catalog.games, 0, .all), settings(0, .{}, "Unavailable", "Unavailable"), overlayStates(themes.light, "Game", 0, "", @splat(false)), splash(themes.light) };
+    const dark_screens = [_]Tree{ foyer(themes.dark, 0), library(themes.dark, &catalog.games, 0, .recent), library(themes.dark, &catalog.games, 0, .all), settings(0, .{ .appearance = .dark }, "Unavailable", "Unavailable"), overlayStates(themes.dark, "Game", 0, "", @splat(false)), splash(themes.dark) };
     for (&light_screens, &dark_screens) |*light_screen, *dark_screen| {
         try std.testing.expectEqual(light_screen.len, dark_screen.len);
         for (light_screen.slice(), dark_screen.slice()) |a, b| {
@@ -492,40 +451,8 @@ test "windowed settings expose continuation in both directions" {
     try std.testing.expect(saw_up);
 }
 
-test "progress feedback owns activity while terminal feedback does not" {
-    const themes = @import("theme.zig");
-    var progress = Tree{ .theme = themes.light, .background = themes.light.background };
-    showFeedback(&progress, .{ .kind = .progress, .message = "Connecting" });
-    try std.testing.expect(progress.hasActivity());
-    var success = Tree{ .theme = themes.light, .background = themes.light.background };
-    showFeedback(&success, .{ .kind = .success, .message = "Connected" });
-    try std.testing.expect(!success.hasActivity());
-}
-
-test "foyer reserves a stable status band above footer actions" {
-    const themes = @import("theme.zig");
-    var screen = foyerSession(themes.light, 0, catalog.games[0], true);
-    showFeedback(&screen, .{ .kind = .success, .message = "Connected to Wi-Fi" });
-
-    var card_bottom: u16 = 0;
-    var feedback_top: ?u16 = null;
-    for (screen.slice()) |element| switch (element) {
-        .action_card => |card| card_bottom = @max(card_bottom, card.bounds.y + card.bounds.height),
-        .bar => |bar| {
-            if (bar.bounds.height == 1 and bar.bounds.width == geometry.width - 2 * layout.margin)
-                feedback_top = bar.bounds.y;
-        },
-        else => {},
-    };
-
-    try std.testing.expect(feedback_top != null);
-    try std.testing.expect(card_bottom <= feedback_top.?);
-    try std.testing.expect(feedback_top.? + geometry.feedback_height < geometry.footer_rule_y);
-}
-
 test "settings content clears the shared status band" {
     var screen = settings(0, .{}, "Off", "Off");
-    showFeedback(&screen, .{ .kind = .progress, .message = "Applying display settings" });
 
     var content_bottom: u16 = 0;
     for (screen.slice()) |element| switch (element) {

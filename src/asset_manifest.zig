@@ -24,33 +24,7 @@ const Manifest = struct {
     attribution: std.json.Value,
 };
 
-const BundledPlatform = struct {
-    id: []const u8,
-    label: []const u8,
-    model: []const u8,
-    sprite: []const u8,
-    width: u16,
-    height: u16,
-    sha256: []const u8,
-};
-
-const BundledManifest = struct {
-    schema_version: u32,
-    model_release: []const u8,
-    platforms: []const BundledPlatform,
-};
-
-pub const Assets = struct {
-    model: ?[]const u8 = null,
-    front: ?[]const u8 = null,
-    top: ?[]const u8 = null,
-    rear: ?[]const u8 = null,
-    disc: ?[]const u8 = null,
-    preview: ?Texture = null,
-    sprite: ?Texture = null,
-    card: ?Texture = null,
-    cover: ?Texture = null,
-};
+pub const Assets = struct { cover: ?Texture = null };
 
 pub const Texture = struct {
     width: u16,
@@ -72,25 +46,6 @@ fn confinedPath(allocator: std.mem.Allocator, root: []const u8, relative: []cons
             return error.AssetPathEscapesRoot;
     }
     return resolved;
-}
-
-fn surfacePath(allocator: std.mem.Allocator, asset_root: []const u8, surfaces: ?std.json.Value, name: []const u8) !?[]const u8 {
-    const value = surfaces orelse return null;
-    if (value != .object) return error.InvalidAssetSurfaces;
-    const member = value.object.get(name) orelse return null;
-    if (member != .string) return error.InvalidAssetSurfaces;
-    return try confinedPath(allocator, asset_root, member.string);
-}
-
-fn modelPath(allocator: std.mem.Allocator, asset_root: []const u8, id: ?[]const u8) !?[]const u8 {
-    const value = id orelse return null;
-    if (value.len == 0) return error.InvalidAssetModel;
-    for (value) |character| {
-        if (!std.ascii.isAlphanumeric(character) and character != '-')
-            return error.InvalidAssetModel;
-    }
-    const relative = try std.fmt.allocPrint(allocator, "models/{s}.glb", .{value});
-    return try confinedPath(allocator, asset_root, relative);
 }
 
 fn loadTextureFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Texture {
@@ -149,37 +104,6 @@ fn loadTexture(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8,
     return try loadTextureFile(io, allocator, path);
 }
 
-fn validPlatformId(id: []const u8) bool {
-    if (id.len == 0) return false;
-    for (id) |character| {
-        if (!std.ascii.isAlphanumeric(character) and character != '-') return false;
-    }
-    return true;
-}
-
-/// Load the ROM-independent sprites installed in the read-only firmware image.
-/// The returned texture storage belongs to allocator.
-pub fn loadBundled(io: std.Io, allocator: std.mem.Allocator, asset_root: []const u8) !std.StringHashMap(Assets) {
-    var result: std.StringHashMap(Assets) = .init(allocator);
-    const manifest_path = try std.Io.Dir.path.join(allocator, &.{ asset_root, "manifest.json" });
-    const contents = std.Io.Dir.cwd().readFileAlloc(io, manifest_path, allocator, .limited(maximum_manifest_bytes)) catch |err| switch (err) {
-        error.FileNotFound => return result,
-        else => return err,
-    };
-    const manifest = try std.json.parseFromSliceLeaky(BundledManifest, allocator, contents, .{ .ignore_unknown_fields = false, .allocate = .alloc_always });
-    if (manifest.schema_version != 1) return error.UnsupportedAssetManifest;
-    for (manifest.platforms) |entry| {
-        if (!validPlatformId(entry.id)) return error.InvalidAssetPlatform;
-        if (result.contains(entry.id)) return error.DuplicateAssetPlatform;
-        const path = try confinedPath(allocator, asset_root, entry.sprite);
-        const sprite = try loadTextureFile(io, allocator, path);
-        if (sprite.width != entry.width or sprite.height != entry.height)
-            return error.InvalidAssetTextureDimensions;
-        try result.put(entry.id, .{ .sprite = sprite });
-    }
-    return result;
-}
-
 pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
     var result: std.StringHashMap(Assets) = .init(allocator);
     const asset_root = try std.Io.Dir.path.join(allocator, &.{ data_root, "Assets", "Brick" });
@@ -191,17 +115,8 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !st
     const manifest = try std.json.parseFromSliceLeaky(Manifest, allocator, contents, .{ .ignore_unknown_fields = false, .allocate = .alloc_always });
     if (manifest.schema_version != 1) return error.UnsupportedAssetManifest;
     for (manifest.games) |entry| {
-        if (entry.model == null or entry.surfaces == null) continue;
         const rom = try confinedPath(allocator, data_root, entry.rom);
         const assets = Assets{
-            .model = try modelPath(allocator, asset_root, entry.model),
-            .front = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.front"),
-            .top = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.top"),
-            .rear = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.rear"),
-            .disc = try surfacePath(allocator, asset_root, entry.surfaces, "artwork.disc"),
-            .preview = try loadTexture(io, allocator, asset_root, entry.textures, "artwork"),
-            .sprite = try loadTexture(io, allocator, asset_root, entry.textures, "sprite.hero"),
-            .card = try loadTexture(io, allocator, asset_root, entry.textures, "artwork.card"),
             .cover = try loadTexture(io, allocator, asset_root, entry.textures, "artwork.cover"),
         };
         try result.put(rom, assets);
@@ -209,7 +124,7 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !st
     return result;
 }
 
-test "manifest maps confined ROM and artwork paths" {
+test "legacy physical artwork is ignored without loading files" {
     const io = std.testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -227,11 +142,10 @@ test "manifest maps confined ROM and artwork paths" {
     defer assets.deinit();
     const rom = try std.Io.Dir.path.join(allocator, &.{ root, "Roms/GB/Tetris.gb" });
     const mapped = assets.get(rom).?;
-    try std.testing.expect(std.mem.endsWith(u8, mapped.model.?, "/Assets/Brick/models/gb.glb"));
-    try std.testing.expect(std.mem.endsWith(u8, mapped.front.?, "/Assets/Brick/objects/aa/label.png"));
+    try std.testing.expect(mapped.cover == null);
 }
 
-test "manifest loads the decoder-free runtime preview" {
+test "cover artwork loads without a physical model" {
     const io = std.testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -244,37 +158,18 @@ test "manifest loads the decoder-free runtime preview" {
         "\x03\x02\x01\xff\x30\x20\x10\x80" });
     try temporary.dir.writeFile(io, .{ .sub_path = "Assets/Brick/library.json", .data =
         \\{"schema_version":1,"asset_index_version":"test","games":[
-        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","model":"gb","model_match":"exact","artwork_match":"curated","surfaces":{},"textures":{"artwork.front":"textures/aa/label.brtx","sprite.hero":"textures/aa/label.brtx","artwork.card":"textures/aa/label.brtx","artwork.cover":"textures/aa/label.brtx"}}
+        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"crc32","title":"Tetris","textures":{"artwork.front":"textures/aa/label.brtx","sprite.hero":"textures/aa/label.brtx","artwork.card":"textures/aa/label.brtx","artwork.cover":"textures/aa/label.brtx"}}
         \\],"attribution":{}}
     });
     var assets = try load(io, allocator, root);
     defer assets.deinit();
     const rom = try std.Io.Dir.path.join(allocator, &.{ root, "Roms/GB/Tetris.gb" });
-    const texture = assets.get(rom).?.preview.?;
+    const texture = assets.get(rom).?.cover.?;
     try std.testing.expectEqual(@as(u16, 2), texture.width);
     try std.testing.expectEqual(@as(u16, 1), texture.height);
     try std.testing.expectEqual(@as(u32, 0xff010203), texture.pixels[0]);
     try std.testing.expectEqual(@as(u32, 0x80102030), texture.pixels[1]);
-    try std.testing.expectEqual(@as(u16, 2), assets.get(rom).?.sprite.?.width);
-    try std.testing.expectEqual(@as(u16, 2), assets.get(rom).?.card.?.width);
     try std.testing.expectEqual(@as(u16, 2), assets.get(rom).?.cover.?.width);
-}
-
-test "manifest rejects model path injection" {
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
-    try temporary.dir.createDirPath(io, "Assets/Brick");
-    try temporary.dir.writeFile(io, .{ .sub_path = "Assets/Brick/library.json", .data =
-        \\{"schema_version":1,"asset_index_version":"test","games":[
-        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"name","title":"Tetris","model":"../../escape","surfaces":{"artwork.front":"objects/label.png"}}
-        \\],"attribution":{}}
-    });
-    try std.testing.expectError(error.InvalidAssetModel, load(io, allocator, root));
 }
 
 test "manifest rejects paths outside the data and asset roots" {
@@ -294,40 +189,9 @@ test "manifest rejects paths outside the data and asset roots" {
     try std.testing.expectError(error.AssetPathEscapesRoot, load(io, allocator, root));
 }
 
-test "bundled manifest loads platform fallback sprites" {
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
+test "cover paths cannot escape the asset root" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const allocator = arena.allocator();
-    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
-    try temporary.dir.createDirPath(io, "textures");
-    try temporary.dir.writeFile(io, .{ .sub_path = "textures/gb.brtx", .data = "BRTX\x01\x00\x01\x00\x03\x02\x01\xff" });
-    try temporary.dir.writeFile(io, .{ .sub_path = "manifest.json", .data =
-        \\{"schema_version":1,"model_release":"test","platforms":[
-        \\{"id":"gb","label":"Game Boy","model":"gb","sprite":"textures/gb.brtx","width":1,"height":1,"sha256":"test"}
-        \\]}
-    });
-    var assets = try loadBundled(io, allocator, root);
-    defer assets.deinit();
-    const texture = assets.get("gb").?.sprite.?;
-    try std.testing.expectEqual(@as(u16, 1), texture.width);
-    try std.testing.expectEqual(@as(u32, 0xff010203), texture.pixels[0]);
-}
-
-test "bundled manifest rejects escaping sprite paths" {
-    const io = std.testing.io;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
-    try temporary.dir.writeFile(io, .{ .sub_path = "manifest.json", .data =
-        \\{"schema_version":1,"model_release":"test","platforms":[
-        \\{"id":"gb","label":"Game Boy","model":"gb","sprite":"../gb.brtx","width":1,"height":1,"sha256":"test"}
-        \\]}
-    });
-    try std.testing.expectError(error.AssetPathEscapesRoot, loadBundled(io, allocator, root));
+    try std.testing.expectError(error.AssetPathEscapesRoot, confinedPath(arena.allocator(), "/data/Assets/Brick", "../outside.brtx"));
+    try std.testing.expectError(error.AssetPathEscapesRoot, confinedPath(arena.allocator(), "/data/Assets/Brick", "/outside.brtx"));
 }

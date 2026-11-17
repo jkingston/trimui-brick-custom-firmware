@@ -134,6 +134,7 @@ pub const Surface = struct {
             .action_card => |card| self.actionCard(card),
             .battery => |battery| self.drawBattery(battery),
             .wifi => |wifi| self.drawWifi(wifi),
+            .bluetooth => |bluetooth| self.drawBluetooth(bluetooth),
             .headphones => |headphones| self.drawHeadphones(headphones),
             .meter => |meter| self.drawMeter(meter),
             .activity => |activity| self.drawActivity(activity),
@@ -141,7 +142,7 @@ pub const Surface = struct {
             .keyboard => |keyboard| self.drawKeyboard(keyboard, theme),
             .keyboard_key => |key| self.drawKeyboardKey(key.keyboard, theme, key.index, true, false, 0, 0),
             .cover => |cover| self.drawCover(cover),
-            .cartridge => |cartridge| self.drawCartridge(cartridge),
+            .artwork => |artwork| self.drawArtwork(artwork),
             .overlay_row => |item| self.drawOverlayRow(item),
         }
     }
@@ -418,73 +419,9 @@ pub const Surface = struct {
         }
     }
 
-    fn platformIs(value: []const u8, expected: []const u8) bool {
-        return std.mem.eql(u8, value, expected);
-    }
-
-    fn drawCartridge(self: Surface, cartridge: ui.Cartridge) void {
-        const bounds = cartridge.displayBounds();
-        if (cartridge.sprite) |sprite| {
-            self.drawTextureDimmed(sprite, bounds, cartridge.dim, cartridge.tilt, cartridge.clip_left);
-            if (cartridge.selected) self.stroke(bounds, cartridge.style.edge, if (cartridge.state == .pressed or cartridge.state == .boundary) 6 else 4);
-            return;
-        }
-        const ratio: struct { width: u16, height: u16 } = if (platformIs(cartridge.platform, "gba"))
-            .{ .width = 15, .height = 9 }
-        else if (platformIs(cartridge.platform, "snes"))
-            .{ .width = 12, .height = 10 }
-        else if (platformIs(cartridge.platform, "megadrive"))
-            .{ .width = 10, .height = 12 }
-        else if (platformIs(cartridge.platform, "psx"))
-            .{ .width = 1, .height = 1 }
-        else
-            .{ .width = 4, .height = 5 };
-        var body_width: u16 = bounds.width;
-        var body_height: u16 = @intCast(@as(u32, body_width) * ratio.height / ratio.width);
-        if (body_height > bounds.height) {
-            body_height = bounds.height;
-            body_width = @intCast(@as(u32, body_height) * ratio.width / ratio.height);
-        }
-        const body = ui.Rect{
-            .x = bounds.x + (bounds.width - body_width) / 2,
-            .y = bounds.y + (bounds.height - body_height) / 2,
-            .width = body_width,
-            .height = body_height,
-        };
-        const shell = if (platformIs(cartridge.platform, "gb"))
-            ui.Color{ .r = 0x9b, .g = 0x9a, .b = 0x91 }
-        else if (platformIs(cartridge.platform, "gbc"))
-            ui.Color{ .r = 0x3b, .g = 0x3d, .b = 0x43 }
-        else if (platformIs(cartridge.platform, "gba"))
-            ui.Color{ .r = 0x58, .g = 0x5d, .b = 0x64 }
-        else if (platformIs(cartridge.platform, "nes"))
-            ui.Color{ .r = 0x98, .g = 0x99, .b = 0x95 }
-        else if (platformIs(cartridge.platform, "snes"))
-            ui.Color{ .r = 0xb8, .g = 0xb8, .b = 0xb2 }
-        else if (platformIs(cartridge.platform, "ngpc"))
-            ui.Color{ .r = 0x38, .g = 0x3b, .b = 0x3d }
-        else
-            ui.Color{ .r = 0x24, .g = 0x27, .b = 0x29 };
-        self.fill(.{ .x = body.x + 8, .y = body.y + 10, .width = body.width, .height = body.height }, cartridge.style.shadow);
-        self.fill(body, shell);
-        const edge: u16 = if (cartridge.state == .pressed) 8 else if (cartridge.state == .boundary) 7 else if (cartridge.selected) 5 else 2;
-        const edge_color = cartridge.style.edge;
-        self.fill(.{ .x = body.x, .y = body.y, .width = body.width, .height = edge }, edge_color);
-        self.fill(.{ .x = body.x, .y = body.y + body.height - edge, .width = body.width, .height = edge }, edge_color);
-        self.fill(.{ .x = body.x, .y = body.y, .width = edge, .height = body.height }, edge_color);
-        self.fill(.{ .x = body.x + body.width - edge, .y = body.y, .width = edge, .height = body.height }, edge_color);
-        const label = ui.Rect{
-            .x = body.x + body.width / 8,
-            .y = body.y + body.height / 6,
-            .width = body.width * 3 / 4,
-            .height = body.height * 3 / 5,
-        };
-        self.fill(label, cartridge.style.surface);
-        if (cartridge.texture) |texture| self.drawTexture(texture, label);
-        if (platformIs(cartridge.platform, "gba")) {
-            const lip = @max(@as(u16, 4), body.height / 14);
-            self.fill(.{ .x = body.x + body.width / 12, .y = body.y, .width = body.width * 5 / 6, .height = lip }, shell);
-        }
+    fn drawArtwork(self: Surface, artwork: ui.Artwork) void {
+        if (artwork.texture) |texture|
+            self.drawTextureDimmed(texture, artwork.displayBounds(), artwork.dim, artwork.tilt, artwork.clip_left);
     }
 
     fn drawCover(self: Surface, cover: ui.Cover) void {
@@ -643,6 +580,23 @@ pub const Surface = struct {
         }
         self.fillRounded(.{ .x = b.x + 1, .y = b.y + b.height -| 10, .width = 6, .height = 10 }, headphones.color, 2);
         self.fillRounded(.{ .x = b.x + b.width -| 7, .y = b.y + b.height -| 10, .width = 6, .height = 10 }, headphones.color, 2);
+    }
+
+    fn drawBluetooth(self: Surface, bluetooth: ui.Bluetooth) void {
+        const b = bluetooth.bounds;
+        const x = b.x + b.width / 2 -| 1;
+        const y = b.y + 2;
+        const c = bluetooth.color;
+        self.fill(.{ .x = x, .y = y, .width = 3, .height = b.height -| 4 }, c);
+        const marks = [_][2]u16{
+            .{ 3, 0 },  .{ 6, 2 },  .{ 9, 4 },  .{ 6, 6 },  .{ 3, 8 },
+            .{ 3, 12 }, .{ 6, 14 }, .{ 9, 16 }, .{ 6, 18 }, .{ 3, 20 },
+        };
+        for (marks) |mark| self.fill(.{ .x = x + mark[0], .y = y + @min(mark[1], b.height -| 6), .width = 3, .height = 3 }, c);
+        self.fill(.{ .x = x -| 6, .y = y + 5, .width = 3, .height = 3 }, c);
+        self.fill(.{ .x = x -| 3, .y = y + 8, .width = 3, .height = 3 }, c);
+        self.fill(.{ .x = x -| 6, .y = y + 17, .width = 3, .height = 3 }, c);
+        self.fill(.{ .x = x -| 3, .y = y + 14, .width = 3, .height = 3 }, c);
     }
 
     fn drawMeter(self: Surface, meter: ui.Meter) void {

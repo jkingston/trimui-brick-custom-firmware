@@ -50,7 +50,6 @@ pub const Geometry = struct {
     overlay_row_top: u16,
     overlay_row_step: u16,
     overlay_row_height: u16,
-    shelf_step: u16,
     grid_columns: u16,
     grid_rows: u16,
     radius: u16,
@@ -162,7 +161,6 @@ pub const config = Config{
         .overlay_row_top = 176,
         .overlay_row_step = 100,
         .overlay_row_height = 100,
-        .shelf_step = 128,
         .grid_columns = 3,
         .grid_rows = 2,
         // A small engineered corner softens interactive plates without turning
@@ -171,8 +169,6 @@ pub const config = Config{
         .glyph_size = 64,
         .hint_gap = 16,
     },
-    // Compatibility token for the existing shelf while reusable components
-    // migrate to motion_tokens by semantic role.
     .motion = motion_tokens.content,
 };
 comptime {

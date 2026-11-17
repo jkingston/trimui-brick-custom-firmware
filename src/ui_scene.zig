@@ -36,7 +36,6 @@ pub const RowStyle = struct {
     shadow: Color,
 };
 pub const FrameStyle = struct { base: Color, background: Color, border: Color, shadow: Color };
-pub const ArtworkStyle = struct { shadow: Color, edge: Color, surface: Color, text: Color };
 pub const CardEmphasis = enum { primary, secondary };
 /// Focus is not synonymous with a filled card. Editorial surfaces use content
 /// hierarchy plus an interaction anchor; dense utility views may use a plate.
@@ -111,6 +110,7 @@ pub const ActionCard = struct {
 };
 pub const Battery = struct { bounds: Rect, percent: u8, outline: Color = std.mem.zeroes(Color), charge: Color = std.mem.zeroes(Color) };
 pub const Wifi = struct { bounds: Rect, arcs: Color, dot: Color };
+pub const Bluetooth = struct { bounds: Rect, color: Color };
 pub const Headphones = struct { bounds: Rect, color: Color };
 pub const MeterPresentation = enum { continuous, stepped };
 pub const Meter = struct {
@@ -168,21 +168,17 @@ pub const Keyboard = struct {
 pub const KeyboardKey = struct { keyboard: Keyboard, index: u8, bounds: Rect };
 pub const CoverKind = @import("cover_kind.zig").Kind;
 pub const Cover = struct { bounds: Rect, kind: CoverKind };
-pub const Cartridge = struct {
+pub const Artwork = struct {
     id: interaction.Id = .none,
     state: interaction.State = .idle,
-    style: ArtworkStyle = std.mem.zeroes(ArtworkStyle),
     bounds: Rect,
-    platform: []const u8,
     texture: ?assets.Texture,
-    sprite: ?assets.Texture,
-    selected: bool = false,
     focus_offset_x: i16 = 0,
     focus_offset_y: i16 = 0,
     dim: u8 = 0,
     tilt: i16 = 0,
     clip_left: u16 = 0,
-    pub fn displayBounds(self: Cartridge) Rect {
+    pub fn displayBounds(self: Artwork) Rect {
         return .{
             .x = @intCast(std.math.clamp(@as(i32, self.bounds.x) + self.focus_offset_x, 0, std.math.maxInt(u16))),
             .y = @intCast(std.math.clamp(@as(i32, self.bounds.y) + self.focus_offset_y, 0, std.math.maxInt(u16))),
@@ -236,6 +232,7 @@ pub const Element = union(enum) {
     action_card: ActionCard,
     battery: Battery,
     wifi: Wifi,
+    bluetooth: Bluetooth,
     headphones: Headphones,
     meter: Meter,
     activity: Activity,
@@ -243,7 +240,7 @@ pub const Element = union(enum) {
     keyboard: Keyboard,
     keyboard_key: KeyboardKey,
     cover: Cover,
-    cartridge: Cartridge,
+    artwork: Artwork,
     overlay_row: OverlayRow,
 };
 
@@ -280,10 +277,6 @@ pub const Tree = struct {
                 if (row.selected and row.state == .idle) row.state = .focused;
                 row.selected = row.state.hasFocus();
                 row.style = self.rowStyle(row.state);
-            },
-            .cartridge => |*item| {
-                item.selected = item.selected or item.state.hasFocus();
-                item.style = .{ .shadow = self.theme.shadow, .edge = self.theme.border, .surface = self.theme.surface, .text = self.theme.muted };
             },
             .battery => |*item| {
                 item.outline = self.theme.text;
@@ -334,7 +327,7 @@ pub const Tree = struct {
             .focus_frame => |frame| if (frame.state.hasFocus()) return frame.id,
             .menu_row => |row| if (row.state.hasFocus()) return row.id,
             .action_card => |card| if (card.state.hasFocus()) return card.id,
-            .cartridge => |item| if (item.state.hasFocus()) return item.id,
+            .artwork => |item| if (item.state.hasFocus()) return item.id,
             .overlay_row => |row| if (row.state.hasFocus()) return row.id,
             .keyboard => |item| if (item.state.hasFocus()) return item.id,
             else => {},
@@ -349,7 +342,7 @@ pub const Tree = struct {
             .focus_frame => |frame| if (frame.state.hasFocus()) return .{ .id = frame.id, .bounds = frame.bounds },
             .menu_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
             .action_card => |card| if (card.state.hasFocus()) return .{ .id = card.id, .bounds = card.bounds },
-            .cartridge => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.bounds },
+            .artwork => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.bounds },
             .overlay_row => |row| if (row.state.hasFocus()) return .{ .id = row.id, .bounds = row.bounds },
             .keyboard => |item| if (item.state.hasFocus()) return .{ .id = item.id, .bounds = item.selectedBounds() },
             else => {},
@@ -383,10 +376,8 @@ pub const Tree = struct {
                 row.style = self.rowStyle(state);
                 return true;
             },
-            .cartridge => |*item| if (item.id == id) {
+            .artwork => |*item| if (item.id == id) {
                 item.state = state;
-                item.selected = state.hasFocus();
-                item.style.edge = if (state == .failed) self.theme.danger else self.theme.border;
                 return true;
             },
             .keyboard => |*item| if (item.id == id) {
@@ -420,7 +411,7 @@ pub const Tree = struct {
                 row.focus_offset_y = offset_y;
                 return true;
             },
-            .cartridge => |*item| if (item.id == id) {
+            .artwork => |*item| if (item.id == id) {
                 item.focus_offset_x = offset_x;
                 item.focus_offset_y = offset_y;
                 return true;
@@ -523,7 +514,7 @@ pub const Tree = struct {
             const bounds = switch (element) {
                 inline else => |value| value.bounds,
             };
-            const intentionally_clipped = element == .cartridge;
+            const intentionally_clipped = element == .artwork;
             if (!intentionally_clipped and (@as(u32, bounds.x) + bounds.width > design.geometry.width or
                 @as(u32, bounds.y) + bounds.height > design.geometry.height))
                 return error.ElementOutsideScreen;
@@ -606,7 +597,7 @@ test "semantic action states own distinct styling and shared activity" {
     try std.testing.expectEqual(@as(u16, 0), stateAffordanceWidth(.focused));
 }
 
-test "tiles and cartridges share press state with rows" {
+test "tiles and artworks share press state with rows" {
     const theme = @import("theme.zig").light;
     const tile_id = interaction.Id.scoped(.library, 2);
     var tile = Tree{ .theme = theme, .background = theme.background };
@@ -615,10 +606,10 @@ test "tiles and cartridges share press state with rows" {
     try std.testing.expect(tile.setInteraction(tile_id, .pressed));
     try std.testing.expectEqual(interaction.State.pressed, tile.elements[0].focus_frame.state);
 
-    const shelf_id = interaction.Id.scoped(.library, 4);
-    var shelf = Tree{ .theme = theme, .background = theme.background };
-    shelf.add(.{ .cartridge = .{ .id = shelf_id, .state = .focused, .bounds = .{ .x = 200, .y = 100, .width = 200, .height = 300 }, .platform = "nes", .texture = null, .sprite = null } });
-    try std.testing.expectEqual(shelf_id, shelf.focusedId().?);
-    try std.testing.expect(shelf.setInteraction(shelf_id, .pressed));
-    try std.testing.expectEqual(interaction.State.pressed, shelf.elements[0].cartridge.state);
+    const artwork_id = interaction.Id.scoped(.library, 4);
+    var artwork = Tree{ .theme = theme, .background = theme.background };
+    artwork.add(.{ .artwork = .{ .id = artwork_id, .state = .focused, .bounds = .{ .x = 200, .y = 100, .width = 200, .height = 300 }, .texture = null } });
+    try std.testing.expectEqual(artwork_id, artwork.focusedId().?);
+    try std.testing.expect(artwork.setInteraction(artwork_id, .pressed));
+    try std.testing.expectEqual(interaction.State.pressed, artwork.elements[0].artwork.state);
 }

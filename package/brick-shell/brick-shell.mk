@@ -38,6 +38,8 @@ define BRICK_SHELL_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/sbin/brick-settings
 	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/retroarch.cfg \
 		$(TARGET_DIR)/etc/retroarch/retroarch.cfg
+	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/brick.rguip \
+		$(TARGET_DIR)/etc/retroarch/brick.rguip
 	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/TrimUI_Brick_Gamepad.cfg \
 		$(TARGET_DIR)/usr/share/libretro/autoconfig/udev/TrimUI_Brick_Gamepad.cfg
 	$(INSTALL) -D -m 0644 $(@D)/package/brick-shell/Brick_Test_Controller.cfg \

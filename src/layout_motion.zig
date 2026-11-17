@@ -68,7 +68,7 @@ fn item(element: ui.Element) ?Item {
         .focus_frame => |value| .{ .id = value.id, .bounds = value.bounds },
         .menu_row => |value| .{ .id = value.id, .bounds = value.bounds },
         .overlay_row => |value| .{ .id = value.id, .bounds = value.bounds },
-        .cartridge => |value| .{ .id = value.id, .bounds = value.bounds },
+        .artwork => |value| .{ .id = value.id, .bounds = value.bounds },
         else => null,
     };
 }
@@ -87,7 +87,7 @@ fn setBounds(element: *ui.Element, bounds: ui.Rect) void {
         .focus_frame => |*value| value.bounds = bounds,
         .menu_row => |*value| value.bounds = bounds,
         .overlay_row => |*value| value.bounds = bounds,
-        .cartridge => |*value| value.bounds = bounds,
+        .artwork => |*value| value.bounds = bounds,
         else => {},
     }
 }

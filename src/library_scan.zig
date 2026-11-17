@@ -83,7 +83,7 @@ pub fn write(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !void {
     try output.interface.flush();
 }
 
-test "inventory hashes cartridge files and leaves containers for name matching" {
+test "inventory hashes ROM files and leaves containers for name matching" {
     const io = std.testing.io;
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -97,10 +97,10 @@ test "inventory hashes cartridge files and leaves containers for name matching" 
     try temporary.dir.writeFile(io, .{ .sub_path = "Roms/PS/Game.chd", .data = "container" });
     const result = try inventory(io, allocator, root);
     try std.testing.expectEqual(@as(usize, 2), result.games.len);
-    const cartridge = if (std.mem.eql(u8, result.games[0].platform, "gb")) result.games[0] else result.games[1];
+    const rom = if (std.mem.eql(u8, result.games[0].platform, "gb")) result.games[0] else result.games[1];
     const disc = if (std.mem.eql(u8, result.games[0].platform, "psx")) result.games[0] else result.games[1];
-    try std.testing.expectEqualStrings("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", cartridge.digests[0].sha256.?);
-    try std.testing.expectEqualStrings("352441c2", cartridge.digests[0].crc32.?);
+    try std.testing.expectEqualStrings("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", rom.digests[0].sha256.?);
+    try std.testing.expectEqualStrings("352441c2", rom.digests[0].crc32.?);
     try std.testing.expectEqual(@as(usize, 0), disc.digests.len);
 }
 

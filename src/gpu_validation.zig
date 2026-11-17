@@ -22,7 +22,7 @@ pub fn artwork(io: std.Io, display: *gpu.Display, expected: []u32) !void {
     const texture = @import("asset_manifest.zig").Texture{ .width = 64, .height = 64, .pixels = &pixels, .content_x = 2, .content_y = 3, .content_width = 60, .content_height = 58 };
     for ([_]i16{ -2400, 0, 2400 }) |tilt| for ([_]u8{ 0, 97, 255 }) |dim| for ([_]u16{ 0, 17 }) |clip| {
         var tree = ui.Tree{ .theme = @import("theme.zig").light, .background = @import("theme.zig").light.background };
-        tree.add(.{ .cartridge = .{ .bounds = .{ .x = 48, .y = 130, .width = 331, .height = 287 }, .platform = "gba", .texture = null, .sprite = texture, .dim = dim, .tilt = tilt, .clip_left = clip } });
+        tree.add(.{ .artwork = .{ .bounds = .{ .x = 48, .y = 130, .width = 331, .height = 287 }, .texture = texture, .dim = dim, .tilt = tilt, .clip_left = clip } });
         try display.show(io, &tree);
         (render.Surface{ .pixels = expected }).render(&tree);
         try display.verify(expected);
@@ -65,17 +65,17 @@ pub fn fineDamage(io: std.Io, display: *gpu.Display, expected: []u32) !void {
     std.log.info("GPU oracle PASS: all 256 vertex colour and alpha values in 16 frames", .{});
 }
 
-pub fn shelfDamage(io: std.Io, display: *gpu.Display, expected: []u32) !void {
+pub fn libraryDamage(io: std.Io, display: *gpu.Display, expected: []u32) !void {
     for ([_]ui.Theme{ @import("theme.zig").light, @import("theme.zig").dark }) |theme| {
         for (0..24) |frame| {
-            var tree = ui.library(theme, &@import("catalog.zig").games, frame / 6, .browse, @as(i16, @intCast(frame * 137 % 2001)) - 1000);
+            var tree = ui.library(theme, &@import("catalog.zig").games, frame / 6, if (frame % 2 == 0) .recent else .all);
             if (frame % 2 == 0) render.prepareText(&tree);
             try display.show(io, &tree);
             (render.Surface{ .pixels = expected }).render(&tree);
             try display.verify(expected);
         }
     }
-    std.log.info("GPU oracle PASS: 48 resized shelf frames", .{});
+    std.log.info("GPU oracle PASS: 48 resized library frames", .{});
 }
 
 pub fn asynchronous(io: std.Io, display: *gpu.Display, expected: []u32) !void {
@@ -163,7 +163,7 @@ pub fn asynchronous(io: std.Io, display: *gpu.Display, expected: []u32) !void {
     std.log.info("GPU oracle PASS: 24 single-clear frames at screen boundaries", .{});
 }
 
-const Workload = enum { selection, selection_cycle, navigation, scrolling, value, keyboard, shelf, shelf_dynamic, shelf_prepared, tiny, full, idle, idle_retained, unchanged };
+const Workload = enum { selection, selection_cycle, navigation, scrolling, value, keyboard, library, library_dynamic, library_prepared, tiny, full, idle, idle_retained, unchanged };
 
 fn benchTree(workload: Workload, frame: usize) ui.Tree {
     return switch (workload) {
@@ -173,8 +173,8 @@ fn benchTree(workload: Workload, frame: usize) ui.Tree {
         .scrolling => ui.settings(2 + frame % 4, .{}, "On", "Off"),
         .value => ui.overlayPause(@import("theme.zig").light, "Example", 1, frame % 3, "Bright", ""),
         .keyboard => ui.wifiPassword(@import("theme.zig").light, "Example", .{ .selected = @intCast(frame % 36) }, "", false),
-        .shelf => ui.library(@import("theme.zig").light, &@import("catalog.zig").games, 2, .browse, @as(i16, @intCast(frame % 20)) * 100 - 1000),
-        .shelf_dynamic, .shelf_prepared => ui.library(@import("theme.zig").light, &@import("catalog.zig").games, 2, .browse, @as(i16, @intCast(frame * 37 % 2001)) - 1000),
+        .library => ui.library(@import("theme.zig").light, &@import("catalog.zig").games, frame % @import("catalog.zig").games.len, .recent),
+        .library_dynamic, .library_prepared => ui.library(@import("theme.zig").light, &@import("catalog.zig").games, frame % @import("catalog.zig").games.len, .recent),
         .unchanged => ui.settings(0, .{}, "On", "Off"),
         .tiny, .full => blk: {
             const theme = @import("theme.zig").light;
@@ -210,8 +210,8 @@ pub fn benchmark(io: std.Io, selected: ?[]const u8) !void {
             if (sleeping) _ = c.usleep(250000);
             var tree = benchTree(workload, i);
             const preparing = std.Io.Timestamp.now(io, .awake);
-            if (workload == .shelf_prepared) render.prepareText(&tree);
-            const prepare_us = if (workload == .shelf_prepared) preparing.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds() else 0;
+            if (workload == .library_prepared) render.prepareText(&tree);
+            const prepare_us = if (workload == .library_prepared) preparing.durationTo(std.Io.Timestamp.now(io, .awake)).toMicroseconds() else 0;
             try display.show(io, &tree);
             display.last.prepare_us = prepare_us;
             if (i < 20) continue;

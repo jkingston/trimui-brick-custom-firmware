@@ -245,6 +245,7 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .action_card => |value| focusBounds(value.bounds, value.displayedBounds()),
         .battery => |value| value.bounds,
         .wifi => |value| value.bounds,
+        .bluetooth => |value| value.bounds,
         .headphones => |value| value.bounds,
         .meter => |value| value.bounds,
         .activity => |value| value.bounds,
@@ -252,7 +253,7 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .keyboard => |value| value.bounds,
         .keyboard_key => |value| value.bounds,
         .cover => |value| expand(value.bounds, 10, 12),
-        .cartridge => |value| blk: {
+        .artwork => |value| blk: {
             var bounds = expand(value.displayBounds(), 8, 10);
             const left = bounds.x -| value.clip_left;
             bounds.width +|= bounds.x - left;
@@ -286,8 +287,8 @@ fn expand(rect: ui.Rect, x: u16, y: u16) ui.Rect {
     return .{
         .x = rect.x,
         .y = rect.y,
-        // Shelf neighbours may be wholly outside the viewport while entering or
-        // leaving cartridge flow. Such elements paint no pixels; their damage
+        // Library neighbours may be wholly outside the viewport while entering or
+        // leaving artwork flow. Such elements paint no pixels; their damage
         // bounds must not underflow merely because their origin is off-screen.
         .width = @intCast(@min(@as(u32, 1024 -| rect.x), @as(u32, rect.width) + x)),
         .height = @intCast(@min(@as(u32, 768 -| rect.y), @as(u32, rect.height) + y)),
@@ -299,13 +300,12 @@ fn fingerprint(element: ui.Element) Signature {
     const tag = std.meta.activeTag(element);
     hashAny(&hash, tag);
     switch (element) {
-        .cartridge => |value| {
-            hashAny(&hash, value.style);
+        .artwork => |value| {
             hashAny(&hash, value.bounds);
-            hashAny(&hash, value.platform);
             hashTexture(&hash, value.texture);
-            hashTexture(&hash, value.sprite);
-            hashAny(&hash, value.selected);
+            hashAny(&hash, value.state);
+            hashAny(&hash, value.focus_offset_x);
+            hashAny(&hash, value.focus_offset_y);
             hashAny(&hash, value.dim);
             hashAny(&hash, value.tilt);
             hashAny(&hash, value.clip_left);
@@ -410,28 +410,22 @@ test "damage signatures preserve both hashes across buffered update boundaries" 
     }
 }
 
-test "paint bounds clip cartridges outside the viewport without underflow" {
-    const outside = paintBounds(.{ .cartridge = .{
+test "paint bounds clip artworks outside the viewport without underflow" {
+    const outside = paintBounds(.{ .artwork = .{
         .bounds = .{ .x = 1120, .y = 154, .width = 256, .height = 330 },
-        .platform = "gba",
         .texture = null,
-        .sprite = null,
     } });
     try std.testing.expectEqual(@as(u16, 0), outside.width);
 
-    const edge = paintBounds(.{ .cartridge = .{
+    const edge = paintBounds(.{ .artwork = .{
         .bounds = .{ .x = 1000, .y = 154, .width = 256, .height = 330 },
-        .platform = "gba",
         .texture = null,
-        .sprite = null,
     } });
     try std.testing.expectEqual(@as(u16, 24), edge.width);
 
-    const nudged = paintBounds(.{ .cartridge = .{
+    const nudged = paintBounds(.{ .artwork = .{
         .bounds = .{ .x = 100, .y = 154, .width = 256, .height = 330 },
-        .platform = "gba",
         .texture = null,
-        .sprite = null,
         .focus_offset_x = -10,
     } });
     try std.testing.expectEqual(@as(u16, 90), nudged.x);

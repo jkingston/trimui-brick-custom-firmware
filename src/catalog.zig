@@ -3,8 +3,6 @@
 const std = @import("std");
 const asset_manifest = @import("asset_manifest.zig");
 
-const bundled_asset_root = "/usr/share/brick/cartridges";
-
 pub const Cover = @import("cover_kind.zig").Kind;
 
 pub const Game = struct {
@@ -115,12 +113,9 @@ fn lessThan(_: void, a: Game, b: Game) bool {
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
 
-fn applyAssets(found: []Game, exact: *const std.StringHashMap(asset_manifest.Assets), bundled: *const std.StringHashMap(asset_manifest.Assets)) void {
+fn applyAssets(found: []Game, exact: *const std.StringHashMap(asset_manifest.Assets)) void {
     for (found) |*game| {
         if (exact.get(game.rom_path)) |mapping| game.assets = mapping;
-        if (game.assets.sprite == null) {
-            if (bundled.get(game.platform_id)) |fallback| game.assets.sprite = fallback.sprite;
-        }
     }
 }
 
@@ -226,43 +221,13 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
     }
     found.shrinkRetainingCapacity(count);
     var assets = asset_manifest.load(io, allocator, root) catch |err| blk: {
-        std.log.warn("Ignoring invalid cartridge asset manifest: {s}", .{@errorName(err)});
+        std.log.warn("Ignoring invalid artwork manifest: {s}", .{@errorName(err)});
         break :blk std.StringHashMap(asset_manifest.Assets).init(allocator);
     };
     defer assets.deinit();
-    var bundled = asset_manifest.loadBundled(io, allocator, bundled_asset_root) catch |err| blk: {
-        std.log.warn("Ignoring invalid bundled cartridge assets: {s}", .{@errorName(err)});
-        break :blk std.StringHashMap(asset_manifest.Assets).init(allocator);
-    };
-    defer bundled.deinit();
-    applyAssets(found.items, &assets, &bundled);
+    applyAssets(found.items, &assets);
     std.mem.sort(Game, found.items, {}, lessThan);
     return found.toOwnedSlice(allocator);
-}
-
-test "per-game assets override bundled sprites and incomplete entries inherit them" {
-    const allocator = std.testing.allocator;
-    const bundled_pixels = [_]u32{0xff010203};
-    const exact_pixels = [_]u32{0xff040506};
-    const bundled_texture = asset_manifest.Texture{ .width = 1, .height = 1, .pixels = &bundled_pixels, .content_x = 0, .content_y = 0, .content_width = 1, .content_height = 1 };
-    const exact_texture = asset_manifest.Texture{ .width = 1, .height = 1, .pixels = &exact_pixels, .content_x = 0, .content_y = 0, .content_width = 1, .content_height = 1 };
-    var bundled: std.StringHashMap(asset_manifest.Assets) = .init(allocator);
-    defer bundled.deinit();
-    try bundled.put("gb", .{ .sprite = bundled_texture });
-    var exact: std.StringHashMap(asset_manifest.Assets) = .init(allocator);
-    defer exact.deinit();
-    try exact.put("/data/Roms/GB/Exact.gb", .{ .sprite = exact_texture });
-    try exact.put("/data/Roms/GB/Incomplete.gb", .{ .model = "/model.glb" });
-    var found = [_]Game{
-        .{ .title = "Bundled", .system = "Game Boy", .platform_id = "gb", .summary = "", .core_path = "", .rom_path = "/data/Roms/GB/Bundled.gb", .cover = .library },
-        .{ .title = "Exact", .system = "Game Boy", .platform_id = "gb", .summary = "", .core_path = "", .rom_path = "/data/Roms/GB/Exact.gb", .cover = .library },
-        .{ .title = "Incomplete", .system = "Game Boy", .platform_id = "gb", .summary = "", .core_path = "", .rom_path = "/data/Roms/GB/Incomplete.gb", .cover = .library },
-    };
-    applyAssets(&found, &exact, &bundled);
-    try std.testing.expectEqual(@as(u32, 0xff010203), found[0].assets.sprite.?.pixels[0]);
-    try std.testing.expectEqual(@as(u32, 0xff040506), found[1].assets.sprite.?.pixels[0]);
-    try std.testing.expectEqual(@as(u32, 0xff010203), found[2].assets.sprite.?.pixels[0]);
-    try std.testing.expectEqualStrings("/model.glb", found[2].assets.model.?);
 }
 
 test "system aliases include existing and MinUI folder names" {
@@ -326,8 +291,7 @@ test "discovery applies installed artwork metadata without changing launch paths
     });
     const library = try discover(io, allocator, root);
     try std.testing.expectEqual(@as(usize, 1), library.len);
-    try std.testing.expect(std.mem.endsWith(u8, library[0].assets.model.?, "/Assets/Brick/models/gb.glb"));
-    try std.testing.expect(std.mem.endsWith(u8, library[0].assets.front.?, "/Assets/Brick/objects/aa/label.png"));
+    try std.testing.expect(library[0].assets.cover == null);
     try std.testing.expect(std.mem.endsWith(u8, library[0].rom_path, "/Roms/GB/Tetris.gb"));
 }
 
@@ -336,6 +300,9 @@ test "discovery applies installed artwork metadata without changing launch paths
 pub const Collection = struct {
     games: []const Game,
     system: ?usize = null,
+    /// Optional source-library order. Used for factual play history without
+    /// changing the stable alphabetical catalogue used by All games.
+    order: ?[]const usize = null,
 
     pub fn matches(self: Collection, game: Game) bool {
         return if (self.system) |index| std.mem.eql(u8, game.system, systems[index].label) else true;
@@ -343,14 +310,28 @@ pub const Collection = struct {
 
     pub fn len(self: Collection) usize {
         var count: usize = 0;
-        for (self.games) |game| if (self.matches(game)) {
-            count += 1;
-        };
+        if (self.order) |order| {
+            for (order) |source| {
+                if (source < self.games.len and self.matches(self.games[source])) count += 1;
+            }
+        } else {
+            for (self.games) |game| {
+                if (self.matches(game)) count += 1;
+            }
+        }
         return count;
     }
 
     pub fn sourceIndex(self: Collection, position: usize) ?usize {
         var visible: usize = 0;
+        if (self.order) |order| {
+            for (order) |source| {
+                if (source >= self.games.len or !self.matches(self.games[source])) continue;
+                if (visible == position) return source;
+                visible += 1;
+            }
+            return null;
+        }
         for (self.games, 0..) |game, index| {
             if (!self.matches(game)) continue;
             if (visible == position) return index;
@@ -361,6 +342,14 @@ pub const Collection = struct {
 
     pub fn positionOf(self: Collection, source: usize) ?usize {
         var visible: usize = 0;
+        if (self.order) |order| {
+            for (order) |candidate| {
+                if (candidate >= self.games.len or !self.matches(self.games[candidate])) continue;
+                if (candidate == source) return visible;
+                visible += 1;
+            }
+            return null;
+        }
         for (self.games, 0..) |game, index| {
             if (!self.matches(game)) continue;
             if (source == index) return visible;

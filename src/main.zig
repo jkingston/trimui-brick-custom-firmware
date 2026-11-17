@@ -50,7 +50,7 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
     state.bluetooth.snapshot.radio = .ready;
     // Keep the public snapshot names stable; internally this exceptional entry
     // surface is a foyer, never a routine universal home.
-    const foyer_screen = std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback");
+    const foyer_screen = std.mem.eql(u8, screen, "home") or std.mem.eql(u8, screen, "home-recent");
     if (foyer_screen) state.page = .foyer;
     if (games) |library| {
         state.games = library;
@@ -60,11 +60,10 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
             state.game_index = state.selected;
         }
     }
-    if (std.mem.eql(u8, screen, "games") or std.mem.eql(u8, screen, "games-empty") or std.mem.eql(u8, screen, "games-shelf") or std.mem.eql(u8, screen, "games-grid")) {
+    if (std.mem.eql(u8, screen, "games") or std.mem.eql(u8, screen, "games-empty") or std.mem.eql(u8, screen, "games-all")) {
         state.page = .games;
         if (std.mem.eql(u8, screen, "games-empty")) state.games = &.{};
-        if (std.mem.eql(u8, screen, "games-shelf")) state.library_view = .browse;
-        if (std.mem.eql(u8, screen, "games-grid")) state.library_view = .all;
+        if (std.mem.eql(u8, screen, "games-all")) state.library_view = .all;
     } else if (std.mem.eql(u8, screen, "game") or std.mem.eql(u8, screen, "game-failed")) {
         state.page = .game;
         if (games == null) state.game_index = 1;
@@ -77,25 +76,14 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         // The foyer owns battery status at runtime; deterministic snapshots
         // must cover the real header composition rather than an empty fixture.
         if (games != null and state.games.len != 0) state.last_played = state.game_index;
-        if (std.mem.eql(u8, screen, "home-recent") or std.mem.eql(u8, screen, "home-feedback")) {
+        if (std.mem.eql(u8, screen, "home-recent")) {
             state.last_played = 1;
             state.resumable = true;
-        }
-        if (std.mem.eql(u8, screen, "home-feedback")) {
-            state.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
         }
     }
     if (std.mem.eql(u8, screen, "settings-overflow")) {
         state.page = .settings;
         state.selected = 7;
-    }
-    if (std.mem.eql(u8, screen, "settings-feedback")) {
-        state.page = .settings;
-        state.feedback = .{ .kind = .success, .message = "Brightness saved" };
-    }
-    if (std.mem.eql(u8, screen, "settings-progress")) {
-        state.page = .settings;
-        state.feedback = .{ .kind = .progress, .message = "Applying display settings" };
     }
     if (std.mem.eql(u8, screen, "systems")) {
         state.page = .systems;
@@ -275,7 +263,7 @@ pub fn main(init: std.process.Init) !void {
             try snapshotTo(init.io, init.gpa, "", screen, null, 0, .dark, gpu);
             return;
         };
-        const screens = [_][]const u8{ "splash", "home", "home-recent", "home-feedback", "games", "games-empty", "games-shelf", "games-grid", "game", "game-failed", "settings", "settings-overflow", "settings-feedback", "settings-progress", "brightness", "performance", "display_timeout", "suspend_timeout", "appearance", "reduced_motion", "systems", "views", "power", "shutdown", "bluetooth", "bluetooth-checking", "bluetooth-off", "bluetooth-unavailable", "bluetooth-starting", "bluetooth-stopping", "bluetooth-connecting", "bluetooth-details", "bluetooth-pairing", "bluetooth-code-entry", "bluetooth-code-display", "bluetooth-failed", "wifi", "wifi-picker-checking", "wifi-picker-off", "wifi-picker-starting", "wifi-picker-stopping", "wifi-picker-error", "wifi-details", "wifi-password", "wifi-password-uppercase", "wifi-password-symbols", "wifi-hidden-name", "wifi-hidden-security", "wifi-info", "wifi-open-confirm", "wifi-forget-confirm", "overlay", "overlay-brightness", "overlay-states", "overlay-network", "overlay-network-captive", "network-request-off", "network-request-captive", "network-request-limited", "languages" };
+        const screens = [_][]const u8{ "splash", "home", "home-recent", "games", "games-empty", "games-all", "game", "game-failed", "settings", "settings-overflow", "brightness", "performance", "display_timeout", "suspend_timeout", "appearance", "reduced_motion", "systems", "views", "power", "shutdown", "bluetooth", "bluetooth-checking", "bluetooth-off", "bluetooth-unavailable", "bluetooth-starting", "bluetooth-stopping", "bluetooth-connecting", "bluetooth-details", "bluetooth-pairing", "bluetooth-code-entry", "bluetooth-code-display", "bluetooth-failed", "wifi", "wifi-picker-checking", "wifi-picker-off", "wifi-picker-starting", "wifi-picker-stopping", "wifi-picker-error", "wifi-details", "wifi-password", "wifi-password-uppercase", "wifi-password-symbols", "wifi-hidden-name", "wifi-hidden-security", "wifi-info", "wifi-open-confirm", "wifi-forget-confirm", "overlay", "overlay-brightness", "overlay-states", "overlay-network", "overlay-network-captive", "network-request-off", "network-request-captive", "network-request-limited", "languages" };
         if (suite == null or !std.mem.eql(u8, suite.?, "damage")) for ([_]@import("theme.zig").Mode{ .light, .dark }) |appearance| for (screens) |screen| {
             try snapshotTo(init.io, init.gpa, "", screen, null, 0, appearance, gpu);
         };
@@ -291,7 +279,7 @@ pub fn main(init: std.process.Init) !void {
         std.log.info("GPU oracle PASS: 120 aged-buffer navigation frames", .{});
         try @import("gpu_validation.zig").artwork(init.io, gpu, pixels);
         try @import("gpu_validation.zig").fineDamage(init.io, gpu, pixels);
-        try @import("gpu_validation.zig").shelfDamage(init.io, gpu, pixels);
+        try @import("gpu_validation.zig").libraryDamage(init.io, gpu, pixels);
         return;
     }
     if (std.mem.eql(u8, command, "--gpu-bench")) return @import("gpu_validation.zig").benchmark(init.io, arguments.next());
@@ -377,7 +365,6 @@ test {
     _ = @import("damage_render_test.zig");
     _ = @import("composition.zig");
     _ = library_scan;
-    _ = @import("shelf_motion.zig");
     _ = @import("library_preferences.zig");
     _ = @import("captive.zig");
     _ = @import("wifi.zig");

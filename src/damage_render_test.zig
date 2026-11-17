@@ -168,15 +168,13 @@ test "clipped artwork invalidates pixels left of its layout bounds" {
     defer std.testing.allocator.free(pixels);
     const artwork = [_]u32{ 0xffa03010, 0x80206040, 0, 0xff105090 };
     var tree = ui.Tree{ .theme = theme.light, .background = theme.light.background };
-    tree.add(.{ .cartridge = .{
+    tree.add(.{ .artwork = .{
         .bounds = .{ .x = 40, .y = 20, .width = 60, .height = 60 },
-        .platform = "gba",
-        .texture = null,
-        .sprite = .{ .width = 2, .height = 2, .content_x = 0, .content_y = 0, .content_width = 2, .content_height = 2, .pixels = &artwork },
+        .texture = .{ .width = 2, .height = 2, .content_x = 0, .content_y = 0, .content_width = 2, .content_height = 2, .pixels = &artwork },
     } });
     var harness = try Harness.init(.{ pixels[0..count], pixels[count .. count * 2] }, pixels[count * 2 ..], &tree);
     for ([_]u16{ 17, 17, 0, 50, 50, 0 }) |clip| {
-        tree.elements[0].cartridge.clip_left = clip;
+        tree.elements[0].artwork.clip_left = clip;
         try harness.show(&tree);
     }
 }

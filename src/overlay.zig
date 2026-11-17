@@ -112,7 +112,7 @@ pub const Model = struct {
             .failure => ui.confirmation(self.appearance.colors(), "Save state", "State not saved", self.notice, "Try again", self.confirmation),
         };
         if (self.layer != .failure and self.notice.len != 0)
-            ui.showFeedback(&result, .{ .kind = self.notice_kind, .message = self.notice });
+            ui.taskIssue(&result, self.notice);
         return result;
     }
 
@@ -283,16 +283,16 @@ test "back returns from submenus and Menu resumes from every layer" {
     }
 }
 
-test "state layers preserve the paused game object" {
+test "state layers preserve truthful paused-game identity" {
     var state = Model{ .game = catalog.games[0], .title = catalog.games[0].title, .layer = .states, .available = .{ true, false, false, true } };
     var tree = state.tree();
-    var has_cover = false;
-    for (tree.slice()) |element| has_cover = has_cover or element == .cover;
-    try std.testing.expect(has_cover);
+    var has_identity = false;
+    for (tree.slice()) |element| has_identity = has_identity or element == .artwork or (element == .text and std.mem.eql(u8, element.text.value, "No artwork"));
+    try std.testing.expect(has_identity);
 
     state.layer = .save_slots;
     tree = state.tree();
-    has_cover = false;
-    for (tree.slice()) |element| has_cover = has_cover or element == .cover;
-    try std.testing.expect(has_cover);
+    has_identity = false;
+    for (tree.slice()) |element| has_identity = has_identity or element == .artwork or (element == .text and std.mem.eql(u8, element.text.value, "No artwork"));
+    try std.testing.expect(has_identity);
 }

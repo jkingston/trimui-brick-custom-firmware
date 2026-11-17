@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
-const activity_motion = @import("activity_motion.zig");
 const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
-const design = @import("design.zig");
 const display_scheduler = @import("display_scheduler.zig");
 const input_repeat = @import("input_repeat.zig");
 const interaction = @import("interaction.zig");
 const interaction_motion = @import("motion.zig");
 const model = @import("model.zig");
-const navigation_motion = @import("navigation_motion.zig");
 const overlay = @import("overlay.zig");
 const retroarch = @import("retroarch.zig");
 const scene_motion = @import("scene_motion.zig");
 const ui = @import("ui.zig");
-const ui_components = @import("ui_components.zig");
 const settings = @import("settings.zig");
 const bluetooth_ipc = @import("bluetooth_ipc.zig");
 const wifi_ipc = @import("wifi_ipc.zig");
@@ -24,7 +20,7 @@ const tty_path = "/dev/tty0";
 const kd_set_mode: u32 = 0x4b3a;
 const kd_graphics: usize = 1;
 var profile_input = false;
-pub const Profile = enum { settings, shelf, overlay };
+pub const Profile = enum { settings, library, overlay };
 
 const ev_syn: u16 = 0x00;
 const ev_key: u16 = 0x01;
@@ -327,8 +323,7 @@ fn observeRepeat(repeat: *input_repeat.Controller, event: InputEvent, now_ms: i6
 }
 
 fn repeatAllowed(state: *const model.Model, action: model.Action) bool {
-    return action == .up or action == .down or
-        (state.page == .games and state.library_view == .browse and (action == .left or action == .right));
+    return state.supportsDirection(action);
 }
 
 fn directional(action: model.Action) bool {
@@ -360,29 +355,13 @@ fn beginOverlayNavigation(
     return destination;
 }
 
-/// Present the launch destination before synchronous content/core preparation
-/// can block the shell. The selected control remains the transition anchor and
-/// the shared activity cadence starts during the reveal.
+/// Acknowledge activation immediately, then begin synchronous preparation on
+/// the next instruction. Launch work never waits for decorative motion.
 fn presentLaunch(io: std.Io, display: *Display, source: *const ui.Tree, state: *const model.Model, index: usize) !void {
+    _ = io;
+    _ = source;
     if (index >= state.games.len) return error.InvalidGameIndex;
     var destination = ui.gameDetail(state.settings.appearance.colors(), state.games[index], null);
-    const started = nowMilliseconds(io);
-    var activity: activity_motion.Controller = .{};
-    activity.update(&destination, started, state.settings.reduced_motion);
-    activity.decorate(&destination, started);
-    var transition: navigation_motion.Controller = .{};
-    transition.begin(source, &destination, .forward, started, state.settings.reduced_motion);
-    var now = started;
-    while (transition.active(now)) {
-        const next_frame = now + design.motion_tokens.enter.frame_ms;
-        activity.decorate(&transition.to, now);
-        try display.submitTransition(&transition, now);
-        const presented = nowMilliseconds(io);
-        if (presented < next_frame)
-            try std.Io.sleep(io, .fromMilliseconds(next_frame - presented), .awake);
-        now = nowMilliseconds(io);
-    }
-    activity.decorate(&destination, now);
     try display.show(&destination);
 }
 
@@ -416,65 +395,33 @@ fn wifiChanging(state: *const model.Model) bool {
 
 fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_client: ?*wifi_ipc.Client, bluetooth_client: ?*bluetooth_ipc.Client, bluetooth_request: *u32, action: model.Action) !SessionAction {
     if (!state.apply(action)) return .{};
-    state.feedback = .{};
+    state.issue = "";
     if (state.takeSetting()) |setting| {
-        if (settings.apply(io, state.settings, setting)) |_| {
-            state.feedback = .{ .kind = .success, .message = switch (setting) {
-                .brightness => "Brightness saved",
-                .performance => "Power mode saved",
-                .display_timeout => "Screen-off timeout saved",
-                .suspend_timeout => "Suspend timeout saved",
-                .appearance => "Appearance changed",
-                .reduced_motion => if (state.settings.reduced_motion) "Reduced motion on" else "Reduced motion off",
-            } };
-        } else |_| {
+        if (settings.apply(io, state.settings, setting)) |_| {} else |_| {
             state.settings = settings.load(io);
-            state.feedback = .{ .kind = .failure, .message = switch (setting) {
+            state.issue = switch (setting) {
                 .brightness => "Brightness is unchanged",
                 .performance => "Power mode is unchanged",
                 .display_timeout => "Screen-off timing is unchanged",
                 .suspend_timeout => "Sleep timing is unchanged",
                 .appearance => "Appearance is unchanged",
                 .reduced_motion => "Motion setting is unchanged",
-            } };
+            };
         }
     }
     if (state.takeWifiRequest()) |pending| {
         var request = pending;
-        state.feedback = .{ .kind = .progress, .message = switch (request.command.kind) {
-            .set_enabled => if (request.command.value) "Turning Wi-Fi on" else "Turning Wi-Fi off",
-            .scan => "Refreshing networks",
-            .connect => "Connecting to Wi-Fi",
-            .cancel => "Cancelling Wi-Fi action",
-            .disconnect => "Disconnecting from Wi-Fi",
-            .forget => "Forgetting network",
-            .set_auto_connect, .set_private_address => "Saving network setting",
-            .open_captive => "Opening Wi-Fi sign in",
-            .recheck => "Checking internet access",
-        } };
         if (wifi_client) |client| client.send(&request) catch {
-            state.feedback = .{ .kind = .failure, .message = "Wi-Fi is unavailable" };
+            state.issue = "Wi-Fi is unavailable";
         } else {
             request.wipe();
-            state.feedback = .{ .kind = .failure, .message = "Wi-Fi is unavailable" };
+            state.issue = "Wi-Fi is unavailable";
         }
     }
     if (state.takeBluetoothCommand()) |pending| {
         var command = pending;
-        state.feedback = .{ .kind = .progress, .message = switch (command.kind) {
-            .set_radio => if (command.value) "Turning Bluetooth on" else "Turning Bluetooth off",
-            .start_search => "Looking for devices",
-            .cancel => "Cancelling Bluetooth action",
-            .pair => "Pairing device",
-            .connect => "Connecting device",
-            .disconnect => "Disconnecting device",
-            .forget => "Forgetting device",
-            .select_audio => "Switching audio",
-            .confirm_pairing, .submit_passkey => "Confirming pairing",
-            .network_activity => "Coordinating radios",
-        } };
         if (!sendBluetooth(bluetooth_client, bluetooth_request, &command))
-            state.feedback = .{ .kind = .failure, .message = "Bluetooth is unavailable" };
+            state.issue = "Bluetooth is unavailable";
     }
     if (state.pending_power) |command| {
         state.pending_power = null;
@@ -486,11 +433,11 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
         }, "");
         try display.show(&status);
         performPower(io, command) catch {
-            state.feedback = .{ .kind = .failure, .message = switch (command) {
+            state.issue = switch (command) {
                 .screen_off => "The screen is still on",
                 .suspend_device => "The device is still awake",
                 .shutdown => "The device is still on",
-            } };
+            };
         };
         state.page = .foyer;
         state.selected = 0;
@@ -553,21 +500,16 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
     try markReady(io);
     var poll_fds: [max_gamepads + 3]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
-    var motion: @import("shelf_motion.zig").Motion = .{};
     var layout_pending = false;
     var press: PressTracker = .{};
-    var feedback_lifecycle = ui_components.FeedbackLifecycle{};
     var was_animating = false;
     var save_deadline: ?i64 = null;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
         const now = nowMilliseconds(io);
-        if (!feedback_lifecycle.feedback.eql(state.feedback))
-            feedback_lifecycle.show(state.feedback, now);
-        motion.reduced = state.settings.reduced_motion;
         const repeat_timeout = repeat.timeout(now);
-        const animation = (state.page == .games and state.library_view == .browse and motion.active(now)) or presentation.active(now);
+        const animation = presentation.active(now);
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
@@ -588,8 +530,6 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             const captive_wait: i32 = @intCast(@max(0, captive_deadline - now));
             timeout = if (timeout < 0) captive_wait else @min(timeout, captive_wait);
         }
-        const feedback_wait = feedback_lifecycle.timeout(now);
-        if (feedback_wait >= 0) timeout = if (timeout < 0) feedback_wait else @min(timeout, feedback_wait);
         timeout = interaction_motion.pollTimeout(animation, was_animating, timeout);
         for (gamepads.slots, 0..) |slot, index| {
             poll_fds[index].fd = slot.fd;
@@ -607,10 +547,6 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             save_deadline = null;
         };
         var changed = animation or was_animating;
-        if (feedback_lifecycle.tick(nowMilliseconds(io))) {
-            if (feedback_lifecycle.phase == .hidden) state.feedback = .{};
-            changed = true;
-        }
         var rescan_inputs = false;
         if ((poll_fds[max_gamepads + 2].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;
         if ((poll_fds[max_gamepads + 2].revents & std.posix.POLL.IN) != 0) {
@@ -643,7 +579,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 client.close();
                 wifi_client = null;
                 wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
-                state.feedback = .{ .kind = .warning, .message = "Wi-Fi is briefly unavailable" };
+                if (state.page == .wifi or state.page == .wifi_fallback) state.issue = "Wi-Fi is briefly unavailable";
                 changed = true;
             } else if ((poll_fds[max_gamepads].revents & std.posix.POLL.IN) != 0) {
                 var packet: [wifi_ipc.max_packet]u8 = undefined;
@@ -651,7 +587,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     client.close();
                     wifi_client = null;
                     wifi_reconnect_deadline = nowMilliseconds(io) + 1000;
-                    state.feedback = .{ .kind = .warning, .message = "Wi-Fi is briefly unavailable" };
+                    if (state.page == .wifi or state.page == .wifi_fallback) state.issue = "Wi-Fi is briefly unavailable";
                     changed = true;
                     continue;
                 };
@@ -667,8 +603,12 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     },
                     .result => |result| switch (result.status) {
                         .accepted => {},
-                        .stale => state.feedback = .{ .kind = .warning, .message = "Wi-Fi changed. Try again." },
-                        .rejected => state.feedback = .{ .kind = .failure, .message = "Wi-Fi is unchanged" },
+                        .stale => if (state.page == .wifi or state.page == .wifi_fallback) {
+                            state.issue = "Wi-Fi changed. Try again.";
+                        },
+                        .rejected => if (state.page == .wifi or state.page == .wifi_fallback) {
+                            state.issue = "Wi-Fi is unchanged";
+                        },
                     },
                 }
             }
@@ -678,7 +618,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 client.close();
                 bluetooth_client = null;
                 bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
-                state.feedback = .{ .kind = .warning, .message = "Bluetooth is briefly unavailable" };
+                if (state.page == .bluetooth) state.issue = "Bluetooth is briefly unavailable";
                 changed = true;
             } else if ((poll_fds[max_gamepads + 1].revents & std.posix.POLL.IN) != 0) {
                 var packet: [bluetooth_ipc.max_packet]u8 = undefined;
@@ -686,7 +626,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     client.close();
                     bluetooth_client = null;
                     bluetooth_reconnect_deadline = nowMilliseconds(io) + 1000;
-                    state.feedback = .{ .kind = .warning, .message = "Bluetooth is briefly unavailable" };
+                    if (state.page == .bluetooth) state.issue = "Bluetooth is briefly unavailable";
                     changed = true;
                     continue;
                 };
@@ -694,8 +634,12 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                     .snapshot => |snapshot| changed = state.updateBluetooth(snapshot) or changed,
                     .result => |result| switch (result.status) {
                         .accepted => {},
-                        .stale => state.feedback = .{ .kind = .warning, .message = "Bluetooth changed. Try again." },
-                        .rejected => state.feedback = .{ .kind = .failure, .message = "Bluetooth is unchanged" },
+                        .stale => if (state.page == .bluetooth) {
+                            state.issue = "Bluetooth changed. Try again.";
+                        },
+                        .rejected => if (state.page == .bluetooth) {
+                            state.issue = "Bluetooth is unchanged";
+                        },
                     },
                 }
             }
@@ -703,7 +647,6 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         was_animating = animation;
         {
             if (repeat.due(nowMilliseconds(io))) |action| if (repeatAllowed(state, action)) {
-                const previous = state.selected;
                 const retained_preview = state.library_preview;
                 const previous_page = state.page;
                 const previous_appearance = state.settings.appearance;
@@ -716,15 +659,13 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                 if (state.page == .games) state.library_preview = retained_preview;
                 const boundary = !result.changed and state.supportsDirection(action) and presentation.focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                 if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
-                if (state.page == .games and state.library_view == .browse and previous != state.selected)
-                    motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                 if (result.launch) |index| {
                     try presentLaunch(io, &display, &tree, state, index);
                     return index;
                 }
                 if (state.page != previous_page or state.settings.appearance != previous_appearance)
                     tree = beginNavigation(state, nowMilliseconds(io), &presentation);
-                layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .browse));
+                layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action));
                 changed = changed or result.changed or boundary;
                 if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
             };
@@ -760,15 +701,12 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                             continue;
                         },
                         .activated => {
-                            const previous = state.selected;
                             const previous_page = state.page;
                             const previous_appearance = state.settings.appearance;
                             presentation.cancelNavigation();
                             presentation.finishLayout(&tree, nowMilliseconds(io));
                             const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, .select);
                             if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
-                            if (state.page == .games and state.library_view == .browse and previous != state.selected)
-                                motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                             if (result.launch) |index| {
                                 try presentLaunch(io, &display, &tree, state, index);
                                 return index;
@@ -784,7 +722,6 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         .none => {},
                     }
                     if (event_action) |action| {
-                        const previous = state.selected;
                         const previous_page = state.page;
                         const previous_appearance = state.settings.appearance;
                         presentation.cancelNavigation();
@@ -792,15 +729,13 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
                         const result = try applySessionAction(io, state, &display, if (wifi_client) |*client| client else null, if (bluetooth_client) |*client| client else null, &bluetooth_request, action);
                         const boundary = !result.changed and state.supportsDirection(action) and presentation.focus.boundary(action, nowMilliseconds(io), state.settings.reduced_motion);
                         if (wifi_only and state.page != .wifi and state.page != .wifi_fallback) return null;
-                        if (state.page == .games and state.library_view == .browse and previous != state.selected)
-                            motion.retarget(@as(i32, @intCast(state.selected)) - @as(i32, @intCast(previous)), nowMilliseconds(io));
                         if (result.launch) |index| {
                             try presentLaunch(io, &display, &tree, state, index);
                             return index;
                         }
                         if (state.page != previous_page or state.settings.appearance != previous_appearance)
                             tree = beginNavigation(state, nowMilliseconds(io), &presentation);
-                        layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action) and !(state.page == .games and state.library_view == .browse));
+                        layout_pending = layout_pending or (result.changed and state.page == previous_page and directional(action));
                         changed = changed or result.changed or boundary;
                         if (result.changed or boundary) display.recordInput(event.seconds * 1_000_000 + event.microseconds);
                         if (result.changed) save_deadline = nowMilliseconds(io) + 1000;
@@ -820,7 +755,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         }
         if (changed) {
             const frame_now = nowMilliseconds(io);
-            var next = state.treeWithShelfOffset(motion.offset(frame_now));
+            var next = state.tree();
             presentation.decorate(&next, frame_now, state.settings.reduced_motion, brightness_meter_id);
             press.decorate(&next);
             if (layout_pending and !presentation.navigation.active(frame_now))
@@ -831,7 +766,7 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         }
         if (display.frameDue()) {
             const frame_now = nowMilliseconds(io);
-            tree = state.treeWithShelfOffset(motion.offset(frame_now));
+            tree = state.tree();
             presentation.decorate(&tree, frame_now, state.settings.reduced_motion, brightness_meter_id);
             press.decorate(&tree);
             if (presentation.navigation.active(frame_now))
@@ -866,7 +801,6 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
     var poll_fds: [max_gamepads + 1]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var press: PressTracker = .{};
-    var feedback_lifecycle = ui_components.FeedbackLifecycle{};
     var was_animating = false;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
@@ -878,19 +812,10 @@ fn runOverlay(io: std.Io, state: *overlay.Model) !overlay.Command {
         poll_fds[max_gamepads].fd = input_monitor;
         poll_fds[max_gamepads].revents = 0;
         const now = nowMilliseconds(io);
-        const notice = ui.Feedback{ .kind = state.notice_kind, .message = state.notice };
-        if (state.layer != .failure and !feedback_lifecycle.feedback.eql(notice))
-            feedback_lifecycle.show(notice, now);
-        var repeat_wait = repeat.timeout(now);
-        const feedback_wait = feedback_lifecycle.timeout(now);
-        if (feedback_wait >= 0) repeat_wait = if (repeat_wait < 0) feedback_wait else @min(repeat_wait, feedback_wait);
+        const repeat_wait = repeat.timeout(now);
         const animation = presentation.active(now);
         const ready = try display.poll(&poll_fds, interaction_motion.pollTimeout(animation, was_animating, repeat_wait));
         var changed = animation or was_animating;
-        if (feedback_lifecycle.tick(nowMilliseconds(io))) {
-            if (state.layer != .failure) state.notice = "";
-            changed = true;
-        }
         was_animating = animation;
         var rescan_inputs = false;
         if ((poll_fds[max_gamepads].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;
@@ -1047,7 +972,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
     } else |_| {}
     if (profile) |page| switch (page) {
         .settings => state.page = .settings,
-        .shelf => state = .{ .games = &catalog.games, .page = .games, .library_view = .browse, .settings = initial_settings },
+        .library => state = .{ .games = &catalog.games, .page = .games, .library_view = .all, .settings = initial_settings },
         .overlay => {},
     };
     if (profile) |page| std.log.info("UI profile: {s} games={d}", .{ @tagName(page), state.games.len });
@@ -1060,120 +985,29 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
         const game_index = boot_game orelse (try runSession(io, &state, false)) orelse continue;
         boot_game = null;
         const game = &state.games[game_index];
-        var game_overlay = overlay.Model{
-            .appearance = state.settings.appearance,
-            .reduced_motion = state.settings.reduced_motion,
-            .title = game.title,
-            .system = game.system,
-            .game = game.*,
-            .brightness = state.settings.brightness,
+        const term = retroarch.launch(io, game, state.games) catch |err| {
+            state.launchFailed(retroarch.Failure.fromError(err));
+            continue;
         };
-        game_session: while (true) {
-            const term = retroarch.launch(io, game, state.games) catch |err| {
-                state.launchFailed(retroarch.Failure.fromError(err));
-                break :game_session;
-            };
-            switch (term) {
-                .exited => |status| if (status != 0) {
-                    state.launchFailed(.emulator);
-                    break :game_session;
-                },
-                else => {
-                    state.launchFailed(.emulator);
-                    break :game_session;
-                },
-            }
-            state.last_played = game_index;
-            state.resumable = retroarch.availableStates(io, game)[3];
-            saveLibraryPreferences(io, &state);
-            if (retroarch.takeAudioLoss()) {
-                game_overlay.notice = "Bluetooth audio disconnected. Reconnect it, then relaunch the game.";
-                game_overlay.notice_kind = .failure;
-            }
-            while (true) {
-                refreshWifi(&state);
-                game_overlay.network_status = state.wifi.wifi_state.snapshot.settingsSummary();
-                game_overlay.battery_percent = batteryPercent(io);
-                game_overlay.network_indicator = switch (state.wifi.wifi_state.snapshot.connectivity) {
-                    .internet => .connected,
-                    .local, .captive, .limited => .attention,
-                    .none => .hidden,
-                };
-                game_overlay.audio_selected = retroarch.gameAudioSelected(io);
-                game_overlay.available = retroarch.availableStates(io, game);
-                switch (try runOverlay(io, &game_overlay)) {
-                    .resume_game => {
-                        game_overlay.layer = .pause;
-                        game_overlay.selected = 0;
-                        continue :game_session;
-                    },
-                    .exit_game => {
-                        if (!game_overlay.available[3]) {
-                            game_overlay.layer = .failure;
-                            game_overlay.failed_command = .exit_game;
-                            game_overlay.notice = "Continue the game, then try again.";
-                            game_overlay.notice_kind = .failure;
-                            continue;
-                        }
-                        break :game_session;
-                    },
-                    .save_state => {
-                        retroarch.saveState(io, game, state.games, game_overlay.save_slot) catch |err| {
-                            game_overlay.saved = false;
-                            game_overlay.layer = .failure;
-                            game_overlay.confirmation = 0;
-                            game_overlay.failed_command = .save_state;
-                            game_overlay.notice = "Check available space, then try again.";
-                            game_overlay.notice_kind = .failure;
-                            std.log.err("Failed to save state: {s}", .{@errorName(err)});
-                            continue;
-                        };
-                        game_overlay.layer = .pause;
-                        game_overlay.selected = 1;
-                        game_overlay.saved = true;
-                        game_overlay.notice = "State saved";
-                        game_overlay.notice_kind = .success;
-                    },
-                    .load_state => {
-                        retroarch.loadState(io, game, state.games, game_overlay.state_slot) catch |err| {
-                            game_overlay.layer = .states;
-                            game_overlay.notice = "That saved state didn't open";
-                            game_overlay.notice_kind = .failure;
-                            std.log.err("Failed to load state: {s}", .{@errorName(err)});
-                            continue;
-                        };
-                        game_overlay.notice = "";
-                        game_overlay.layer = .pause;
-                        game_overlay.selected = 0;
-                        continue :game_session;
-                    },
-                    .apply_brightness => {
-                        state.settings.brightness = game_overlay.brightness;
-                        settings.apply(io, state.settings, .brightness) catch |err| {
-                            state.settings = settings.load(io);
-                            game_overlay.brightness = state.settings.brightness;
-                            game_overlay.notice = "Brightness did not change";
-                            game_overlay.notice_kind = .failure;
-                            std.log.err("Failed to apply brightness: {s}", .{@errorName(err)});
-                        };
-                    },
-                    .network_settings => {
-                        state.page = .wifi;
-                        state.selected = 0;
-                        state.wifi.page = .list;
-                        _ = try runSession(io, &state, true);
-                        const resume_game = state.page == .games;
-                        state.page = .games;
-                        state.selected = 0;
-                        if (resume_game) {
-                            game_overlay.layer = .pause;
-                            game_overlay.selected = 0;
-                            continue :game_session;
-                        }
-                        continue;
-                    },
-                }
-            }
+        switch (term) {
+            .exited => |status| if (status != 0) {
+                state.launchFailed(.emulator);
+                continue;
+            },
+            else => {
+                state.launchFailed(.emulator);
+                continue;
+            },
+        }
+        state.recordPlayed(game_index);
+        state.resumable = retroarch.availableStates(io, game)[3];
+        saveLibraryPreferences(io, &state);
+        state.launch_failed = null;
+        state.page = .games;
+        if (state.collection().positionOf(game_index)) |position| {
+            state.library_selection = position;
+            state.selected = position;
+            state.library_preview = position;
         }
     }
 }

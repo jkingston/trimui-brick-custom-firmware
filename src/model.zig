@@ -16,11 +16,12 @@ pub const Page = product_navigation.Page;
 pub const returnsToParent = product_navigation.returnsToParent;
 pub const Power = enum { screen_off, suspend_device, shutdown };
 const settings_count = @typeInfo(settings_model.Setting).@"enum".field_names.len;
+pub const maximum_history = 16;
 
 test "direction support follows each component layout" {
-    var state = Model{ .page = .games, .library_view = .browse };
-    try std.testing.expect(state.supportsDirection(.left));
-    try std.testing.expect(!state.supportsDirection(.up));
+    var state = Model{ .page = .games, .library_view = .recent };
+    try std.testing.expect(state.supportsDirection(.up));
+    try std.testing.expect(!state.supportsDirection(.left));
     state.library_view = .all;
     try std.testing.expect(state.supportsDirection(.up));
     try std.testing.expect(!state.supportsDirection(.left));
@@ -38,7 +39,7 @@ test "direction support follows each component layout" {
 pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
     page: Page = .foyer,
-    library_view: ui.LibraryView = .recent,
+    library_view: ui.LibraryView = .all,
     system: ?usize = null,
     selected: usize = 0,
     game_index: usize = 0,
@@ -48,9 +49,13 @@ pub const Model = struct {
     library_preview: usize = 0,
     // Source-library indices, distinct from filtered positions.
     last_played: ?usize = null,
+    recent: [maximum_history]usize = @splat(0),
+    recent_len: usize = 0,
     resumable: bool = false,
     filter_positions: [catalog.systems.len + 1]usize = @splat(0),
-    feedback: ui.Feedback = .{},
+    /// Actionable failure attached to the currently visible task. Routine
+    /// progress and success are represented by the control or device state.
+    issue: []const u8 = "",
     pending_launch: ?usize = null,
     launch_failed: ?retroarch.Failure = null,
     settings: settings_model.Values = .{},
@@ -64,7 +69,27 @@ pub const Model = struct {
     bluetooth: bluetooth_model.Model = .{},
 
     pub fn collection(self: *const Model) catalog.Collection {
-        return .{ .games = self.games, .system = self.system };
+        return .{
+            .games = self.games,
+            .system = self.system,
+            .order = if (self.library_view == .recent) self.recent[0..self.recent_len] else null,
+        };
+    }
+
+    pub fn recordPlayed(self: *Model, source: usize) void {
+        if (source >= self.games.len) return;
+        const previous = self.recent;
+        var destination: usize = 1;
+        var index: usize = 0;
+        while (index < self.recent_len and destination < self.recent.len) : (index += 1) {
+            const candidate = previous[index];
+            if (candidate == source) continue;
+            self.recent[destination] = candidate;
+            destination += 1;
+        }
+        self.recent[0] = source;
+        self.recent_len = destination;
+        self.last_played = source;
     }
 
     /// Resolve the cold-start destination after preferences and automatic-save
@@ -76,7 +101,10 @@ pub const Model = struct {
             self.game_index = index;
             return index;
         };
-        if (self.games.len != 0) self.browse() else {
+        if (self.games.len != 0) {
+            if (self.library_view == .recent and self.recent_len == 0) self.library_view = .all;
+            self.browse();
+        } else {
             self.page = .foyer;
             self.selected = 0;
         }
@@ -87,10 +115,7 @@ pub const Model = struct {
         const vertical = action == .up or action == .down;
         const horizontal = action == .left or action == .right;
         return switch (self.page) {
-            .games => switch (self.library_view) {
-                .recent, .all => vertical,
-                .browse => horizontal,
-            },
+            .games => vertical,
             .setting => if (self.active_setting == .brightness) horizontal else vertical,
             .wifi => switch (self.wifi.page) {
                 .list, .details => vertical,
@@ -127,6 +152,14 @@ pub const Model = struct {
         self.page = .games;
         self.selected = @min(self.library_selection, self.collection().len() -| 1);
         self.library_preview = self.selected;
+    }
+
+    fn changeCollection(self: *Model, view: ?ui.LibraryView, change_system: bool, system: ?usize) void {
+        const source = self.collection().sourceIndex(self.library_selection);
+        if (view) |next| self.library_view = next;
+        if (change_system) self.system = system;
+        self.library_selection = if (source) |index| self.collection().positionOf(index) orelse 0 else 0;
+        self.browse();
     }
 
     pub fn settleLibraryPreview(self: *Model) bool {
@@ -228,7 +261,6 @@ pub const Model = struct {
             .up, .down => {
                 const up = action == .up;
                 if (self.page == .foyer) return false;
-                if (self.page == .games and self.library_view == .browse) return false;
                 if (self.page == .setting and self.active_setting == .brightness) return false;
                 const step: usize = 1;
                 if (up) {
@@ -241,9 +273,6 @@ pub const Model = struct {
                 const left = action == .left;
                 if (self.page == .foyer) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, self.itemCount() -| 1);
-                } else if (self.page == .games and self.library_view == .browse) {
-                    if (left) self.selected -|= 1;
-                    if (!left) self.selected = @min(self.selected + 1, self.itemCount() -| 1);
                 } else if (self.page == .setting and self.active_setting == .brightness) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, 10);
                     if (self.selected != before_selected) self.chooseSetting();
@@ -296,13 +325,10 @@ pub const Model = struct {
                 .wifi_fallback => unreachable,
                 .bluetooth => unreachable,
                 .systems => {
-                    self.system = if (self.selected == 0) null else self.systemAt(self.selected - 1);
-                    self.library_selection = self.filter_positions[if (self.system) |i| i + 1 else 0];
-                    self.browse();
+                    self.changeCollection(null, true, if (self.selected == 0) null else self.systemAt(self.selected - 1));
                 },
                 .views => {
-                    self.library_view = @fromBackingInt(@intCast(self.selected));
-                    self.browse();
+                    self.changeCollection(@fromBackingInt(@intCast(self.selected)), false, null);
                 },
                 .power => if (self.selected == 2) {
                     self.page = .power_confirm;
@@ -351,13 +377,10 @@ pub const Model = struct {
             .menu => unreachable,
             .view => if (self.page == .games) {
                 self.remember();
-                self.library_view = switch (self.library_view) {
-                    .recent => .browse,
-                    .browse => .all,
+                self.changeCollection(switch (self.library_view) {
+                    .recent => .all,
                     .all => .recent,
-                };
-                self.selected = @min(self.library_selection, self.collection().len() -| 1);
-                self.library_preview = self.selected;
+                }, false, null);
             },
             .filter => if (self.page == .games) {
                 self.remember();
@@ -395,35 +418,11 @@ pub const Model = struct {
     }
 
     pub fn updateWifi(self: *Model, next: wifi.Snapshot) bool {
-        const previous = self.wifi.wifi_state.snapshot;
         const changed = self.wifi.update(next);
         if (changed) {
-            if (previous.radio != .ready and next.radio == .ready)
-                self.feedback = .{ .kind = .success, .message = "Wi-Fi on" }
-            else if (previous.radio != .off and next.radio == .off)
-                self.feedback = .{ .kind = .success, .message = "Wi-Fi off" }
-            else {
-                for (next.items()) |network| if (network.current and network.state == .connected) {
-                    const was_connected = if (previous.find(network.id)) |index| previous.networks[index].state == .connected else false;
-                    if (!was_connected) self.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
-                    break;
-                };
-                for (previous.items()) |network| {
-                    if (next.find(network.id)) |index| {
-                        const current = next.networks[index];
-                        if (network.state == .connected and current.state != .connected)
-                            self.feedback = .{ .kind = .success, .message = "Disconnected from Wi-Fi" }
-                        else if (network.auto_connect != current.auto_connect)
-                            self.feedback = .{ .kind = .success, .message = if (current.auto_connect) "Auto-connect on" else "Auto-connect off" }
-                        else if (network.private_address != current.private_address)
-                            self.feedback = .{ .kind = .success, .message = if (current.private_address) "Private address on" else "Private address off" };
-                    } else if (network.saved) {
-                        self.feedback = .{ .kind = .success, .message = "Network forgotten" };
-                    }
-                }
-            }
+            if (self.page == .wifi or self.page == .wifi_fallback) self.issue = "";
+            self.revision += 1;
         }
-        if (changed) self.revision += 1;
         return changed;
     }
 
@@ -432,48 +431,11 @@ pub const Model = struct {
     }
 
     pub fn updateBluetooth(self: *Model, next: bluetooth_model.Snapshot) bool {
-        const previous = self.bluetooth.snapshot;
-        const previous_audio = previous.selectedAudio();
-        const next_audio = next.selectedAudio();
-        const audio_changed = if (previous_audio) |before|
-            if (next_audio) |after| !bluetooth_model.Identity.eql(before, after) else true
-        else
-            next_audio != null;
         const changed = self.bluetooth.update(next);
         if (changed) {
-            if (previous.radio != .ready and next.radio == .ready)
-                self.feedback = .{ .kind = .success, .message = "Bluetooth on" }
-            else if (previous.radio != .off and next.radio == .off)
-                self.feedback = .{ .kind = .success, .message = "Bluetooth off" }
-            else if (audio_changed)
-                self.feedback = .{ .kind = .success, .message = "Audio switched" }
-            else if (previous.operation != .none and next.operation == .none) self.feedback = switch (previous.operation) {
-                .pairing => .{ .kind = .success, .message = "Device paired" },
-                .connection => .{ .kind = .success, .message = "Device connected" },
-                .disconnection => .{ .kind = .success, .message = "Device disconnected" },
-                .forget => .{ .kind = .success, .message = "Device forgotten" },
-                .radio_change, .discovery, .none => self.feedback,
-            } else if (previous.discovery != .idle and next.discovery == .idle)
-                self.feedback = .{ .kind = .success, .message = "Device search finished" }
-            else {
-                for (previous.items()) |device| {
-                    if (next.find(device.id)) |index| {
-                        const current = next.devices[index];
-                        const was_connected = device.state == .connected or device.state == .preparing_audio or device.state == .ready;
-                        const is_connected = current.state == .connected or current.state == .preparing_audio or current.state == .ready;
-                        if (!was_connected and is_connected)
-                            self.feedback = .{ .kind = .success, .message = "Device connected" }
-                        else if ((device.state == .connected or device.state == .preparing_audio) and current.state == .ready)
-                            self.feedback = .{ .kind = .success, .message = "Game audio ready" }
-                        else if (was_connected and !is_connected)
-                            self.feedback = .{ .kind = .success, .message = "Device disconnected" };
-                    } else if (device.state != .nearby) {
-                        self.feedback = .{ .kind = .success, .message = "Device forgotten" };
-                    }
-                }
-            }
+            if (self.page == .bluetooth) self.issue = "";
+            self.revision += 1;
         }
-        if (changed) self.revision += 1;
         return changed;
     }
 
@@ -507,7 +469,8 @@ pub const Model = struct {
             .wifi => 1,
             .wifi_fallback => 1,
             .bluetooth => 1,
-            .views, .power => 3,
+            .views => 2,
+            .power => 3,
             .power_confirm => 2,
             .systems => blk: {
                 var count: usize = 1;
@@ -520,21 +483,17 @@ pub const Model = struct {
     }
 
     pub fn tree(self: *const Model) ui.Tree {
-        return self.treeWithShelfOffset(0);
-    }
-
-    pub fn treeWithShelfOffset(self: *const Model, shelf_offset: i16) ui.Tree {
         const theme = self.settings.appearance.colors();
         var result = switch (self.page) {
             .foyer => ui.foyerSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
-            .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_preview, self.library_view, shelf_offset),
-            .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view, 0) else ui.gameDetail(theme, self.games[self.game_index], self.launch_failed),
+            .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_preview, self.library_view),
+            .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view) else ui.gameDetail(theme, self.games[self.game_index], self.launch_failed),
             .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.summary(), self.bluetooth.summary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
             .wifi => self.wifiTree(theme),
             .wifi_fallback => ui.wifiFallback(theme, self.wifi_fallback.url(), &self.wifi_fallback.qr),
             .bluetooth => ui.bluetooth(theme, &self.bluetooth),
-            .views => ui.choice(theme, "Library density", &.{ "Recent", "Browse", "All games" }, self.selected, @backingInt(self.library_view), "One collection, tuned for returning, exploring, or locating precisely.", "Library"),
+            .views => ui.choice(theme, "Library density", &.{ "Recent", "All games" }, self.selected, @backingInt(self.library_view), "Choose a spacious or compact list.", "Library"),
             .systems => blk: {
                 var labels: [catalog.systems.len + 1][]const u8 = undefined;
                 labels[0] = "All systems";
@@ -556,13 +515,14 @@ pub const Model = struct {
                 .local, .captive, .limited => .attention,
                 .none => .hidden,
             } else .hidden;
-            ui.systemStatus(&result, .{ .battery = self.battery_percent, .network = network, .audio = self.bluetooth.snapshot.hasSelectedAudio() });
+            var bluetooth: ui.NetworkStatus = if (self.bluetooth.snapshot.radio == .failed) .attention else .hidden;
+            for (self.bluetooth.snapshot.items()) |device| switch (device.state) {
+                .connected, .preparing_audio, .ready => bluetooth = .connected,
+                .nearby, .saved => {},
+            };
+            ui.systemStatus(&result, .{ .battery = self.battery_percent, .network = network, .bluetooth = bluetooth, .audio = self.bluetooth.snapshot.hasSelectedAudio() });
         }
-        // Direct manipulation and connectivity settle in place. Routine
-        // success is represented by the changed value, row, or system-status
-        // icon; only work in flight or an outcome needing attention interrupts
-        // the composition with prose.
-        if (self.feedback.visible() and self.feedback.kind != .success) ui.showFeedback(&result, self.feedback);
+        if (self.issue.len != 0) ui.taskIssue(&result, self.issue);
         return result;
     }
 
@@ -621,13 +581,14 @@ test "filtered launch uses source identity and restores each system position" {
     try std.testing.expectEqual(@as(?usize, 2), state.takeLaunch());
     _ = state.apply(.filter);
     _ = state.apply(.select);
-    try std.testing.expectEqual(@as(usize, 4), state.selected);
+    try std.testing.expectEqual(@as(usize, 2), state.selected);
+    try std.testing.expectEqual(@as(?usize, 2), state.librarySource());
 }
 
 test "density control changes the collection in place and retains selection" {
-    var state = Model{ .page = .games, .selected = 2 };
+    var state = Model{ .page = .games, .selected = 2, .recent = .{ 0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, .recent_len = 5 };
     _ = state.apply(.view);
-    try std.testing.expectEqual(ui.LibraryView.browse, state.library_view);
+    try std.testing.expectEqual(ui.LibraryView.recent, state.library_view);
     try std.testing.expectEqual(Page.games, state.page);
     _ = state.apply(.view);
     try std.testing.expectEqual(ui.LibraryView.all, state.library_view);
@@ -638,6 +599,17 @@ test "density control changes the collection in place and retains selection" {
     _ = state.apply(.down);
     try std.testing.expectEqual(@as(usize, 4), state.selected);
     try std.testing.expect(!state.apply(.down));
+}
+
+test "recent collection is ordered by actual play and de-duplicates replays" {
+    var state = Model{ .page = .games, .library_view = .recent };
+    state.recordPlayed(2);
+    state.recordPlayed(0);
+    state.recordPlayed(2);
+    try std.testing.expectEqual(@as(usize, 2), state.recent_len);
+    try std.testing.expectEqual(@as(?usize, 2), state.collection().sourceIndex(0));
+    try std.testing.expectEqual(@as(?usize, 0), state.collection().sourceIndex(1));
+    try std.testing.expectEqual(@as(?usize, 2), state.last_played);
 }
 
 test "library is the root and device controls are intentional" {
@@ -819,18 +791,12 @@ test "Wi-Fi input tree preserves the active keyboard character set" {
     return error.MissingKeyboard;
 }
 
-test "radio and device snapshot transitions produce positive feedback" {
+test "radio and device snapshot transitions settle without global feedback" {
     var state = Model{};
     _ = state.updateBluetooth(try bluetooth_model.parse("snapshot version=1 generation=1 revision=1 radio=starting discovery=idle operation=radio_change operation_device= prompt=none prompt_device= prompt_value=\nend\n"));
     _ = state.updateBluetooth(try bluetooth_model.parse("snapshot version=1 generation=1 revision=2 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\nend\n"));
-    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
-    try std.testing.expectEqualStrings("Bluetooth on", state.feedback.message);
-
     _ = state.updateWifi(try wifi.parse("snapshot generation=2 revision=1 radio=starting connectivity=none can_scan=0\nend\n"));
     _ = state.updateWifi(try wifi.parse("snapshot generation=2 revision=2 radio=ready connectivity=internet can_scan=1\nend\n"));
-    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
-    try std.testing.expectEqualStrings("Wi-Fi on", state.feedback.message);
-
     _ = state.updateBluetooth(try bluetooth_model.parse(
         "snapshot version=1 generation=3 revision=1 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
             "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=connected battery=80 legacy=0\nend\n",
@@ -839,16 +805,11 @@ test "radio and device snapshot transitions produce positive feedback" {
         "snapshot version=1 generation=3 revision=2 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
             "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=ready battery=80 legacy=0\nend\n",
     ));
-    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
-    try std.testing.expectEqualStrings("Game audio ready", state.feedback.message);
-
-    state.feedback = .{ .kind = .progress, .message = "Switching audio" };
     _ = state.updateBluetooth(try bluetooth_model.parse(
         "snapshot version=1 generation=3 revision=3 radio=ready discovery=idle operation=none operation_device= prompt=none prompt_device= prompt_value=\n" ++
             "device id=headphones name_hex=4865616470686f6e6573 kind=audio state=ready battery=80 legacy=0 audio_selected=1\nend\n",
     ));
-    try std.testing.expectEqual(ui.FeedbackKind.success, state.feedback.kind);
-    try std.testing.expectEqualStrings("Audio switched", state.feedback.message);
+    try std.testing.expectEqualStrings("", state.issue);
 }
 
 test "routine connection success settles into the foyer status cluster" {
@@ -856,7 +817,6 @@ test "routine connection success settles into the foyer status cluster" {
     state.wifi.wifi_state.initialized = true;
     state.wifi.wifi_state.snapshot.radio = .ready;
     state.wifi.wifi_state.snapshot.connectivity = .internet;
-    state.feedback = .{ .kind = .success, .message = "Connected to Wi-Fi" };
     const tree = state.tree();
 
     var has_wifi_mark = false;
