@@ -13,6 +13,10 @@ pub const Reference = struct {
     source: []const u8,
     width: u16 = 0,
     height: u16 = 0,
+    match_method: ?[]const u8 = null,
+    provider_title: ?[]const u8 = null,
+    resolved_url: ?[]const u8 = null,
+    retrieved_at: ?[]const u8 = null,
 };
 
 pub const Texture = struct {
@@ -23,6 +27,9 @@ pub const Texture = struct {
     content_y: u16,
     content_width: u16,
     content_height: u16,
+    /// Stable across CPU buffer reuse so the GPU cache never aliases a newly
+    /// decoded cover with an evicted cover that occupied the same address.
+    cache_key: u64 = 0,
 };
 
 pub const Assets = struct {
@@ -41,6 +48,10 @@ const Artwork = struct {
     source: []const u8 = "libretro",
     width: u16 = 0,
     height: u16 = 0,
+    match_method: ?[]const u8 = null,
+    provider_title: ?[]const u8 = null,
+    resolved_url: ?[]const u8 = null,
+    retrieved_at: ?[]const u8 = null,
 };
 
 const Entry = struct {
@@ -68,7 +79,7 @@ fn confinedPath(allocator: std.mem.Allocator, root: []const u8, relative: []cons
     return resolved;
 }
 
-fn loadTextureFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Texture {
+pub fn loadTextureFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !Texture {
     const contents = try std.Io.Dir.cwd().readFileAlloc(io, path, std.heap.page_allocator, .limited(4 * 1024 * 1024));
     defer std.heap.page_allocator.free(contents);
     if (contents.len < 8 or !std.mem.eql(u8, contents[0..4], "BRTX")) return error.InvalidArtworkTexture;
@@ -97,6 +108,8 @@ fn loadTextureFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !
         }
     }
     const empty = min_x == width;
+    var key = std.hash.Wyhash.init(0);
+    key.update(path);
     return .{
         .width = width,
         .height = height,
@@ -105,10 +118,11 @@ fn loadTextureFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !
         .content_y = if (empty) 0 else min_y,
         .content_width = if (empty) width else max_x - min_x + 1,
         .content_height = if (empty) height else max_y - min_y + 1,
+        .cache_key = key.final(),
     };
 }
 
-pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
+fn loadSnapshot(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8, decode: bool) !std.StringHashMap(Assets) {
     var result: std.StringHashMap(Assets) = .init(allocator);
     const library_root = try std.Io.Dir.path.join(allocator, &.{ data_root, "Library" });
     const manifest_path = try std.Io.Dir.path.join(allocator, &.{ library_root, "library-v2.json" });
@@ -125,14 +139,28 @@ pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !st
             continue;
         };
         const path = try confinedPath(allocator, library_root, art.path);
-        const reference = Reference{ .content_id = art.content_id, .path = path, .source = art.source, .width = art.width, .height = art.height };
-        const texture = loadTextureFile(io, allocator, path) catch |err| switch (err) {
-            error.FileNotFound => null,
-            else => return err,
+        const reference = Reference{ .content_id = art.content_id, .path = path, .source = art.source, .width = art.width, .height = art.height, .match_method = art.match_method, .provider_title = art.provider_title, .resolved_url = art.resolved_url, .retrieved_at = art.retrieved_at };
+        const present = blk: {
+            std.Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
+                error.FileNotFound => break :blk false,
+                else => return err,
+            };
+            break :blk true;
         };
-        try result.put(rom, .{ .state = if (texture == null) .missing else .ready, .title = entry.title, .reference = reference, .cover = texture });
+        const texture = if (decode and present) try loadTextureFile(io, allocator, path) else null;
+        try result.put(rom, .{ .state = if (present) .ready else .missing, .title = entry.title, .reference = if (present) reference else null, .cover = texture });
     }
     return result;
+}
+
+/// Full decode is retained for offline rendering and focused tests. The device
+/// shell uses `loadMetadata` and a bounded resident set instead.
+pub fn load(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
+    return loadSnapshot(io, allocator, data_root, true);
+}
+
+pub fn loadMetadata(io: std.Io, allocator: std.mem.Allocator, data_root: []const u8) !std.StringHashMap(Assets) {
+    return loadSnapshot(io, allocator, data_root, false);
 }
 
 test "firmware library snapshot loads a display derivative" {
@@ -159,6 +187,12 @@ test "firmware library snapshot loads a display derivative" {
     try std.testing.expectEqualStrings("sha256:test", mapped.reference.?.content_id);
     try std.testing.expectEqualStrings("Tetris", mapped.title.?);
     try std.testing.expectEqual(@as(u16, 2), mapped.cover.?.width);
+    var metadata = try loadMetadata(io, allocator, root);
+    defer metadata.deinit();
+    const referenced = metadata.get(rom).?;
+    try std.testing.expectEqual(State.ready, referenced.state);
+    try std.testing.expect(referenced.reference != null);
+    try std.testing.expect(referenced.cover == null);
 }
 
 test "artwork paths remain inside the firmware library" {

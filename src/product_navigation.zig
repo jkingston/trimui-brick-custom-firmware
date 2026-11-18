@@ -3,7 +3,7 @@
 //! every renderer and input loop must agree on forward versus return travel.
 const input = @import("input.zig");
 
-pub const Page = enum { foyer, games, game, game_details, artwork_identity, artwork_title, artwork_library, settings, setting, wifi, wifi_fallback, bluetooth, systems, views, power, power_confirm };
+pub const Page = enum { foyer, games, game, game_details, artwork_identity, artwork_title, artwork_library, artwork_unmatched, settings, setting, wifi, wifi_fallback, bluetooth, systems, views, power, power_confirm };
 
 /// A page is part of one product layer. This keeps shell chrome and hardware
 /// buttons tied to the job of a surface instead of to its visual composition.
@@ -29,7 +29,7 @@ pub fn chrome(page: Page) ChromePolicy {
         .foyer => .{ .role = .exceptional_entry, .ambient_status = true, .menu = .reveal_device },
         .games => .{ .role = .library_home, .ambient_status = true, .menu = .reveal_device },
         .game => .{ .role = .launch, .ambient_status = false, .menu = .dismiss_to_library },
-        .game_details, .artwork_identity, .artwork_title => .{ .role = .focused_task, .ambient_status = true, .menu = .dismiss_to_library },
+        .game_details, .artwork_identity, .artwork_title, .artwork_unmatched => .{ .role = .focused_task, .ambient_status = true, .menu = .dismiss_to_library },
         .settings, .setting, .artwork_library, .systems, .views, .power => .{ .role = .device, .ambient_status = true, .menu = .dismiss_to_library },
         .power_confirm => .{ .role = .commitment, .ambient_status = true, .menu = .dismiss_to_library },
         .wifi, .wifi_fallback, .bluetooth => .{ .role = .focused_task, .ambient_status = false, .menu = .dismiss_to_library },
@@ -49,6 +49,7 @@ pub fn returnsToParent(action: input.Action, from: Page, to: Page) bool {
         .game, .game_details, .systems, .views => to == .games,
         .artwork_identity => to == .game_details,
         .artwork_title => to == .artwork_identity,
+        .artwork_unmatched => to == .artwork_library,
         .setting, .wifi, .bluetooth, .artwork_library => to == .settings,
         .wifi_fallback => to == .wifi,
         .power_confirm => to == .power,

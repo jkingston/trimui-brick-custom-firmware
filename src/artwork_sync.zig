@@ -4,6 +4,7 @@
 //! the latency-sensitive UI process.
 const std = @import("std");
 const catalog = @import("catalog.zig");
+const library_scan = @import("library_scan.zig");
 
 const Provider = struct { platform: []const u8, collection: []const u8 };
 const providers = [_]Provider{
@@ -61,6 +62,67 @@ fn url(allocator: std.mem.Allocator, collection: []const u8, title: []const u8) 
     return std.fmt.allocPrint(allocator, "https://thumbnails.libretro.com/{s}/Named_Boxarts/{s}.png", .{ collection_segment, title_segment });
 }
 
+fn field(line: []const u8, name: []const u8) ?[]const u8 {
+    const start = std.mem.indexOf(u8, line, name) orelse return null;
+    const value = line[start + name.len ..];
+    const end = std.mem.indexOfAny(u8, value, " \t\r\n)") orelse value.len;
+    return value[0..end];
+}
+
+fn canonicalTitle(io: std.Io, allocator: std.mem.Allocator, root: []const u8, game: catalog.Game) !?[]const u8 {
+    const identities = try library_scan.hashes(io, allocator, game.platform_id, game.rom_path);
+    if (identities.len == 0) return null;
+    const path = try std.fmt.allocPrint(allocator, "{s}/Library/dat/{s}.dat", .{ root, game.platform_id });
+    const contents = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(16 * 1024 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    var in_game = false;
+    var name: ?[]const u8 = null;
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (std.mem.eql(u8, line, "game (")) {
+            in_game = true;
+            name = null;
+            continue;
+        }
+        if (!in_game) continue;
+        if (std.mem.eql(u8, line, ")")) {
+            in_game = false;
+            name = null;
+            continue;
+        }
+        if (name == null and std.mem.startsWith(u8, line, "name \"")) {
+            const value = line[6..];
+            const end = std.mem.findScalar(u8, value, '"') orelse continue;
+            name = value[0..end];
+            continue;
+        }
+        if (!std.mem.startsWith(u8, line, "rom (")) continue;
+        const sha1 = field(line, "sha1 ");
+        const crc = field(line, "crc ");
+        const size = if (field(line, "size ")) |value| std.fmt.parseInt(usize, value, 10) catch null else null;
+        for (identities) |identity| {
+            const exact_sha1 = if (sha1) |actual| if (identity.sha1) |expected| std.ascii.eqlIgnoreCase(actual, expected) else false else false;
+            const exact_crc = if (crc) |actual| if (identity.crc32) |expected| std.ascii.eqlIgnoreCase(actual, expected) and size != null and identity.size != null and size.? == identity.size.? else false else false;
+            if (exact_sha1 or exact_crc) return if (name) |value| try allocator.dupe(u8, value) else null;
+        }
+    }
+    return null;
+}
+
+pub fn writeDatSources(io: std.Io, allocator: std.mem.Allocator) !void {
+    var buffer: [4096]u8 = undefined;
+    var output = std.Io.File.stdout().writer(io, &buffer);
+    for (providers) |provider| {
+        if (std.mem.eql(u8, provider.platform, "psx") or std.mem.eql(u8, provider.platform, "neogeo")) continue;
+        const collection = try encodePathSegment(allocator, provider.collection);
+        try output.interface.print("{s}\thttps://raw.githubusercontent.com/libretro/libretro-database/master/metadat/no-intro/{s}.dat\n", .{ provider.platform, collection });
+    }
+    try output.interface.flush();
+}
+
 fn overrideTitle(io: std.Io, allocator: std.mem.Allocator, root: []const u8, id: []const u8) !?[]const u8 {
     const path = try std.fmt.allocPrint(allocator, "{s}/Library/overrides/{s}.title", .{ root, id });
     const contents = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(96)) catch |err| switch (err) {
@@ -83,19 +145,22 @@ pub fn writePlan(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !vo
         var id_buffer: [32]u8 = undefined;
         const id = identifier(&id_buffer, game.rom_path);
         const corrected = try overrideTitle(io, allocator, root, id);
-        const title = corrected orelse game.title;
+        const canonical = if (corrected == null) try canonicalTitle(io, allocator, root, game) else null;
+        const title = corrected orelse canonical orelse game.title;
         const original = try url(allocator, collection, sourceName(game.rom_path));
         const by_title = try url(allocator, collection, title);
-        const primary = if (corrected != null) by_title else original;
-        const fallback = if (corrected != null) original else by_title;
+        const primary = if (corrected != null or canonical != null) by_title else original;
+        const fallback = if (corrected != null or canonical != null) original else by_title;
+        const primary_match = if (corrected != null) "custom-title" else if (canonical != null) "exact-hash" else "filename";
+        const fallback_match = if (corrected != null or canonical != null) "filename" else "display-title";
         const extension = std.Io.Dir.path.extension(game.rom_path);
         const sidecar = try std.fmt.allocPrint(allocator, "{s}.png", .{game.rom_path[0 .. game.rom_path.len - extension.len]});
-        try output.interface.print("{s}\t{s}\t{s}\t{s}\t{s}\n", .{ id, game.rom_path, sidecar, primary, fallback });
+        try output.interface.print("{s}\t{s}\t{s}\t{s}\t{s}\t{s}\t{s}\t{s}\n", .{ id, game.rom_path, sidecar, primary, fallback, primary_match, fallback_match, title });
     }
     try output.interface.flush();
 }
 
-const Artwork = struct { content_id: []const u8, path: []const u8, source: []const u8 };
+const Artwork = struct { content_id: []const u8, path: []const u8, source: []const u8, match_method: ?[]const u8 = null, provider_title: ?[]const u8 = null, resolved_url: ?[]const u8 = null, retrieved_at: ?[]const u8 = null };
 const Entry = struct { rom: []const u8, title: []const u8, artwork: ?Artwork };
 const Manifest = struct { schema_version: u32 = 2, revision: i64, games: []const Entry };
 
@@ -118,7 +183,12 @@ pub fn writeManifest(io: std.Io, allocator: std.mem.Allocator, root: []const u8)
             const value = std.Io.Dir.cwd().readFileAlloc(io, source_path, allocator, .limited(32)) catch break :blk "libretro";
             break :blk std.mem.trim(u8, value, " \t\r\n");
         } else "libretro";
-        entry.* = .{ .rom = relative_rom, .title = title, .artwork = if (present) .{ .content_id = id, .path = relative_art, .source = source } else null };
+        const base = absolute_art[0 .. absolute_art.len - ".brtx".len];
+        const match_method = if (present) readMetadata(io, allocator, base, ".match", 32) else null;
+        const provider_title = if (present) readMetadata(io, allocator, base, ".title", 256) else null;
+        const resolved_url = if (present) readMetadata(io, allocator, base, ".url", 2048) else null;
+        const retrieved_at = if (present) readMetadata(io, allocator, base, ".retrieved", 32) else null;
+        entry.* = .{ .rom = relative_rom, .title = title, .artwork = if (present) .{ .content_id = id, .path = relative_art, .source = source, .match_method = match_method, .provider_title = provider_title, .resolved_url = resolved_url, .retrieved_at = retrieved_at } else null };
     }
     const result = Manifest{ .revision = std.Io.Timestamp.now(io, .real).toMilliseconds(), .games = entries };
     var buffer: [16 * 1024]u8 = undefined;
@@ -126,6 +196,13 @@ pub fn writeManifest(io: std.Io, allocator: std.mem.Allocator, root: []const u8)
     try std.json.Stringify.value(result, .{}, &output.interface);
     try output.interface.writeByte('\n');
     try output.interface.flush();
+}
+
+fn readMetadata(io: std.Io, allocator: std.mem.Allocator, base: []const u8, suffix: []const u8, limit: usize) ?[]const u8 {
+    const path = std.fmt.allocPrint(allocator, "{s}{s}", .{ base, suffix }) catch return null;
+    const contents = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(limit)) catch return null;
+    const value = std.mem.trim(u8, contents, " \t\r\n");
+    return if (value.len == 0) null else value;
 }
 
 pub fn queue(io: std.Io, allocator: std.mem.Allocator, root: []const u8, command: []const u8, rom_path: ?[]const u8, value: []const u8) !void {
@@ -185,4 +262,28 @@ test "title overrides are bounded and remain outside the ROM tree" {
     try temporary.dir.createDirPath(io, "Library/overrides");
     try temporary.dir.writeFile(io, .{ .sub_path = "Library/overrides/identity.title", .data = "  Correct title\n" });
     try std.testing.expectEqualStrings("Correct title", (try overrideTitle(io, arena.allocator(), root, "identity")).?);
+}
+
+test "ROM hashes resolve the canonical provider title before filename matching" {
+    const io = std.testing.io;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const root = try temporary.dir.realPathFileAlloc(io, ".", allocator);
+    try temporary.dir.createDirPath(io, "Roms/GB");
+    try temporary.dir.createDirPath(io, "Library/dat");
+    try temporary.dir.writeFile(io, .{ .sub_path = "Roms/GB/unknown-name.gb", .data = "abc" });
+    try temporary.dir.writeFile(io, .{ .sub_path = "Library/dat/gb.dat", .data =
+        \\clrmamepro (
+        \\)
+        \\game (
+        \\  name "Canonical Game (World)"
+        \\  rom ( name "Canonical Game (World).gb" size 3 crc 352441C2 sha1 A9993E364706816ABA3E25717850C26C9CD0D89D )
+        \\)
+    });
+    const rom = try std.Io.Dir.path.join(allocator, &.{ root, "Roms/GB/unknown-name.gb" });
+    const title = try canonicalTitle(io, allocator, root, .{ .title = "Unknown Name", .system = "Game Boy", .platform_id = "gb", .summary = "", .core_path = "", .rom_path = rom });
+    try std.testing.expectEqualStrings("Canonical Game (World)", title.?);
 }

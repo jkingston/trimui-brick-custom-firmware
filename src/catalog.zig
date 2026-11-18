@@ -140,7 +140,7 @@ fn displayTitle(allocator: std.mem.Allocator, file_name: []const u8) ![]const u8
 
 /// Strings and the returned slice belong to allocator (normally a session arena).
 /// Enumerate actual root entries once: FAT's case folding must not duplicate ROMs.
-fn discoverWithArtwork(io: std.Io, allocator: std.mem.Allocator, root: []const u8, include_artwork: bool) ![]const Game {
+fn discoverWithArtwork(io: std.Io, allocator: std.mem.Allocator, root: []const u8, include_artwork: bool, decode_artwork: bool) ![]const Game {
     var found: std.ArrayList(Game) = .empty;
     var data = try std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true });
     defer data.close(io);
@@ -214,7 +214,7 @@ fn discoverWithArtwork(io: std.Io, allocator: std.mem.Allocator, root: []const u
     }
     found.shrinkRetainingCapacity(count);
     if (include_artwork) {
-        var assets = artwork_store.load(io, allocator, root) catch |err| blk: {
+        var assets = (if (decode_artwork) artwork_store.load(io, allocator, root) else artwork_store.loadMetadata(io, allocator, root)) catch |err| blk: {
             std.log.warn("Ignoring invalid artwork manifest: {s}", .{@errorName(err)});
             break :blk std.StringHashMap(artwork_store.Assets).init(allocator);
         };
@@ -226,14 +226,20 @@ fn discoverWithArtwork(io: std.Io, allocator: std.mem.Allocator, root: []const u
 }
 
 pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]const Game {
-    return discoverWithArtwork(io, allocator, root, true);
+    return discoverWithArtwork(io, allocator, root, true, true);
+}
+
+/// Device discovery keeps only references in the session arena. Covers are
+/// decoded into a bounded resident set by the display session.
+pub fn discoverMetadata(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]const Game {
+    return discoverWithArtwork(io, allocator, root, true, false);
 }
 
 /// Background metadata work must not decode every display texture merely to
 /// enumerate ROMs. The returned identities and launch paths are otherwise the
 /// same as `discover`.
 pub fn discoverBare(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]const Game {
-    return discoverWithArtwork(io, allocator, root, false);
+    return discoverWithArtwork(io, allocator, root, false, false);
 }
 
 test "system aliases include existing and MinUI folder names" {

@@ -179,7 +179,7 @@ The reusable composition patterns are:
 | --- | --- | --- |
 | Stage | Foyer, empty state, launch | One dominant subject and one obvious next action |
 | Receding room | Quick system | Retained game left/back + compact controls right/front |
-| Progressive density | Library | Recent editorial → Browse spatial → All games index |
+| Stable split library | Library | Collection index left + selected game stage right |
 | Index + value stage | Settings, device controls | Navigable labels left + stable value/context right |
 | Decision pair | Confirmation | Clear consequence + two balanced actions |
 
@@ -257,21 +257,51 @@ the control column gains contrast without becoming a floating stack of cards.
 Opening and closing are one reversible transform. Reduced motion applies the
 same spatial result immediately and preserves the contrast change.
 
-### Progressive density
+### Stable library composition
 
-The library modes are named by intent, never by widget:
+Library modes are named by intent, never by widget. They share one composition:
+collection context at the top, a vertical index on the left, and the selected
+game object in a fixed stage on the right. Changing collection must not make the
+artwork disappear, move the action rail, or teach a second navigation grammar.
 
-| Density | Job | Navigation | Settlement |
+| Collection | Job | Navigation | Settlement |
 | --- | --- | --- | --- |
 | Recent | return quickly | vertical editorial sequence | art and detail visible immediately |
-| Browse | explore | horizontal spatial sequence | selected object settles after movement |
-| All games | locate precisely | vertical compact index | title responds immediately; rich preview may wait |
+| All games | locate precisely | denser vertical index | title responds immediately; rich preview may wait |
+
+Left/right changes the collection and is always disclosed in the action rail.
+It is not an invisible mode switch. The focused row uses position, weight and
+contrast together; it never acquires a leading rail, checkbox, pill or glow.
 
 A held direction enters skim behavior through `input_repeat.Controller`.
 Selection and title feedback update on every repeat. Expensive preview/artwork
 work must not delay navigation and should settle only after the hold releases or
 the shared content dwell expires. Screens do not implement private debounce
 timers.
+
+### Artwork and game information
+
+Artwork is library metadata, not firmware decoration. The device owns a
+manifest of ROM identity, canonical title, match method, provider provenance
+and a bounded display derivative. Covers are fetched over Wi-Fi and appear in
+place without a completion toast. The current game is always launched without
+waiting for artwork.
+
+Matching order is an explicit custom title when the player has supplied one,
+otherwise exact content hash through a system DAT, then conservative
+filename/title fallbacks. The stored manifest must say
+which method won; an inferred title must never masquerade as an exact match.
+Missing results expire and may be retried after provider updates.
+
+`Game info` uses player language: `Find artwork`, `Change title`, `Use local
+image`. Provider URLs, sidecar filenames and request files are diagnostic
+details, not primary actions. Library-level review is a navigable queue. It
+must not jump to an arbitrary first failure or report a vague online state.
+
+The manifest is metadata-only in the shell session. A bounded resident set
+decodes the settled preview and a few recent covers; the renderer's GPU cache is
+also bounded. Never decode the whole library during discovery or republish the
+manifest after each individual download in a batch.
 
 ### Dense selectable row or tile
 

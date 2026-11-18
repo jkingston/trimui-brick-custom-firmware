@@ -60,6 +60,63 @@ fn closeFd(io: std.Io, fd: std.posix.fd_t, nonblocking: bool) void {
 const Display = display_scheduler.Scheduler;
 const brightness_meter_id = interaction.Id.scoped(.brightness_meter, 0);
 
+const ResidentArtwork = struct {
+    const capacity = 8;
+    const Slot = struct { game_index: usize = std.math.maxInt(usize), pixels: ?[]const u32 = null, stamp: u64 = 0 };
+    slots: [capacity]Slot = @splat(.{}),
+    stamp: u64 = 0,
+
+    fn clearSlot(self: *ResidentArtwork, state: *model.Model, slot: *Slot) void {
+        _ = self;
+        if (slot.pixels) |pixels| {
+            if (slot.game_index < state.games.len) {
+                const games = @constCast(state.games);
+                if (games[slot.game_index].assets.cover) |cover| {
+                    if (cover.pixels.ptr == pixels.ptr) games[slot.game_index].assets.cover = null;
+                }
+            }
+            std.heap.page_allocator.free(@constCast(pixels));
+        }
+        slot.* = .{};
+    }
+
+    fn reset(self: *ResidentArtwork, state: *model.Model) void {
+        for (&self.slots) |*slot| self.clearSlot(state, slot);
+    }
+
+    fn deinit(self: *ResidentArtwork, state: *model.Model) void {
+        self.reset(state);
+    }
+
+    fn ensure(self: *ResidentArtwork, io: std.Io, state: *model.Model) void {
+        const index = state.artworkSource() orelse return;
+        if (index >= state.games.len) return;
+        const games = @constCast(state.games);
+        if (games[index].assets.cover != null) return;
+        const reference = games[index].assets.reference orelse return;
+        self.stamp +%= 1;
+        for (&self.slots) |*slot| if (slot.game_index == index and slot.pixels != null) {
+            slot.stamp = self.stamp;
+            return;
+        };
+        var victim: *Slot = &self.slots[0];
+        for (&self.slots) |*slot| {
+            if (slot.pixels == null) {
+                victim = slot;
+                break;
+            }
+            if (slot.stamp < victim.stamp) victim = slot;
+        }
+        self.clearSlot(state, victim);
+        const texture = @import("artwork_store.zig").loadTextureFile(io, std.heap.page_allocator, reference.path) catch |err| {
+            std.log.warn("Could not decode selected artwork: {s}", .{@errorName(err)});
+            return;
+        };
+        games[index].assets.cover = texture;
+        victim.* = .{ .game_index = index, .pixels = texture.pixels, .stamp = self.stamp };
+    }
+};
+
 const Console = struct {
     io: std.Io,
     fd: std.posix.fd_t,
@@ -476,7 +533,9 @@ fn markReady(io: std.Io) !void {
 }
 
 fn runSession(io: std.Io, allocator: std.mem.Allocator, state: *model.Model, wifi_only: bool) !?usize {
-    if (!wifi_only) if (catalog.discover(io, allocator, "/data")) |games| {
+    var resident: ResidentArtwork = .{};
+    defer resident.deinit(state);
+    if (!wifi_only) if (catalog.discoverMetadata(io, allocator, "/data")) |games| {
         state.games = games;
         state.game_index = @min(state.game_index, games.len -| 1);
         state.selected = @min(state.selected, state.collection().len() -| 1);
@@ -493,6 +552,7 @@ fn runSession(io: std.Io, allocator: std.mem.Allocator, state: *model.Model, wif
     // SAFETY: reset initializes every field before presentation is observed.
     var presentation: scene_motion.Controller = undefined;
     presentation.reset();
+    resident.ensure(io, state);
     var tree = state.tree();
     presentation.decorate(&tree, nowMilliseconds(io), state.settings.reduced_motion, brightness_meter_id);
     try display.show(&tree);
@@ -585,7 +645,8 @@ fn runSession(io: std.Io, allocator: std.mem.Allocator, state: *model.Model, wif
             library_deadline = nowMilliseconds(io) + 200;
         }
         if (library_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
-            if (catalog.discover(io, allocator, "/data")) |games| {
+            if (catalog.discoverMetadata(io, allocator, "/data")) |games| {
+                resident.reset(state);
                 state.games = games;
                 state.game_index = @min(state.game_index, games.len -| 1);
                 state.selected = @min(state.selected, state.collection().len() -| 1);
@@ -797,6 +858,7 @@ fn runSession(io: std.Io, allocator: std.mem.Allocator, state: *model.Model, wif
         }
         if (changed) {
             const frame_now = nowMilliseconds(io);
+            resident.ensure(io, state);
             var next = state.tree();
             presentation.decorate(&next, frame_now, state.settings.reduced_motion, brightness_meter_id);
             press.decorate(&next);
@@ -1006,7 +1068,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
         std.log.info("UI overlay profile: command={s}", .{@tagName(command)});
         return;
     }
-    const library = try catalog.discover(io, arena.allocator(), "/data");
+    const library = try catalog.discoverMetadata(io, arena.allocator(), "/data");
     var state = model.Model{ .games = library, .settings = initial_settings };
     if (std.Io.Dir.cwd().openDir(io, "/data/settings", .{})) |dir| {
         defer dir.close(io);

@@ -611,7 +611,7 @@ pub const Display = struct {
     }
     fn artwork(context: *anyopaque, source: assets.Texture, bounds: ui.Rect, dim: u8, tilt: i16, clip_left: u16) void {
         const self: *Display = @ptrCast(@alignCast(context));
-        const texture = self.resident(@intFromPtr(source.pixels.ptr), 2, source.width, source.height, source.pixels.ptr) catch |err| {
+        const texture = self.resident(if (source.cache_key != 0) source.cache_key else @intFromPtr(source.pixels.ptr), 2, source.width, source.height, source.pixels.ptr) catch |err| {
             self.failure = err;
             return;
         };

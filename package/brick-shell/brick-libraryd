@@ -7,9 +7,15 @@ rendered="$library/artwork/rendered"
 objects="$library/artwork/objects"
 requests="$library/requests"
 overrides="$library/overrides"
+dat="$library/dat"
 plan="$library/artwork-plan.tsv"
+priority="$library/artwork-priority"
 
-mkdir -p "$rendered" "$objects" "$requests" "$overrides"
+mkdir -p "$rendered" "$objects" "$requests" "$overrides" "$dat"
+if [ ! -e "$library/matcher-v2" ]; then
+	find "$rendered" -type f -name '*.missing' -exec rm -f {} +
+	: > "$library/matcher-v2"
+fi
 
 write_manifest() {
 	/usr/bin/brick-shell --artwork-manifest "$root" > "$library/library-v2.json.new"
@@ -23,16 +29,17 @@ apply_requests() {
 		case "$name" in
 		refresh_missing)
 			rm -f "$library/downloads-disabled"
-			find "$rendered" -type f -name '*.missing' -delete
+			find "$rendered" -type f -name '*.missing' -exec rm -f {} +
 			;;
 		remove_all)
-			find "$rendered" -type f \( -name '*.brtx' -o -name '*.source' \) -delete
+			find "$rendered" -type f \( -name '*.brtx' -o -name '*.source' -o -name '*.match' -o -name '*.title' -o -name '*.url' -o -name '*.retrieved' \) -exec rm -f {} +
 			: > "$library/downloads-disabled"
 			;;
 		*.refresh_game)
 			id=${name%%.*}
 			rm -f "$library/downloads-disabled"
-			rm -f "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing"
+			rm -f "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.match" "$rendered/$id.title" "$rendered/$id.url" "$rendered/$id.retrieved" "$rendered/$id.blocked" "$rendered/$id.missing"
+			printf '%s\n' "$id" > "$priority"
 			;;
 		*.set_title)
 			id=${name%%.*}
@@ -40,21 +47,24 @@ apply_requests() {
 			if [ -z "$title" ]; then rm -f "$request"; continue; fi
 			printf '%s\n' "$title" > "$overrides/$id.title.new"
 			mv "$overrides/$id.title.new" "$overrides/$id.title"
-			rm -f "$library/downloads-disabled" "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing"
+			rm -f "$library/downloads-disabled" "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.match" "$rendered/$id.title" "$rendered/$id.url" "$rendered/$id.retrieved" "$rendered/$id.blocked" "$rendered/$id.missing" "$plan"
+			printf '%s\n' "$id" > "$priority"
 			;;
 		*.reset_game)
 			id=${name%%.*}
-			rm -f "$library/downloads-disabled" "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing" "$overrides/$id.title"
+			rm -f "$library/downloads-disabled" "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.match" "$rendered/$id.title" "$rendered/$id.url" "$rendered/$id.retrieved" "$rendered/$id.blocked" "$rendered/$id.missing" "$overrides/$id.title" "$plan"
+			printf '%s\n' "$id" > "$priority"
 			;;
 		*.remove_game)
 			id=${name%%.*}
-			rm -f "$rendered/$id.brtx" "$rendered/$id.source"
+			rm -f "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.match" "$rendered/$id.title" "$rendered/$id.url" "$rendered/$id.retrieved"
 			: > "$rendered/$id.blocked"
 			;;
 		*.import_local)
 			id=${name%%.*}
 			rm -f "$library/downloads-disabled"
-			rm -f "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing"
+			rm -f "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.match" "$rendered/$id.title" "$rendered/$id.url" "$rendered/$id.retrieved" "$rendered/$id.blocked" "$rendered/$id.missing"
+			printf '%s\n' "$id" > "$priority"
 			: > "$rendered/$id.local"
 			;;
 		esac
@@ -62,43 +72,98 @@ apply_requests() {
 	done
 }
 
+refresh_dats() {
+	[ "${1:-0}" -eq 1 ] || return 0
+	/usr/bin/brick-shell --artwork-dat-sources | while IFS="$(printf '\t')" read -r platform url; do
+		[ -n "$platform" ] || continue
+		current="$dat/$platform.dat"
+		if [ -f "$current" ] && [ -z "$(find "$current" -mtime +6 -print)" ]; then continue; fi
+		if curl -fL --connect-timeout 8 --max-time 60 --retry 1 -o "$current.new" "$url" 2>/dev/null; then
+			mv "$current.new" "$current"
+			rm -f "$plan"
+		else
+			rm -f "$current.new"
+		fi
+	done
+}
+
+fetch_one() {
+	[ -n "$id" ] || return 0
+	[ ! -e "$rendered/$id.blocked" ] || return 0
+	if [ -s "$rendered/$id.brtx" ]; then
+		# Honest migration for downloads made before provenance was recorded:
+		# keep the cover, but do not invent its resolved URL or exact matcher.
+		if [ ! -s "$rendered/$id.match" ]; then
+			source=$(sed -n '1p' "$rendered/$id.source" 2>/dev/null || true)
+			if [ "$source" = local ]; then
+				printf '%s\n' local-image > "$rendered/$id.match"
+			else
+				printf '%s\n' legacy-lookup > "$rendered/$id.match"
+			fi
+			printf '%s\n' "$provider_title" > "$rendered/$id.title"
+		fi
+		return 0
+	fi
+	[ ! -e "$rendered/$id.missing" ] || [ -f "$sidecar" ] || return 0
+	temporary="$objects/$id.png.part"
+	chosen_url=
+	match_method=
+	if [ -f "$sidecar" ]; then
+		cp "$sidecar" "$temporary"
+		source=local
+		match_method=local-image
+	elif [ -e "$rendered/$id.local" ]; then
+		return 0
+	else
+		[ "$online" -eq 1 ] || return 0
+		if curl -fL --connect-timeout 8 --max-time 30 --retry 1 -o "$temporary" "$primary" 2>/dev/null; then
+			chosen_url=$primary
+			match_method=$primary_match
+		elif curl -fL --connect-timeout 8 --max-time 30 --retry 1 -o "$temporary" "$fallback" 2>/dev/null; then
+			chosen_url=$fallback
+			match_method=$fallback_match
+		else
+			rm -f "$temporary"
+			: > "$rendered/$id.missing"
+			return 0
+		fi
+		source=libretro
+	fi
+	/usr/libexec/brick-artwork-convert "$temporary" "$rendered/$id.brtx.new" || {
+		rm -f "$temporary" "$rendered/$id.brtx.new"
+		return 0
+	}
+	mv "$rendered/$id.brtx.new" "$rendered/$id.brtx"
+	printf '%s\n' "$source" > "$rendered/$id.source"
+	printf '%s\n' "$match_method" > "$rendered/$id.match"
+	printf '%s\n' "$provider_title" > "$rendered/$id.title"
+	[ -z "$chosen_url" ] || printf '%s\n' "$chosen_url" > "$rendered/$id.url"
+	date -u +%Y-%m-%dT%H:%M:%SZ > "$rendered/$id.retrieved"
+	rm -f "$temporary" "$rendered/$id.local" "$rendered/$id.missing"
+}
+
+fetch_plan() {
+	wanted=${1:-}
+	tab=$(printf '\t')
+	while IFS="$tab" read -r id rom sidecar primary fallback primary_match fallback_match provider_title; do
+		[ -z "$wanted" ] || [ "$id" = "$wanted" ] || continue
+		fetch_one
+	done < "$plan"
+}
+
 fetch_missing() {
 	[ ! -e "$library/downloads-disabled" ] || return 0
 	online=${1:-0}
-	/usr/bin/brick-shell --artwork-plan "$root" > "$plan.new"
-	mv "$plan.new" "$plan"
-	tab=$(printf '\t')
-	while IFS="$tab" read -r id rom sidecar primary fallback; do
-		[ -n "$id" ] || continue
-		[ ! -e "$rendered/$id.blocked" ] || continue
-		[ ! -s "$rendered/$id.brtx" ] || continue
-		[ ! -e "$rendered/$id.missing" ] || [ -f "$sidecar" ] || continue
-		temporary="$objects/$id.png.part"
-		if [ -f "$sidecar" ]; then
-			cp "$sidecar" "$temporary"
-			source=local
-		elif [ -e "$rendered/$id.local" ]; then
-			continue
-		else
-			[ "$online" -eq 1 ] || continue
-			curl -fL --connect-timeout 8 --max-time 30 --retry 1 -o "$temporary" "$primary" 2>/dev/null ||
-				curl -fL --connect-timeout 8 --max-time 30 --retry 1 -o "$temporary" "$fallback" 2>/dev/null || {
-					rm -f "$temporary"
-					: > "$rendered/$id.missing"
-					continue
-				}
-			source=libretro
-		fi
-		/usr/libexec/brick-artwork-convert "$temporary" "$rendered/$id.brtx.new" || {
-			rm -f "$temporary" "$rendered/$id.brtx.new"
-			continue
-		}
-		mv "$rendered/$id.brtx.new" "$rendered/$id.brtx"
-		printf '%s\n' "$source" > "$rendered/$id.source"
-		rm -f "$temporary" "$rendered/$id.local"
-		rm -f "$rendered/$id.missing"
-		write_manifest
-	done < "$plan"
+	if [ ! -f "$plan" ] || [ -n "$(find "$plan" -mmin +9 -print)" ]; then
+		/usr/bin/brick-shell --artwork-plan "$root" > "$plan.new"
+		mv "$plan.new" "$plan"
+	fi
+	if [ -s "$priority" ]; then
+		wanted=$(sed -n '1p' "$priority")
+		fetch_plan "$wanted"
+		rm -f "$priority"
+	fi
+	fetch_plan
 }
 
 while :; do
@@ -107,6 +172,8 @@ while :; do
 	# the next pass resumes when Wi-Fi has internet again.
 	online=0
 	if curl -fsI --connect-timeout 5 --max-time 10 https://thumbnails.libretro.com/ >/dev/null 2>&1; then online=1; fi
+	refresh_dats "$online"
+	find "$rendered" -type f -name '*.missing' -mmin +1439 -exec rm -f {} +
 	fetch_missing "$online"
 	write_manifest
 	sleep 30

@@ -103,6 +103,13 @@ Hidden folders, artwork and `neogeo.zip` are excluded. PS1 tracks launch through
 CUE files; M3U playlists hide their referenced discs from the list. Use relative
 paths inside playlists for portability.
 
+When Wi-Fi is available, the library service matches supported cartridge ROMs
+against Libretro's system DATs by SHA-1 (or CRC plus size), then fetches the
+corresponding Named Boxart. Filename matching remains a fallback for containers
+and unmatched content. Downloaded covers, provenance, custom titles and local
+sidecar images are kept under `/data/Library`; no artwork is baked into the
+firmware. The shell decodes only a bounded set of recently viewed covers.
+
 Put PS1 BIOS files such as `scph5501.bin` in `BIOS/`. FBNeo also searches
 `BIOS/fbneo/` and the game's directory for `neogeo.zip`; keep it zipped.
 BIOS filenames must match the core's requirements exactly.

@@ -79,6 +79,9 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         state.artwork_title.len = 8;
     } else if (std.mem.eql(u8, screen, "artwork-library")) {
         state.page = .artwork_library;
+    } else if (std.mem.eql(u8, screen, "artwork-unmatched")) {
+        state.page = .artwork_unmatched;
+        state.selected = 0;
     } else if (std.mem.eql(u8, screen, "settings")) {
         state.page = .settings;
     }
@@ -180,7 +183,7 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         bluetooth_state.snapshot.prompt_value_len = 6;
         bluetooth_state.page = .code_display;
     }
-    var tree = if (std.mem.eql(u8, screen, "games-layout-editorial")) ui.libraryCollectionWithComposition(state.settings.appearance.colors(), state.collection(), state.selected, state.library_preview, .recent, .editorial) else if (std.mem.eql(u8, screen, "games-layout-shelf")) ui.libraryCollectionWithComposition(state.settings.appearance.colors(), state.collection(), state.selected, state.library_preview, .recent, .shelf) else if (std.mem.eql(u8, screen, "games-layout-focus")) ui.libraryCollectionWithComposition(state.settings.appearance.colors(), state.collection(), state.selected, state.library_preview, .recent, .focus) else if (std.mem.startsWith(u8, screen, "bluetooth")) ui.bluetooth(state.settings.appearance.colors(), &bluetooth_state) else if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
+    var tree = if (std.mem.eql(u8, screen, "games-layout-editorial")) ui.libraryCollection(state.settings.appearance.colors(), state.collection(), state.selected, state.library_preview, .recent) else if (std.mem.startsWith(u8, screen, "bluetooth")) ui.bluetooth(state.settings.appearance.colors(), &bluetooth_state) else if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
         const wifi = @import("wifi.zig");
         var wifi_state = wifi.Model{};
         var wifi_snapshot = try wifi.parse(
@@ -315,6 +318,12 @@ pub fn main(init: std.process.Init) !void {
         var arena = std.heap.ArenaAllocator.init(init.gpa);
         defer arena.deinit();
         try artwork_sync.writePlan(init.io, arena.allocator(), arguments.next() orelse "/data");
+        return;
+    }
+    if (std.mem.eql(u8, command, "--artwork-dat-sources")) {
+        var arena = std.heap.ArenaAllocator.init(init.gpa);
+        defer arena.deinit();
+        try artwork_sync.writeDatSources(init.io, arena.allocator());
         return;
     }
     if (std.mem.eql(u8, command, "--artwork-manifest")) {

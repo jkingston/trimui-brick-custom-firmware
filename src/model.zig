@@ -51,9 +51,6 @@ pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
     page: Page = .foyer,
     library_view: ui.LibraryView = .all,
-    /// Product default is editorial. The simulator may inject other complete
-    /// compositions for direct comparison at device geometry.
-    library_composition: ui.LibraryComposition = .editorial,
     system: ?usize = null,
     selected: usize = 0,
     game_index: usize = 0,
@@ -132,7 +129,7 @@ pub const Model = struct {
         const horizontal = action == .left or action == .right;
         return switch (self.page) {
             .games => vertical or horizontal,
-            .game_details, .artwork_identity, .artwork_library => vertical,
+            .game_details, .artwork_identity, .artwork_library, .artwork_unmatched => vertical,
             .artwork_title => vertical or horizontal,
             .setting => if (self.active_setting == .brightness) horizontal else vertical,
             .wifi => switch (self.wifi.page) {
@@ -284,6 +281,11 @@ pub const Model = struct {
                 if (changed) self.revision += 1;
                 return changed;
             }
+            if (action == .filter) {
+                self.artwork_title.wipe();
+                self.revision += 1;
+                return true;
+            }
             if (action != .select) return false;
             switch (self.artwork_title.activate()) {
                 .unchanged => return false,
@@ -379,12 +381,16 @@ pub const Model = struct {
                 .artwork_title => unreachable,
                 .artwork_library => switch (self.selected) {
                     0 => self.pending_artwork = .{ .command = .refresh_missing },
-                    1 => if (self.firstMissingArtwork()) |index| {
-                        self.game_index = index;
-                        self.page = .artwork_identity;
+                    1 => if (self.missingArtwork() != 0) {
+                        self.page = .artwork_unmatched;
                         self.selected = 0;
                     },
                     else => self.pending_artwork = .{ .command = .remove_all },
+                },
+                .artwork_unmatched => if (self.missingSourceIndex(self.selected)) |index| {
+                    self.game_index = index;
+                    self.page = .artwork_identity;
+                    self.selected = 0;
                 },
                 .settings => {
                     if (self.selected == settings_count) {
@@ -452,6 +458,10 @@ pub const Model = struct {
                     self.page = .settings;
                     self.selected = settings_count + 2;
                 },
+                .artwork_unmatched => {
+                    self.page = .artwork_library;
+                    self.selected = 1;
+                },
                 .settings => {
                     self.browse();
                 },
@@ -518,17 +528,32 @@ pub const Model = struct {
         return pending;
     }
 
-    fn firstMissingArtwork(self: *const Model) ?usize {
-        for (self.games, 0..) |game, index| if (game.assets.cover == null) return index;
-        return null;
-    }
-
     fn missingArtwork(self: *const Model) usize {
         var count: usize = 0;
-        for (self.games) |game| if (game.assets.cover == null) {
+        for (self.games) |game| if (game.assets.reference == null) {
             count += 1;
         };
         return count;
+    }
+
+    fn missingSourceIndex(self: *const Model, position: usize) ?usize {
+        var current: usize = 0;
+        for (self.games, 0..) |game, index| if (game.assets.reference == null) {
+            if (current == position) return index;
+            current += 1;
+        };
+        return null;
+    }
+
+    pub fn artworkSource(self: *const Model) ?usize {
+        if (self.games.len == 0) return null;
+        return switch (self.page) {
+            .games => self.collection().sourceIndex(self.library_preview),
+            .game, .game_details, .artwork_identity, .artwork_title => self.game_index,
+            .artwork_unmatched => self.missingSourceIndex(self.selected),
+            .foyer => self.last_played,
+            else => null,
+        };
     }
 
     pub fn takeWifiRequest(self: *Model) ?wifi_flow.Request {
@@ -586,6 +611,7 @@ pub const Model = struct {
             .artwork_identity => 5,
             .artwork_title => 1,
             .artwork_library => 3,
+            .artwork_unmatched => self.missingArtwork(),
             .settings => settings_count + 4,
             .setting => settings_model.labels(self.active_setting).len,
             .wifi => 1,
@@ -608,12 +634,13 @@ pub const Model = struct {
         const theme = self.settings.appearance.colors();
         var result = switch (self.page) {
             .foyer => ui.foyerSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
-            .games => ui.libraryCollectionWithComposition(theme, self.collection(), self.selected, self.library_preview, self.library_view, self.library_composition),
+            .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_preview, self.library_view),
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view) else ui.gameDetail(theme, self.games[self.game_index], self.launch_failed),
             .game_details => ui.gameInformation(theme, self.games[self.game_index], self.selected),
             .artwork_identity => ui.artworkIdentity(theme, self.games[self.game_index], self.selected, self.wifi.wifi_state.snapshot.connectivity == .internet),
             .artwork_title => ui.artworkTitle(theme, self.artwork_title.slice(), .{ .selected = self.artwork_title.selected, .uppercase = self.artwork_title.uppercase, .symbols = self.artwork_title.symbols }),
-            .artwork_library => ui.artworkLibrary(theme, self.selected, self.missingArtwork(), self.wifi.wifi_state.snapshot.connectivity == .internet),
+            .artwork_library => ui.artworkLibrary(theme, self.selected, self.missingArtwork(), self.games.len),
+            .artwork_unmatched => ui.artworkUnmatched(theme, self.games, self.selected),
             .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.summary(), self.bluetooth.summary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
             .wifi => self.wifiTree(theme),
@@ -711,7 +738,7 @@ test "filtered launch uses source identity and restores each system position" {
     try std.testing.expectEqual(@as(?usize, 2), state.librarySource());
 }
 
-test "horizontal direction changes density while View opens game details" {
+test "horizontal direction changes collection while View opens game details" {
     var state = Model{ .page = .games, .selected = 2, .recent = .{ 0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, .recent_len = 5 };
     _ = state.apply(.left);
     try std.testing.expectEqual(ui.LibraryView.recent, state.library_view);
@@ -869,6 +896,26 @@ test "per-game artwork actions preserve immediate launch" {
     _ = state.apply(.up);
     _ = state.apply(.select);
     try std.testing.expectEqual(@as(?usize, 2), state.takeLaunch());
+}
+
+test "artwork review is a navigable queue rather than a jump to first missing" {
+    const reference = @import("artwork_store.zig").Reference{ .content_id = "ready", .path = "/ready.brtx", .source = "test" };
+    const reviewed = [_]catalog.Game{
+        catalog.games[0],
+        catalog.games[1],
+        catalog.games[2],
+    };
+    var mutable = reviewed;
+    mutable[1].assets.reference = reference;
+    var state = Model{ .games = &mutable, .page = .artwork_library, .selected = 1 };
+    _ = state.apply(.select);
+    try std.testing.expectEqual(Page.artwork_unmatched, state.page);
+    try std.testing.expectEqual(@as(?usize, 0), state.artworkSource());
+    _ = state.apply(.down);
+    try std.testing.expectEqual(@as(?usize, 2), state.artworkSource());
+    _ = state.apply(.select);
+    try std.testing.expectEqual(Page.artwork_identity, state.page);
+    try std.testing.expectEqual(@as(usize, 2), state.game_index);
 }
 
 test "title correction uses the controller keyboard and queues a durable override" {

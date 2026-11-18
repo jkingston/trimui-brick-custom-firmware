@@ -2,7 +2,7 @@
 const std = @import("std");
 const catalog = @import("catalog.zig");
 
-const Hashes = struct {
+pub const Hashes = struct {
     sha256: ?[]const u8 = null,
     sha1: ?[]const u8 = null,
     crc32: ?[]const u8 = null,
@@ -42,7 +42,7 @@ fn digest(allocator: std.mem.Allocator, bytes: []const u8) !Hashes {
     };
 }
 
-fn hashes(io: std.Io, allocator: std.mem.Allocator, platform: []const u8, path: []const u8) ![]const Hashes {
+pub fn hashes(io: std.Io, allocator: std.mem.Allocator, platform: []const u8, path: []const u8) ![]const Hashes {
     if (!shouldHash(path)) return &.{};
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(64 * 1024 * 1024)) catch return &.{};
     var variants: std.ArrayList(Hashes) = .empty;
