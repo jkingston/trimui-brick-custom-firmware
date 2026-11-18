@@ -518,7 +518,7 @@ pub const Tree = struct {
                 @as(u32, bounds.y) + bounds.height > design.geometry.height))
                 return error.ElementOutsideScreen;
             switch (element) {
-                .overlay_row => |row| if (row.detail.len != 0 and row.bounds.height < design.typeface.body.line_height + 6 + design.typeface.caption.line_height)
+                .overlay_row => |row| if (row.bounds.height < @max(design.typeface.body.line_height, design.typeface.caption.line_height))
                     return error.SupportingRowTooShort,
                 .menu_row => |row| if (row.detail.len != 0 and row.bounds.height < design.typeface.body.line_height + 6 + design.typeface.caption.line_height)
                     return error.SupportingRowTooShort,
@@ -544,12 +544,12 @@ test "meter values are addressable by stable identity and clamped" {
     try std.testing.expectEqual(@as(u16, 1000), tree.meterValue(id).?);
 }
 
-test "scene validation rejects overflowing and undersized supporting rows" {
+test "scene validation rejects overflowing and undersized list rows" {
     var tree = Tree{ .background = .{ .r = 0, .g = 0, .b = 0 } };
     tree.add(.{ .bar = .{ .bounds = .{ .x = 1000, .y = 0, .width = 40, .height = 10 }, .color = tree.background } });
     try std.testing.expectError(error.ElementOutsideScreen, tree.validate());
     tree.len = 0;
-    tree.add(.{ .overlay_row = .{ .bounds = .{ .x = 0, .y = 0, .width = 100, .height = 88 }, .label = "Network", .detail = "Connected", .selected = false } });
+    tree.add(.{ .overlay_row = .{ .bounds = .{ .x = 0, .y = 0, .width = 100, .height = 40 }, .label = "Network", .detail = "Connected", .selected = false } });
     try std.testing.expectError(error.SupportingRowTooShort, tree.validate());
 }
 

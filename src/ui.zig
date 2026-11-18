@@ -80,14 +80,17 @@ fn controlDeck(source_theme: Theme, scope: interaction.Id.Scope, title: []const 
     for (labels, 0..) |label, index| {
         const active = index == selected;
         const row_y = top + @as(u16, @intCast(index)) * step;
+        const focus_bounds = Rect{ .x = 616, .y = row_y -| 6, .width = 376, .height = step -| 6 };
+        const value = if (values.len > index) values[index] else "";
+        const text_y = focus_bounds.y + (focus_bounds.height - font.editorial_control.line_height) / 2;
         components.editorialChoice(&result, scope, index, active, .{
             .label = label,
-            .bounds = .{ .x = 632, .y = row_y, .width = 344, .height = 46 },
-            .focus_bounds = .{ .x = 616, .y = row_y -| 6, .width = 376, .height = step -| 6 },
+            .bounds = .{ .x = 632, .y = text_y, .width = if (value.len == 0) 344 else 218, .height = font.editorial_control.line_height },
+            .focus_bounds = focus_bounds,
             .scale = .control,
         });
-        if (values.len > index and values[index].len != 0)
-            textLabel(&result, .{ .x = 632, .y = row_y + 44, .width = 344, .height = 28 }, values[index], if (active) theme.accent else theme.muted, uiFont(19, 26, if (active) .semibold else .regular, .start));
+        if (value.len != 0)
+            textLabel(&result, .{ .x = 850, .y = focus_bounds.y + (focus_bounds.height - 28) / 2, .width = 126, .height = 28 }, value, if (active) theme.accent else theme.muted, uiFont(18, 28, if (active) .semibold else .regular, .end));
     }
     footer(&result, &.{ .{ .control = .back, .label = back_label }, .{ .control = action_control, .label = action_label } });
     return result;

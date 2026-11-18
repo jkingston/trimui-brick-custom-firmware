@@ -241,7 +241,7 @@ pub fn keyboard(result: *ui.Tree, bounds: ui.Rect, value: KeyboardInput) void {
 }
 
 pub const single_row_height: u16 = 88;
-pub const supporting_row_height: u16 = 108;
+pub const supporting_row_height: u16 = single_row_height;
 
 pub fn continuation(result: *ui.Tree, top: u16, bottom: u16, has_before: bool, has_after: bool) void {
     var indicator_font = font.caption;
@@ -413,9 +413,8 @@ test "four long footer controls use bounded non-overlapping slots" {
     }
 }
 
-test "standard supporting rows fit both text lines" {
-    const required = font.body.line_height + 6 + font.caption.line_height;
-    try @import("std").testing.expect(supporting_row_height >= required);
+test "standard list rows share one vertical rhythm" {
+    try @import("std").testing.expectEqual(single_row_height, supporting_row_height);
     try @import("std").testing.expect(single_row_height >= font.body.line_height);
 }
 

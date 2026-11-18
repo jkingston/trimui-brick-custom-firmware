@@ -322,6 +322,11 @@ stable `interaction.Id.Scope` and use the logical item index, then set fields an
 `menu()`, `overlay()`, or `frame()` for artwork tiles. The logical index must identify the item, not its
 temporary visible slot in a scrolling window.
 
+List rows use one vertical baseline. `detail` is quiet inline state and `value`
+is the trailing value column; neither creates a subtitle line or changes the
+row height. If copy needs a sentence rather than a short state, give it a
+separate explanatory surface instead of making one row taller than its peers.
+
 ```zig
 var row = components.selectable(.settings, setting_id, selected, bounds, label);
 row.detail = detail;
