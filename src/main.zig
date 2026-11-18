@@ -71,14 +71,17 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         if (std.mem.eql(u8, screen, "game-failed")) state.launch_failed = .missing_core;
     } else if (std.mem.eql(u8, screen, "game-details")) {
         state.page = .game_details;
+        state.selected = 0;
     } else if (std.mem.eql(u8, screen, "artwork-identity")) {
         state.page = .artwork_identity;
+        state.selected = 0;
     } else if (std.mem.eql(u8, screen, "artwork-title")) {
         state.page = .artwork_title;
         @memcpy(state.artwork_title.bytes[0..8], "Tetris 2");
         state.artwork_title.len = 8;
     } else if (std.mem.eql(u8, screen, "artwork-library")) {
         state.page = .artwork_library;
+        state.selected = 0;
     } else if (std.mem.eql(u8, screen, "artwork-unmatched")) {
         state.page = .artwork_unmatched;
         state.selected = 0;

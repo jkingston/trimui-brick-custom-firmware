@@ -276,8 +276,10 @@ pub const Tree = struct {
                 row.style = self.rowStyle(row.state);
             },
             .battery => |*item| {
-                item.outline = self.theme.text;
-                item.charge = self.theme.accent;
+                // Persistent status remains monochrome. Signal colour is
+                // reserved for attention and active manipulation.
+                item.outline = self.theme.muted;
+                item.charge = self.theme.text;
             },
             .keyboard => |*item| {
                 item.selected = @min(item.selected, 39);
@@ -290,20 +292,20 @@ pub const Tree = struct {
     }
 
     fn rowStyle(self: *const Tree, state: interaction.State) RowStyle {
+        const selected = state.hasFocus();
         const pressed = state == .pressed or state == .activating;
         const disabled = state == .disabled;
         const failed = state == .failed;
         return .{
             .base = self.theme.background,
-            // Focus changes hierarchy; it does not turn every control into a
-            // card. The renderer adds one shared baseline. Press is the only
-            // momentary filled state.
-            .background = if (pressed) self.theme.selection else self.theme.background,
+            // Gallery focus lifts one quiet local surface. Press reverses it
+            // briefly, so controller input has a distinct down state.
+            .background = if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
             .text = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.text,
             .detail = if (disabled) self.theme.muted else if (pressed) self.theme.selection_text else self.theme.muted,
-            .border = if (failed) self.theme.danger else if (state == .boundary) self.theme.accent else if (pressed) self.theme.selection else self.theme.background,
+            .border = if (failed) self.theme.danger else if (state == .boundary) self.theme.accent else if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
             .accent = if (failed) self.theme.danger else if (disabled) self.theme.muted else self.theme.accent,
-            .shadow = self.theme.background,
+            .shadow = if (selected) self.theme.focus_shadow else self.theme.background,
         };
     }
 
@@ -314,7 +316,7 @@ pub const Tree = struct {
         return .{
             .base = self.theme.background,
             .background = if (pressed) self.theme.selection else if (selected) self.theme.surface else self.theme.background,
-            .border = if (failed) self.theme.danger else if (pressed) self.theme.selection_text else if (selected) self.theme.accent else self.theme.background,
+            .border = if (failed) self.theme.danger else if (state == .boundary) self.theme.accent else if (pressed) self.theme.selection_text else if (selected) self.theme.surface else self.theme.background,
             .shadow = self.theme.focus_shadow,
         };
     }

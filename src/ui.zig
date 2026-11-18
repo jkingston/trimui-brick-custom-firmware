@@ -40,11 +40,11 @@ pub const Tree = scene.Tree;
 fn controlTheme(source: Theme) Theme {
     var result = source;
     result.background = source.scrim;
-    result.surface = .{ .r = 0x17, .g = 0x1c, .b = 0x1c };
+    result.surface = .{ .r = 0x1a, .g = 0x1d, .b = 0x22 };
     result.text = source.on_scrim;
-    result.muted = .{ .r = 0x92, .g = 0x9b, .b = 0x99 };
-    result.accent = .{ .r = 0x59, .g = 0xd4, .b = 0xcf };
-    result.border = .{ .r = 0x34, .g = 0x3c, .b = 0x3b };
+    result.muted = .{ .r = 0x99, .g = 0x98, .b = 0xa0 };
+    result.accent = .{ .r = 0xa5, .g = 0xd9, .b = 0xff };
+    result.border = .{ .r = 0x34, .g = 0x38, .b = 0x40 };
     result.focus_shadow = source.scrim;
     return result;
 }
@@ -258,9 +258,17 @@ pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view:
 
 pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected: usize, preview_selected: usize, view: LibraryView) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
-    textLabel(&result, .{ .x = 48, .y = 35, .width = 112, .height = 40 }, "Recent", if (view == .recent) theme.text else theme.muted, uiFont(24, 32, if (view == .recent) .semibold else .regular, .start));
-    textLabel(&result, .{ .x = 178, .y = 35, .width = 140, .height = 40 }, "All games", if (view == .all) theme.text else theme.muted, uiFont(24, 32, if (view == .all) .semibold else .regular, .start));
-    textLabel(&result, .{ .x = 510, .y = 35, .width = 336, .height = 40 }, collection.label(), theme.muted, uiFont(24, 32, .regular, .end));
+    editorialHeader(&result, "LIBRARY", collection.label());
+    result.add(.{ .bar = .{
+        .bounds = if (view == .recent)
+            .{ .x = 36, .y = 84, .width = 132, .height = 52 }
+        else
+            .{ .x = 166, .y = 84, .width = 164, .height = 52 },
+        .color = theme.surface,
+        .radius = 26,
+    } });
+    textLabel(&result, .{ .x = 48, .y = 91, .width = 112, .height = 40 }, "Recent", if (view == .recent) theme.text else theme.muted, uiFont(24, 32, if (view == .recent) .semibold else .regular, .start));
+    textLabel(&result, .{ .x = 178, .y = 91, .width = 140, .height = 40 }, "All games", if (view == .all) theme.text else theme.muted, uiFont(24, 32, if (view == .all) .semibold else .regular, .start));
     const count = collection.len();
     if (count == 0) {
         textLabel(&result, .{ .x = 48, .y = 224, .width = 928, .height = 64 }, if (view == .recent) "Nothing played yet" else "No games found", theme.text, font.title);
@@ -276,7 +284,7 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
     const anchor: usize = if (view == .recent) 2 else 3;
     const first = @min(selected -| anchor, count - visible);
     const step: u16 = if (view == .recent) 91 else 69;
-    const top: u16 = if (view == .recent) 126 else 112;
+    const top: u16 = if (view == .recent) 178 else 164;
     for (first..first + visible) |index| {
         const entry = collection.at(index);
         const active = index == selected;
@@ -293,7 +301,7 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
     artwork(&result, game, .{ .x = 586, .y = 120, .width = 342, .height = 420 }, true, null, 0);
     if (game.assets.cover != null)
         textLabel(&result, .{ .x = 566, .y = 554, .width = 382, .height = 34 }, game.system, theme.muted, uiFont(21, 29, .regular, .center));
-    components.continuation(&result, top, 604, first != 0, first + visible < count);
+    components.continuation(&result, top, 650, first != 0, first + visible < count);
     footer(&result, &.{ .{ .control = .horizontal, .label = if (view == .recent) "All games" else "Recent" }, .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = "Info" }, .{ .control = .confirm, .label = "Play" } });
     return result;
 }

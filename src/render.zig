@@ -427,91 +427,87 @@ pub const Surface = struct {
     }
 
     fn drawBattery(self: Surface, battery: ui.Battery) void {
+        // Status marks share a 24-unit canvas and a two-unit rounded stroke.
+        // The common optical box matters more than equal visible widths.
         const body = battery.bounds;
-        self.fill(.{ .x = body.x, .y = body.y, .width = body.width - 8, .height = 3 }, battery.outline);
-        self.fill(.{ .x = body.x, .y = body.y + body.height - 3, .width = body.width - 8, .height = 3 }, battery.outline);
-        self.fill(.{ .x = body.x, .y = body.y, .width = 3, .height = body.height }, battery.outline);
-        self.fill(.{ .x = body.x + body.width - 11, .y = body.y, .width = 3, .height = body.height }, battery.outline);
-        self.fill(.{ .x = body.x + body.width - 8, .y = body.y + 7, .width = 8, .height = body.height - 14 }, battery.outline);
-        const capacity: u16 = body.width - 17;
+        self.strokeSegment(body.x, body.y, .{ 4, 6 }, .{ 17, 6 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 2, 8 }, .{ 2, 16 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 4, 18 }, .{ 17, 18 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 19, 8 }, .{ 19, 16 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 3, 7 }, .{ 2, 8 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 3, 17 }, .{ 2, 16 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 18, 7 }, .{ 19, 8 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 18, 17 }, .{ 19, 16 }, battery.outline, 2);
+        self.strokeSegment(body.x, body.y, .{ 22, 10 }, .{ 22, 14 }, battery.outline, 2);
+        const capacity: u16 = 12;
         const charge: u16 = @intCast((@as(u32, capacity) * battery.percent) / 100);
-        self.fill(.{ .x = body.x + 6, .y = body.y + 6, .width = charge, .height = body.height - 12 }, battery.charge);
+        if (charge != 0) self.fillRounded(.{ .x = body.x + 5, .y = body.y + 9, .width = charge, .height = 6 }, battery.charge, 1);
     }
 
     fn drawWifi(self: Surface, wifi: ui.Wifi) void {
-        // Three open upper-circle bands form an idiomatic Wi-Fi mark without a
-        // font glyph or renderer-specific asset. Coalesce adjacent pixels into
-        // scanline runs so the GPU path receives a small bounded command set.
-        const center_x: i32 = @intCast(wifi.bounds.width / 2);
-        const center_y: i32 = @intCast(wifi.bounds.height -| 2);
-        const radii = [_]i32{ 5, 9, 13 };
-        for (0..wifi.bounds.height) |y_usize| {
-            const y: i32 = @intCast(y_usize);
-            var run: ?u16 = null;
-            for (0..wifi.bounds.width + 1) |x_usize| {
-                const inside = if (x_usize == wifi.bounds.width) false else blk: {
-                    const x: i32 = @intCast(x_usize);
-                    const dx = x - center_x;
-                    const dy = y - center_y;
-                    if (dy > -2) break :blk false;
-                    const distance = dx * dx + dy * dy;
-                    for (radii) |radius| if (distance >= (radius - 1) * (radius - 1) and distance <= (radius + 1) * (radius + 1))
-                        break :blk true;
-                    break :blk false;
-                };
-                if (inside and run == null) run = @intCast(x_usize);
-                if (!inside) if (run) |start| {
-                    self.fill(.{ .x = wifi.bounds.x + start, .y = wifi.bounds.y + @as(u16, @intCast(y_usize)), .width = @as(u16, @intCast(x_usize)) - start, .height = 1 }, wifi.arcs);
-                    run = null;
-                };
-            }
-        }
-        self.fillRounded(.{ .x = wifi.bounds.x + wifi.bounds.width / 2 -| 2, .y = wifi.bounds.y + wifi.bounds.height -| 5, .width = 5, .height = 5 }, wifi.dot, 3);
+        const b = wifi.bounds;
+        const outer = [_][2]i16{ .{ 2, 9 }, .{ 4, 7 }, .{ 7, 5 }, .{ 10, 4 }, .{ 12, 4 }, .{ 14, 4 }, .{ 17, 5 }, .{ 20, 7 }, .{ 22, 9 } };
+        const middle = [_][2]i16{ .{ 5, 13 }, .{ 7, 11 }, .{ 10, 10 }, .{ 12, 10 }, .{ 14, 10 }, .{ 17, 11 }, .{ 19, 13 } };
+        const inner = [_][2]i16{ .{ 8, 17 }, .{ 10, 16 }, .{ 12, 15 }, .{ 14, 16 }, .{ 16, 17 } };
+        self.strokePolyline(b.x, b.y, &outer, wifi.arcs, 2);
+        self.strokePolyline(b.x, b.y, &middle, wifi.arcs, 2);
+        self.strokePolyline(b.x, b.y, &inner, wifi.arcs, 2);
+        self.fillRounded(.{ .x = b.x + 11, .y = b.y + 20, .width = 3, .height = 3 }, wifi.dot, 2);
     }
 
     fn drawHeadphones(self: Surface, headphones: ui.Headphones) void {
         const b = headphones.bounds;
-        const center_x: i32 = @intCast(b.width / 2);
-        const center_y: i32 = @intCast(b.height / 2);
-        const radius: i32 = @intCast(@min(b.width / 2 -| 2, b.height -| 5));
-        for (0..b.height) |y_usize| {
-            const y: i32 = @intCast(y_usize);
-            var run: ?u16 = null;
-            for (0..b.width + 1) |x_usize| {
-                const inside = if (x_usize == b.width) false else blk: {
-                    const x: i32 = @intCast(x_usize);
-                    const dx = x - center_x;
-                    const dy = y - center_y;
-                    if (dy > 0) break :blk false;
-                    const distance = dx * dx + dy * dy;
-                    break :blk distance >= (radius - 1) * (radius - 1) and distance <= (radius + 1) * (radius + 1);
-                };
-                if (inside and run == null) run = @intCast(x_usize);
-                if (!inside) if (run) |start| {
-                    self.fill(.{ .x = b.x + start, .y = b.y + @as(u16, @intCast(y_usize)), .width = @as(u16, @intCast(x_usize)) - start, .height = 1 }, headphones.color);
-                    run = null;
-                };
-            }
-        }
-        self.fillRounded(.{ .x = b.x + 1, .y = b.y + b.height -| 10, .width = 6, .height = 10 }, headphones.color, 2);
-        self.fillRounded(.{ .x = b.x + b.width -| 7, .y = b.y + b.height -| 10, .width = 6, .height = 10 }, headphones.color, 2);
+        const band = [_][2]i16{ .{ 4, 14 }, .{ 4, 11 }, .{ 5, 8 }, .{ 7, 6 }, .{ 9, 5 }, .{ 12, 4 }, .{ 15, 5 }, .{ 17, 6 }, .{ 19, 8 }, .{ 20, 11 }, .{ 20, 14 } };
+        self.strokePolyline(b.x, b.y, &band, headphones.color, 2);
+        self.fillRounded(.{ .x = b.x + 3, .y = b.y + 13, .width = 5, .height = 8 }, headphones.color, 2);
+        self.fillRounded(.{ .x = b.x + 16, .y = b.y + 13, .width = 5, .height = 8 }, headphones.color, 2);
     }
 
     fn drawBluetooth(self: Surface, bluetooth: ui.Bluetooth) void {
         const b = bluetooth.bounds;
-        const x = b.x + b.width / 2 -| 1;
-        const y = b.y + 2;
-        const c = bluetooth.color;
-        self.fill(.{ .x = x, .y = y, .width = 3, .height = b.height -| 4 }, c);
-        const marks = [_][2]u16{
-            .{ 3, 0 },  .{ 6, 2 },  .{ 9, 4 },  .{ 6, 6 },  .{ 3, 8 },
-            .{ 3, 12 }, .{ 6, 14 }, .{ 9, 16 }, .{ 6, 18 }, .{ 3, 20 },
-        };
-        for (marks) |mark| self.fill(.{ .x = x + mark[0], .y = y + @min(mark[1], b.height -| 6), .width = 3, .height = 3 }, c);
-        self.fill(.{ .x = x -| 6, .y = y + 5, .width = 3, .height = 3 }, c);
-        self.fill(.{ .x = x -| 3, .y = y + 8, .width = 3, .height = 3 }, c);
-        self.fill(.{ .x = x -| 6, .y = y + 17, .width = 3, .height = 3 }, c);
-        self.fill(.{ .x = x -| 3, .y = y + 14, .width = 3, .height = 3 }, c);
+        const rune = [_][2]i16{ .{ 7, 7 }, .{ 17, 17 }, .{ 12, 22 }, .{ 12, 2 }, .{ 17, 7 }, .{ 7, 17 } };
+        self.strokePolyline(b.x, b.y, &rune, bluetooth.color, 2);
+    }
+
+    fn strokePolyline(self: Surface, origin_x: u16, origin_y: u16, points: []const [2]i16, color: ui.Color, thickness: u16) void {
+        if (points.len < 2) return;
+        for (points[0 .. points.len - 1], points[1..]) |from, to| self.strokeSegment(origin_x, origin_y, from, to, color, thickness);
+    }
+
+    fn strokeSegment(self: Surface, origin_x: u16, origin_y: u16, from: [2]i16, to: [2]i16, color: ui.Color, thickness: u16) void {
+        const start_x: i32 = @as(i32, origin_x) + from[0];
+        const start_y: i32 = @as(i32, origin_y) + from[1];
+        const end_x: i32 = @as(i32, origin_x) + to[0];
+        const end_y: i32 = @as(i32, origin_y) + to[1];
+        const padding: i32 = @divTrunc(@as(i32, thickness), 2) + 1;
+        const left = @max(0, @min(start_x, end_x) - padding);
+        const top = @max(0, @min(start_y, end_y) - padding);
+        const right = @min(@as(i32, width), @max(start_x, end_x) + padding + 1);
+        const bottom = @min(@as(i32, height), @max(start_y, end_y) + padding + 1);
+        const vector_x: f32 = @floatFromInt(end_x - start_x);
+        const vector_y: f32 = @floatFromInt(end_y - start_y);
+        const length_squared = vector_x * vector_x + vector_y * vector_y;
+        const radius: f32 = @as(f32, @floatFromInt(thickness)) / 2.0;
+        const radius_squared = radius * radius;
+        var y = top;
+        while (y < bottom) : (y += 1) {
+            var x = left;
+            while (x < right) : (x += 1) {
+                var covered: u8 = 0;
+                for (0..4) |sample_y| for (0..4) |sample_x| {
+                    const point_x = @as(f32, @floatFromInt(x)) + (@as(f32, @floatFromInt(sample_x)) + 0.5) / 4.0;
+                    const point_y = @as(f32, @floatFromInt(y)) + (@as(f32, @floatFromInt(sample_y)) + 0.5) / 4.0;
+                    var projection = ((point_x - @as(f32, @floatFromInt(start_x))) * vector_x + (point_y - @as(f32, @floatFromInt(start_y))) * vector_y) / length_squared;
+                    projection = @max(0.0, @min(1.0, projection));
+                    const nearest_x = @as(f32, @floatFromInt(start_x)) + projection * vector_x;
+                    const nearest_y = @as(f32, @floatFromInt(start_y)) + projection * vector_y;
+                    const distance_x = point_x - nearest_x;
+                    const distance_y = point_y - nearest_y;
+                    if (distance_x * distance_x + distance_y * distance_y <= radius_squared) covered += 1;
+                };
+                if (covered != 0) self.fillAlpha(.{ .x = @intCast(x), .y = @intCast(y), .width = 1, .height = 1 }, color, @intCast((@as(u16, covered) * 255) / 16));
+            }
+        }
     }
 
     fn drawMeter(self: Surface, meter: ui.Meter) void {
@@ -555,24 +551,17 @@ pub const Surface = struct {
     }
 
     fn drawActivity(self: Surface, activity: ui.Activity) void {
-        const dot: u16 = @min(10, @min(activity.bounds.height, activity.bounds.width / 3));
-        if (dot == 0) return;
-        const resting_size: u16 = @min(8, dot);
-        const gap: u16 = (activity.bounds.width -| 3 * dot) / 2;
-        for (0..3) |index| {
-            const strength: u16 = if (!activity.animated)
-                500
-            else blk: {
-                const center: i32 = @intCast(index * 333);
-                const raw = @abs(@as(i32, activity.phase) - center);
-                const distance = @min(raw, 1000 - raw);
-                break :blk @intCast(1000 - @min(1000, distance * 3));
-            };
-            const size: u16 = resting_size + @as(u16, @intCast(@as(u32, strength) * (dot - resting_size) / 1000));
-            const slot_x = activity.bounds.x + @as(u16, @intCast(index)) * (dot + gap);
-            const bounds = ui.Rect{ .x = slot_x + (dot - size) / 2, .y = activity.bounds.y + (activity.bounds.height - size) / 2, .width = size, .height = size };
-            self.fillRounded(bounds, activity.color, size / 2);
-        }
+        if (activity.bounds.width == 0 or activity.bounds.height == 0) return;
+        const track_height: u16 = @min(4, activity.bounds.height);
+        const thumb_width: u16 = @min(16, @max(@as(u16, 6), activity.bounds.width / 3));
+        const travel = activity.bounds.width -| thumb_width;
+        const position: u16 = if (activity.animated)
+            @intCast(@as(u32, travel) * activity.phase / 1000)
+        else
+            travel / 2;
+        const y = activity.bounds.y + (activity.bounds.height - track_height) / 2;
+        self.fillAlpha(.{ .x = activity.bounds.x, .y = y, .width = activity.bounds.width, .height = track_height }, activity.color, 72);
+        self.fillRounded(.{ .x = activity.bounds.x + position, .y = y -| 1, .width = thumb_width, .height = track_height + 2 }, activity.color, (track_height + 2) / 2);
     }
 
     fn drawQr(self: Surface, qr: ui.QrCode) void {
@@ -632,7 +621,10 @@ pub const Surface = struct {
             };
             if (!visible) return;
         }
-        const background = if (selected) theme.selection else theme.surface;
+        // Ordinary characters sit directly on the field; only focus and the
+        // four mode/action keys become surfaces. This keeps the controller
+        // keyboard from reading as forty generic tiles.
+        const background = if (selected) theme.selection else if (index >= 36) theme.surface else theme.background;
         const foreground = if (selected) theme.selection_text else theme.text;
         self.fillRounded(bounds, background, geometry.radius);
         if (selected and keyboard.state == .boundary) self.stroke(bounds, foreground, 4);
@@ -742,16 +734,16 @@ test "Wi-Fi attention mark keeps muted arcs and an accent origin" {
     const pixels = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(pixels);
     var tree = ui.Tree{ .theme = themes.light, .background = themes.light.background };
-    tree.add(.{ .wifi = .{ .bounds = .{ .x = 100, .y = 100, .width = 27, .height = 22 }, .arcs = themes.light.muted, .dot = themes.light.accent } });
+    tree.add(.{ .wifi = .{ .bounds = .{ .x = 100, .y = 100, .width = 24, .height = 24 }, .arcs = themes.light.muted, .dot = themes.light.accent } });
     (Surface{ .pixels = pixels }).render(&tree);
     var muted_pixels: usize = 0;
     var accent_pixels: usize = 0;
-    for (100..122) |y| for (100..127) |x| {
+    for (100..124) |y| for (100..124) |x| {
         if (pixels[y * width + x] == Surface.pack(themes.light.muted)) muted_pixels += 1;
         if (pixels[y * width + x] == Surface.pack(themes.light.accent)) accent_pixels += 1;
     };
     try std.testing.expect(muted_pixels > 24);
-    try std.testing.expect(accent_pixels > 8);
+    try std.testing.expect(accent_pixels >= 5);
 }
 
 test "activity dots remain inside their declared component bounds" {
@@ -786,7 +778,7 @@ test "keyboard press visibly depresses the focused key" {
     const key = tree.elements[0].keyboard.selectedBounds();
     const sample = (key.y + key.height / 2) * width + key.x + 1;
     try std.testing.expectEqual(Surface.pack(themes.light.selection), focused_pixels[sample]);
-    try std.testing.expectEqual(Surface.pack(themes.light.surface), pressed_pixels[sample]);
+    try std.testing.expectEqual(Surface.pack(themes.light.background), pressed_pixels[sample]);
 }
 
 test "quiet focus delegates its resting appearance to content" {
@@ -910,12 +902,12 @@ test "resolved styles render identically to literal colours and ignore later the
         .state = .focused,
         .style = .{
             .base = themes.dark.background,
-            .background = themes.dark.background,
+            .background = themes.dark.surface,
             .text = themes.dark.text,
             .detail = themes.dark.muted,
-            .border = themes.dark.background,
+            .border = themes.dark.surface,
             .accent = themes.dark.accent,
-            .shadow = themes.dark.background,
+            .shadow = themes.dark.focus_shadow,
         },
     } };
     literal.len = 1;

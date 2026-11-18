@@ -94,9 +94,9 @@ scene primitives; new controls must enter through `ui_components.zig`.
   current device state owns the scene while controls recede. Empty
   chrome is not minimalism, and extra panels are not immersion. Prefer one
   subject, one spatial relationship, and one immediate action.
-- Hierarchy comes from scale, spacing, weight, and composition—not decorative
-  markers. Selection rails, glowing edges, nested pills, and ornamental cards
-  are not part of Brick's language.
+- Hierarchy comes from scale, spacing, weight, composition, and one shared
+  Gallery focus surface—not decorative markers. Selection rails, glowing
+  edges, nested pills, and ornamental cards are not part of Brick's language.
 - Selection never changes text metrics. Sparse editorial choices use the shared
   `editorialChoice` component: contrast and weight may change, while size,
   line-height, bounds, and wrapping remain stable under rapid D-pad movement.
@@ -104,12 +104,14 @@ scene primitives; new controls must enter through `ui_components.zig`.
   The exceptional foyer is a stage, the library changes density without losing
   identity, device controls pair a moving index with a stable value stage, and
   Quick system makes the game recede without pretending it disappeared.
-- Resting controls live directly on the page. Focus is expressed by type scale,
-  weight, position, contrast, and artwork emphasis. Do not add a baseline,
-  leading bar, rail, glow, or outline merely to make focus visible. Filled
-  surfaces are reserved for momentary press acknowledgement.
-- Use bone and carbon neutrals. Signal cyan echoes the hardware LEDs and means
-  current position, active control, or live state; it is not decoration.
+- Resting controls live directly on the page. Focus lifts one low-contrast,
+  borderless surface behind the complete target while type weight, position,
+  contrast, and artwork emphasis preserve hierarchy. Do not add a baseline,
+  leading bar, rail, glow, or outline. Press briefly reverses the surface so it
+  cannot be confused with focus.
+- Use warm paper and ink in light appearance, and near-black gallery neutrals
+  in dark appearance. Pale blue is a signal colour for active manipulation,
+  attention, and local progress; persistent healthy status stays monochrome.
 - Inter establishes titles, high-emphasis actions, and UI copy through the
   shared type scale. Noto Sans remains the multilingual fallback. Do not choose
   typefaces in a screen.
@@ -118,6 +120,9 @@ scene primitives; new controls must enter through `ui_components.zig`.
   The shared footer preserves the primary action and collapses supporting
   labels toward icon-only before controls can collide; screens never assign
   footer slots.
+- Library chrome has three deliberate bands: section and ambient status,
+  view/filter choices, then content. Do not compress tabs, a collection label,
+  and system state into one ambiguous row merely to reclaim vertical space.
 
 ## System chrome and interruption policy
 
@@ -140,6 +145,11 @@ without the job that justified it there.
 The status cluster owns icon order, spacing, and collapse. Screens do not place
 battery or network marks themselves. A durable state may remain visible there;
 a transient event must expire or become a concrete object in its destination.
+Every mark uses the shared 24-by-24 optical canvas, two-pixel rounded line
+weight, and 12-pixel inter-icon gap. Visible silhouettes may differ in width;
+their canvas, centre line, stroke character, and monochrome healthy state may
+not. New status symbols extend this family instead of introducing a font glyph
+or a screen-local pixel construction.
 
 ## Interaction states
 
@@ -164,10 +174,11 @@ as unrelated booleans in a view.
 ### Focus object
 
 For a typography- or artwork-led surface, draw the content at its intended
-hierarchy and use `ui_components.focusAnchor()` for stable identity, press,
-boundary, and navigation anchoring. The component is intentionally visually
-quiet at rest: the content owns focus presentation. A screen must not implement
-its own rail, pill, glow, underline, or focus animation.
+hierarchy and use `ui_components.focusAnchor()` for stable identity, the shared
+Gallery plate, press, boundary, and navigation anchoring. The plate is a soft
+local lift with no accent outline; content still owns the hierarchy inside it.
+A screen must not implement its own rail, pill, glow, underline, shadow, or
+focus animation.
 
 Focused and active are separate. Focus answers “what will I operate?”; active
 answers “what is running or already selected?”. An active game or setting may
@@ -270,8 +281,9 @@ artwork disappear, move the action rail, or teach a second navigation grammar.
 | All games | locate precisely | denser vertical index | title responds immediately; rich preview may wait |
 
 Left/right changes the collection and is always disclosed in the action rail.
-It is not an invisible mode switch. The focused row uses position, weight and
-contrast together; it never acquires a leading rail, checkbox, pill or glow.
+It is not an invisible mode switch. The focused row combines position, weight,
+contrast, and the shared Gallery surface; it never acquires a leading rail,
+checkbox, accent outline, or glow.
 
 A held direction enters skim behavior through `input_repeat.Controller`.
 Selection and title feedback update on every repeat. Expensive preview/artwork
@@ -334,11 +346,11 @@ is distinct from `moved` and `empty`; route it to semantic boundary feedback.
 Grid navigation may calculate its spatial destination, but must preserve the
 same result contract and held-input controller.
 
-`focus_motion.Controller` owns focus geometry. Feed each rebuilt
-scene to it before presentation; it retargets from its currently visible
-position and size. Content hierarchy presents resting focus; press settles into
-a brief filled acknowledgement. Do not add selection rails, underlines, pills,
-or screen-specific focus ornaments.
+`focus_motion.Controller` owns focus geometry. Feed each rebuilt scene to it
+before presentation; it retargets the Gallery surface from its currently
+visible position and size. Press settles into a brief high-contrast
+acknowledgement. Do not add selection rails, underlines, accent outlines, or
+screen-specific focus ornaments.
 
 When a supported direction cannot move farther, call the controller's
 `boundary()` response. It nudges toward the attempted direction and strengthens
@@ -359,6 +371,9 @@ Use `ui_components.keyboard()` with `KeyboardInput`; do not draw keys directly.
 The component owns stable per-key identity, focus travel, boundary response, and
 press depression. Always pass `uppercase` and `symbols` from the input model so
 the visible key labels match the characters that activation will produce.
+Ordinary characters sit directly on the field; only the focused key and the
+four mode/action keys become surfaces. Do not restore a grid of forty equal
+tiles.
 
 ### Motion
 
@@ -382,8 +397,9 @@ does not auto-dismiss. Completion feedback uses `FeedbackLifecycle`.
 Use progress `Feedback` for indeterminate work; it owns the shared activity
 indicator and `activity_motion.Controller` owns its cadence. Screens must not
 draw private spinners or choose animation timing. Reduced motion preserves the
-busy signal as three static dots rather than removing it. Progress copy omits
-trailing ellipses because the activity indicator already communicates continuation.
+busy signal as a centred segment on its quiet track rather than removing it.
+Progress copy omits trailing ellipses because the activity indicator already
+communicates continuation.
 
 Use `ui_components.feedbackBanner()` only for cross-context progress, warning,
 or failure that has no sufficient local surface. It uses the stable hairline

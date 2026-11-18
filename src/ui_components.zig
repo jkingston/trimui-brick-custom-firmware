@@ -79,16 +79,16 @@ pub fn selectable(scope: interaction.Id.Scope, index: usize, focused: bool, boun
     return .{ .id = resolved.id, .state = resolved.state, .bounds = bounds, .label = label };
 }
 
-/// A focus target for typography- and artwork-led surfaces. The screen owns
-/// resting hierarchy; this component supplies identity, press feedback and
-/// boundary response without adding a rail, underline or glow.
+/// A focus target for typography- and artwork-led surfaces. Gallery focus is a
+/// single low-contrast plate with spatial continuity; it never adds a rail,
+/// underline, glow, or per-screen ornament.
 pub fn focusAnchor(result: *ui.Tree, scope: interaction.Id.Scope, index: usize, focused: bool, bounds: ui.Rect) void {
     const resolved = selection(scope, index, focused);
     result.add(.{ .focus_frame = .{
         .id = resolved.id,
         .state = resolved.state,
         .bounds = bounds,
-        .presentation = .quiet,
+        .presentation = .plate,
     } });
 }
 
@@ -197,22 +197,22 @@ pub fn systemStatus(result: *ui.Tree, status: SystemStatus) void {
     const right: u16 = design.geometry.width - design.spacing.margin;
     var cursor = right;
     if (status.battery) |percent| {
-        const x = cursor -| 60;
-        result.add(.{ .battery = .{ .bounds = .{ .x = x, .y = 40, .width = 60, .height = 28 }, .percent = percent } });
-        cursor = x -| 18;
+        const x = cursor -| 24;
+        result.add(.{ .battery = .{ .bounds = .{ .x = x, .y = 40, .width = 24, .height = 24 }, .percent = percent } });
+        cursor = x -| 12;
     }
     if (status.audio) {
-        const x = cursor -| 26;
-        result.add(.{ .headphones = .{ .bounds = .{ .x = x, .y = 42, .width = 26, .height = 24 }, .color = result.theme.text } });
-        cursor = x -| 14;
+        const x = cursor -| 24;
+        result.add(.{ .headphones = .{ .bounds = .{ .x = x, .y = 40, .width = 24, .height = 24 }, .color = result.theme.text } });
+        cursor = x -| 12;
     }
     if (status.bluetooth != .hidden) {
-        const x = cursor -| 18;
-        result.add(.{ .bluetooth = .{ .bounds = .{ .x = x, .y = 40, .width = 18, .height = 28 }, .color = if (status.bluetooth == .connected) result.theme.text else result.theme.accent } });
-        cursor = x -| 14;
+        const x = cursor -| 24;
+        result.add(.{ .bluetooth = .{ .bounds = .{ .x = x, .y = 40, .width = 24, .height = 24 }, .color = if (status.bluetooth == .connected) result.theme.text else result.theme.accent } });
+        cursor = x -| 12;
     }
     if (status.network != .hidden)
-        networkSignal(result, .{ .x = cursor -| 25, .y = 43, .width = 25, .height = 22 }, status.network);
+        networkSignal(result, .{ .x = cursor -| 24, .y = 40, .width = 24, .height = 24 }, status.network);
 }
 
 fn networkSignal(result: *ui.Tree, bounds: ui.Rect, status: NetworkStatus) void {
@@ -263,10 +263,10 @@ pub fn header(result: *ui.Tree, title: []const u8) void {
 pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void {
     const size: u16 = switch (item.control) {
         .view, .filter, .menu => geometry.glyph_size,
-        .horizontal => 56,
+        .horizontal => 48,
         else => 40,
     };
-    const colour = result.theme.muted;
+    const colour = if (item.control == .confirm) result.theme.text else result.theme.muted;
     switch (item.control) {
         .confirm, .back, .horizontal => {
             const symbol = switch (item.control) {
@@ -277,30 +277,23 @@ pub fn hint(result: *ui.Tree, x: u16, y: u16, label_width: u16, item: Hint) void
                 else => "<>",
             };
             if (item.control != .horizontal) {
-                result.add(.{ .bar = .{ .bounds = .{ .x = x, .y = y + 1, .width = 38, .height = 38 }, .color = colour, .radius = 19 } });
-                result.add(.{ .bar = .{ .bounds = .{ .x = x + 2, .y = y + 3, .width = 34, .height = 34 }, .color = result.background, .radius = 17 } });
+                result.add(.{ .bar = .{ .bounds = .{ .x = x + 2, .y = y + 3, .width = 34, .height = 34 }, .color = result.theme.surface, .radius = 17 } });
             }
             var glyph_font = font.control;
             glyph_font.alignment = .center;
-            result.add(.{ .text = .{ .bounds = .{ .x = x, .y = y, .width = size, .height = size }, .value = symbol, .color = colour, .font = glyph_font } });
+            result.add(.{ .text = .{ .bounds = .{ .x = x, .y = y, .width = size, .height = size }, .value = symbol, .color = if (item.control == .horizontal) result.theme.muted else result.theme.text, .font = glyph_font } });
         },
         .view, .filter => {
             for (0..2) |index| {
-                const bounds = ui.Rect{ .x = x + @as(u16, @intCast(index)) * 36, .y = y + 14, .width = 28, .height = 12 };
-                result.add(.{ .bar = .{ .bounds = bounds, .color = colour, .radius = 6 } });
-                if (index != (if (item.control == .filter) @as(usize, 1) else 0)) result.add(.{ .bar = .{
-                    .bounds = .{ .x = bounds.x + 2, .y = bounds.y + 2, .width = 24, .height = 8 },
-                    .color = result.background,
-                    .radius = 4,
-                } });
+                const bounds = ui.Rect{ .x = x + @as(u16, @intCast(index)) * 24, .y = y + 17, .width = 18, .height = 7 };
+                result.add(.{ .bar = .{ .bounds = bounds, .color = if (index == (if (item.control == .filter) @as(usize, 1) else 0)) result.theme.muted else result.theme.surface, .radius = 5 } });
             }
         },
         .menu => {
-            result.add(.{ .bar = .{ .bounds = .{ .x = x + 2, .y = y + 6, .width = 58, .height = 28 }, .color = colour, .radius = 14 } });
-            result.add(.{ .bar = .{ .bounds = .{ .x = x + 4, .y = y + 8, .width = 54, .height = 24 }, .color = result.background, .radius = 12 } });
+            result.add(.{ .bar = .{ .bounds = .{ .x = x + 2, .y = y + 8, .width = 44, .height = 24 }, .color = result.theme.surface, .radius = 12 } });
             for (0..3) |index| result.add(.{ .bar = .{
-                .bounds = .{ .x = x + 21 + @as(u16, @intCast(index)) * 9, .y = y + 18, .width = 4, .height = 4 },
-                .color = colour,
+                .bounds = .{ .x = x + 15 + @as(u16, @intCast(index)) * 8, .y = y + 18, .width = 4, .height = 4 },
+                .color = result.theme.muted,
                 .radius = 2,
             } });
         },
@@ -313,7 +306,7 @@ pub fn footer(result: *ui.Tree, items: []const Hint) void {
     std.debug.assert(items.len <= 8);
     const bounds = ui.Rect{ .x = design.spacing.margin, .y = geometry.footer_y, .width = geometry.width - 2 * design.spacing.margin, .height = geometry.footer_height };
 
-    const anchored_left = items[0].control == .back or items[0].control == .menu;
+    const anchored_left = items[0].control == .back or items[0].control == .menu or items[0].control == .horizontal;
     const first_right: usize = if (anchored_left) 1 else 0;
     var label_widths: [8]u16 = @splat(0);
     var left_width: u16 = 0;
@@ -324,7 +317,7 @@ pub fn footer(result: *ui.Tree, items: []const Hint) void {
     }
 
     const right_count = items.len - first_right;
-    const group_gap: u16 = 28;
+    const group_gap: u16 = 22;
     const separation: u16 = if (anchored_left and right_count != 0) 48 else 0;
     const right_available = bounds.width -| left_width -| separation;
     var fixed_width: u16 = if (right_count > 1) @as(u16, @intCast(right_count - 1)) * group_gap else 0;
@@ -358,19 +351,22 @@ pub fn footer(result: *ui.Tree, items: []const Hint) void {
         const width = hintWidth(items[index], label_widths[index]);
         cursor -|= width;
         hint(result, cursor, bounds.y, label_widths[index], items[index]);
-        if (index > first_right) cursor -|= 28;
+        if (index > first_right) cursor -|= group_gap;
     }
 }
 
 fn hintIconWidth(item: Hint) u16 {
     return switch (item.control) {
         .view, .filter, .menu => geometry.glyph_size,
-        .horizontal => 56,
+        .horizontal => 48,
         else => 40,
     };
 }
 
 fn desiredLabelWidth(item: Hint) u16 {
+    // Control labels use a 31 px face; 22 px per codepoint is a conservative
+    // allocation for the mixed-width strings in the footer. Under-allocation
+    // produces an ellipsis even when the footer has ample empty space.
     return @intCast(@min(@as(usize, 240), item.label.len * 22));
 }
 
@@ -492,7 +488,7 @@ test "system status owns one compact top-right cluster" {
     systemStatus(&tree, .{ .battery = 72, .network = .connected, .audio = true });
     try tree.validate();
     try @import("std").testing.expectEqual(@as(usize, 3), tree.len);
-    try @import("std").testing.expectEqual(@as(u16, design.geometry.width - design.spacing.margin - 60), tree.elements[0].battery.bounds.x);
+    try @import("std").testing.expectEqual(@as(u16, design.geometry.width - design.spacing.margin - 24), tree.elements[0].battery.bounds.x);
     try @import("std").testing.expect(tree.elements[1] == .headphones);
     try @import("std").testing.expect(tree.elements[2] == .wifi);
     try @import("std").testing.expect(tree.elements[2].wifi.bounds.x < tree.elements[1].headphones.bounds.x);

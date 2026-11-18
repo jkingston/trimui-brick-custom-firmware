@@ -163,11 +163,11 @@ pub const config = Config{
         .overlay_row_height = 100,
         .grid_columns = 3,
         .grid_rows = 2,
-        // A small engineered corner softens interactive plates without turning
-        // rows into generic pills or cards.
-        .radius = 8,
-        .glyph_size = 64,
-        .hint_gap = 16,
+        // Gallery focus is a quiet lifted surface. The radius is deliberately
+        // softer than the content geometry without turning rows into pills.
+        .radius = 14,
+        .glyph_size = 48,
+        .hint_gap = 12,
     },
     .motion = motion_tokens.content,
 };
