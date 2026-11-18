@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const artwork_sync = @import("artwork_sync.zig");
 const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const captive = @import("captive.zig");
@@ -423,6 +424,15 @@ fn applySessionAction(io: std.Io, state: *model.Model, display: *Display, wifi_c
         if (!sendBluetooth(bluetooth_client, bluetooth_request, &command))
             state.issue = "Bluetooth is unavailable";
     }
+    if (state.takeArtworkRequest()) |request| {
+        const rom = if (request.game) |index| if (index < state.games.len) state.games[index].rom_path else null else null;
+        var artwork_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer artwork_arena.deinit();
+        artwork_sync.queue(io, artwork_arena.allocator(), "/data", @tagName(request.command), rom, request.valueSlice()) catch |err| {
+            std.log.warn("Could not queue artwork action: {s}", .{@errorName(err)});
+            state.issue = "Artwork could not be changed";
+        };
+    }
     if (state.pending_power) |command| {
         state.pending_power = null;
         saveLibraryPreferences(io, state);
@@ -465,7 +475,13 @@ fn markReady(io: std.Io) !void {
     ready.close(io);
 }
 
-fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
+fn runSession(io: std.Io, allocator: std.mem.Allocator, state: *model.Model, wifi_only: bool) !?usize {
+    if (!wifi_only) if (catalog.discover(io, allocator, "/data")) |games| {
+        state.games = games;
+        state.game_index = @min(state.game_index, games.len -| 1);
+        state.selected = @min(state.selected, state.collection().len() -| 1);
+        state.library_preview = state.selected;
+    } else |err| std.log.warn("Could not refresh library: {s}", .{@errorName(err)});
     // Stop fbcon from drawing its text cursor over the product surface.
     var console = try Console.open(io);
     defer console.close();
@@ -493,17 +509,21 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
 
     const input_monitor = try openInputMonitor(input_directory);
     defer closeFd(io, input_monitor, true);
+    try std.Io.Dir.cwd().createDirPath(io, "/data/Library");
+    const library_monitor = try openInputMonitor("/data/Library");
+    defer closeFd(io, library_monitor, true);
     var gamepads = Gamepads{};
     defer gamepads.close(io);
     _ = try gamepads.rescan(io);
     if (!gamepads.hasBuiltin()) return error.GamepadNotFound;
     try markReady(io);
-    var poll_fds: [max_gamepads + 3]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
+    var poll_fds: [max_gamepads + 4]std.posix.pollfd = @splat(.{ .fd = -1, .events = std.posix.POLL.IN, .revents = 0 });
     var repeat: input_repeat.Controller = .{};
     var layout_pending = false;
     var press: PressTracker = .{};
     var was_animating = false;
     var save_deadline: ?i64 = null;
+    var library_deadline: ?i64 = null;
     var buffer: [32 * @sizeOf(InputEvent)]u8 align(@alignOf(InputEvent)) = undefined;
 
     while (true) {
@@ -513,6 +533,10 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         if (animation or was_animating) try display.requestFrame(null);
         var timeout = repeat_timeout;
         if (save_deadline) |deadline| {
+            const remaining: i32 = @intCast(@max(0, deadline - now));
+            timeout = if (timeout < 0) remaining else @min(timeout, remaining);
+        }
+        if (library_deadline) |deadline| {
             const remaining: i32 = @intCast(@max(0, deadline - now));
             timeout = if (timeout < 0) remaining else @min(timeout, remaining);
         }
@@ -541,6 +565,8 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
         poll_fds[max_gamepads + 1].revents = 0;
         poll_fds[max_gamepads + 2].fd = input_monitor;
         poll_fds[max_gamepads + 2].revents = 0;
+        poll_fds[max_gamepads + 3].fd = library_monitor;
+        poll_fds[max_gamepads + 3].revents = 0;
         _ = try display.poll(&poll_fds, timeout);
         if (save_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
             saveLibraryPreferences(io, state);
@@ -553,6 +579,22 @@ fn runSession(io: std.Io, state: *model.Model, wifi_only: bool) !?usize {
             try drainInputMonitor(input_monitor);
             rescan_inputs = true;
         }
+        if ((poll_fds[max_gamepads + 3].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL)) != 0) return error.InputMonitorUnavailable;
+        if ((poll_fds[max_gamepads + 3].revents & std.posix.POLL.IN) != 0) {
+            try drainInputMonitor(library_monitor);
+            library_deadline = nowMilliseconds(io) + 200;
+        }
+        if (library_deadline) |deadline| if (nowMilliseconds(io) >= deadline) {
+            if (catalog.discover(io, allocator, "/data")) |games| {
+                state.games = games;
+                state.game_index = @min(state.game_index, games.len -| 1);
+                state.selected = @min(state.selected, state.collection().len() -| 1);
+                state.library_preview = state.selected;
+                state.revision += 1;
+                changed = true;
+            } else |err| std.log.warn("Could not apply artwork update: {s}", .{@errorName(err)});
+            library_deadline = null;
+        };
         if ((state.page == .wifi or state.page == .wifi_fallback) and
             nowMilliseconds(io) >= captive_deadline)
         {
@@ -987,7 +1029,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
     // otherwise its bounded readiness check kills a healthy cold resume.
     if (boot_game != null) try markReady(io);
     while (true) {
-        const game_index = boot_game orelse (try runSession(io, &state, false)) orelse continue;
+        const game_index = boot_game orelse (try runSession(io, arena.allocator(), &state, false)) orelse continue;
         boot_game = null;
         const game = &state.games[game_index];
         var game_overlay = overlay.Model{
@@ -1092,7 +1134,7 @@ pub fn run(io: std.Io, profile: ?Profile) !void {
                         state.page = .wifi;
                         state.selected = 0;
                         state.wifi.page = .list;
-                        _ = try runSession(io, &state, true);
+                        _ = try runSession(io, arena.allocator(), &state, true);
                         const resume_game = state.page == .games;
                         state.page = .games;
                         state.selected = 0;

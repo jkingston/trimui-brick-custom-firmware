@@ -287,12 +287,12 @@ test "state layers preserve truthful paused-game identity" {
     var state = Model{ .game = catalog.games[0], .title = catalog.games[0].title, .layer = .states, .available = .{ true, false, false, true } };
     var tree = state.tree();
     var has_identity = false;
-    for (tree.slice()) |element| has_identity = has_identity or element == .artwork or (element == .text and std.mem.eql(u8, element.text.value, "No artwork"));
+    for (tree.slice()) |element| has_identity = has_identity or element == .artwork or (element == .text and std.mem.eql(u8, element.text.value, catalog.games[0].title));
     try std.testing.expect(has_identity);
 
     state.layer = .save_slots;
     tree = state.tree();
     has_identity = false;
-    for (tree.slice()) |element| has_identity = has_identity or element == .artwork or (element == .text and std.mem.eql(u8, element.text.value, "No artwork"));
+    for (tree.slice()) |element| has_identity = has_identity or element == .artwork or (element == .text and std.mem.eql(u8, element.text.value, catalog.games[0].title));
     try std.testing.expect(has_identity);
 }

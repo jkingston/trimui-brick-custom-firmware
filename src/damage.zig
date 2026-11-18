@@ -252,7 +252,6 @@ pub fn paintBounds(element: ui.Element) ui.Rect {
         .qr_code => |value| value.bounds,
         .keyboard => |value| value.bounds,
         .keyboard_key => |value| value.bounds,
-        .cover => |value| expand(value.bounds, 10, 12),
         .artwork => |value| blk: {
             var bounds = expand(value.displayBounds(), 8, 10);
             const left = bounds.x -| value.clip_left;
@@ -315,7 +314,7 @@ fn fingerprint(element: ui.Element) Signature {
     return hash.final();
 }
 
-fn hashTexture(hash: *Hasher, optional: ?@import("asset_manifest.zig").Texture) void {
+fn hashTexture(hash: *Hasher, optional: ?@import("artwork_store.zig").Texture) void {
     const value = optional orelse {
         hash.update(&.{0});
         return;

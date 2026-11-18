@@ -10,7 +10,7 @@ BRICK_SHELL_OVERRIDE_SRCDIR_RSYNC_EXCLUSIONS = \
 BRICK_SHELL_LICENSE = GPL-2.0-only
 BRICK_SHELL_LICENSE_FILES = COPYING
 BRICK_SHELL_DEPENDENCIES = \
-	host-zig-bin pango googlefontdirectory host-fontconfig brick-gpu libdrm
+	host-zig-bin pango googlefontdirectory host-fontconfig brick-gpu libdrm libpng
 
 define BRICK_SHELL_BUILD_CMDS
 	cd $(@D) && \
@@ -23,11 +23,20 @@ define BRICK_SHELL_BUILD_CMDS
 		-I$(STAGING_DIR)/usr/include/libdrm \
 		$(BR2_EXTERNAL_BRICK_PATH)/board/trimui/brick/wpe-platform-brick/integration/brick-kms-watchdog.c \
 		$(TARGET_LDFLAGS) -ldrm -o $(@D)/brick-shell-watchdog
+	$(TARGET_CC) $(TARGET_CFLAGS) -std=c11 -Wall -Wextra -Werror \
+		-I$(STAGING_DIR)/usr/include/libpng16 \
+		$(@D)/package/brick-shell/brick-artwork-convert.c \
+		$(TARGET_LDFLAGS) -lpng -lz -o $(@D)/brick-artwork-convert
 endef
 
 define BRICK_SHELL_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/brick-shell $(TARGET_DIR)/usr/bin/brick-shell
 	$(INSTALL) -D -m 0755 $(@D)/brick-shell-watchdog $(TARGET_DIR)/usr/libexec/brick-shell-watchdog
+	$(INSTALL) -D -m 0755 $(@D)/brick-artwork-convert $(TARGET_DIR)/usr/libexec/brick-artwork-convert
+	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/brick-libraryd \
+		$(TARGET_DIR)/usr/libexec/brick-libraryd
+	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/S43brick-library \
+		$(TARGET_DIR)/etc/init.d/S43brick-library
 	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/S20brick-shell \
 		$(TARGET_DIR)/etc/init.d/S20brick-shell
 	$(INSTALL) -D -m 0755 $(@D)/package/brick-shell/S41brick-efficiency \

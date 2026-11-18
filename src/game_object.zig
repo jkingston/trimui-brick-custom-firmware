@@ -22,9 +22,12 @@ pub fn add(tree: *scene.Tree, game: catalog.Game, spec: Spec) void {
     if (game.assets.cover) |texture| {
         tree.add(.{ .artwork = .{ .bounds = bounds, .texture = texture, .dim = spec.dim, .tilt = spec.tilt, .clip_left = spec.clip_left } });
     } else {
-        // Missing art remains explicit. Demo cover recipes are never allowed to
-        // masquerade as installed artwork in the product library.
-        addText(tree, .{ .x = bounds.x + 20, .y = bounds.y + bounds.height / 3, .width = bounds.width -| 40, .height = bounds.height / 2 }, "No artwork", tree.theme.muted, .{ .size = 26, .line_height = 36, .weight = .medium, .alignment = .center });
+        // Missing media remains a complete game identity, not an error card or
+        // a fabricated cover. The fixed stage is shared with downloaded art so
+        // late arrival never changes layout or focus.
+        addText(tree, .{ .x = bounds.x + 20, .y = bounds.y + 18, .width = bounds.width -| 40, .height = 34 }, game.system, tree.theme.accent, .{ .size = 20, .line_height = 28, .weight = .semibold, .alignment = .center });
+        addText(tree, .{ .x = bounds.x + 20, .y = bounds.y + bounds.height / 3 -| 20, .width = bounds.width -| 40, .height = bounds.height / 2 }, game.title, tree.theme.text, .{ .size = 34, .line_height = 42, .weight = .semibold, .family = .display, .alignment = .center });
+        addText(tree, .{ .x = bounds.x + 20, .y = bounds.y + bounds.height -| 54, .width = bounds.width -| 40, .height = 34 }, game.summary, tree.theme.muted, .{ .size = 20, .line_height = 28, .alignment = .center });
     }
     if (spec.id != .none) tree.add(.{ .focus_frame = .{
         .id = spec.id,
@@ -60,18 +63,19 @@ test "missing artwork remains an authored focus object" {
     const id = interaction.Id.scoped(.library, 3);
     add(&tree, game, .{ .bounds = .{ .x = 48, .y = 120, .width = 320, .height = 360 }, .id = id, .focused = true });
     try std.testing.expectEqual(id, tree.focusedId().?);
-    try std.testing.expectEqual(@as(usize, 2), tree.len);
-    try std.testing.expectEqualStrings("No artwork", tree.elements[0].text.value);
+    try std.testing.expectEqual(@as(usize, 4), tree.len);
+    try std.testing.expectEqualStrings(game.system, tree.elements[0].text.value);
+    try std.testing.expectEqualStrings(game.title, tree.elements[1].text.value);
     try tree.validate();
 }
 
 test "missing art identifies the game without invented imagery" {
     var game = catalog.games[0];
-    game.cover = .library;
     game.assets = .{};
     const theme = @import("theme.zig").dark;
     var tree = scene.Tree{ .theme = theme, .background = theme.background };
     add(&tree, game, .{ .bounds = .{ .x = 48, .y = 120, .width = 320, .height = 360 } });
-    try std.testing.expectEqualStrings("No artwork", tree.elements[0].text.value);
+    try std.testing.expectEqualStrings(game.system, tree.elements[0].text.value);
+    try std.testing.expectEqualStrings(game.title, tree.elements[1].text.value);
     try tree.validate();
 }

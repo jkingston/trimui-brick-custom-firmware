@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+daemon=/usr/libexec/brick-libraryd
+pidfile=/run/brick-libraryd.pid
+
+case ${1:-} in
+start)
+	mkdir -p /data/Library/artwork/rendered /data/Library/artwork/objects /data/Library/requests /data/Library/overrides
+	start-stop-daemon -S -q -b -m -p "$pidfile" -x "$daemon"
+	;;
+stop)
+	# The worker is an ash script; /proc/PID/exe is BusyBox rather than the
+	# script path. The pidfile keeps this executable match scoped to this worker.
+	/usr/libexec/brick-stop-daemon S43brick-library "$pidfile" /bin/busybox
+	;;
+restart)
+	"$0" stop
+	exec "$0" start
+	;;
+*)
+	echo 'Usage: S43brick-library {start|stop|restart}' >&2
+	exit 2
+	;;
+esac

@@ -15,16 +15,27 @@ pub const Action = input.Action;
 pub const Page = product_navigation.Page;
 pub const returnsToParent = product_navigation.returnsToParent;
 pub const Power = enum { screen_off, suspend_device, shutdown };
+pub const ArtworkCommand = enum { refresh_game, set_title, import_local, remove_game, reset_game, refresh_missing, remove_all };
+pub const ArtworkRequest = struct {
+    command: ArtworkCommand,
+    game: ?usize = null,
+    value: [96]u8 = @splat(0),
+    value_len: u8 = 0,
+
+    pub fn valueSlice(self: *const ArtworkRequest) []const u8 {
+        return self.value[0..self.value_len];
+    }
+};
 const settings_count = @typeInfo(settings_model.Setting).@"enum".field_names.len;
 pub const maximum_history = 16;
 
 test "direction support follows each component layout" {
     var state = Model{ .page = .games, .library_view = .recent };
     try std.testing.expect(state.supportsDirection(.up));
-    try std.testing.expect(!state.supportsDirection(.left));
+    try std.testing.expect(state.supportsDirection(.left));
     state.library_view = .all;
     try std.testing.expect(state.supportsDirection(.up));
-    try std.testing.expect(!state.supportsDirection(.left));
+    try std.testing.expect(state.supportsDirection(.left));
     state.page = .setting;
     state.active_setting = .brightness;
     try std.testing.expect(state.supportsDirection(.right));
@@ -40,6 +51,9 @@ pub const Model = struct {
     games: []const catalog.Game = &catalog.games,
     page: Page = .foyer,
     library_view: ui.LibraryView = .all,
+    /// Product default is editorial. The simulator may inject other complete
+    /// compositions for direct comparison at device geometry.
+    library_composition: ui.LibraryComposition = .editorial,
     system: ?usize = null,
     selected: usize = 0,
     game_index: usize = 0,
@@ -62,6 +76,8 @@ pub const Model = struct {
     active_setting: settings_model.Setting = .brightness,
     pending_setting: ?settings_model.Setting = null,
     pending_power: ?Power = null,
+    pending_artwork: ?ArtworkRequest = null,
+    artwork_title: wifi_flow.Field = .{},
     revision: u64 = 1,
     battery_percent: ?u8 = null,
     wifi: wifi_flow.Model = .{},
@@ -115,7 +131,9 @@ pub const Model = struct {
         const vertical = action == .up or action == .down;
         const horizontal = action == .left or action == .right;
         return switch (self.page) {
-            .games => vertical,
+            .games => vertical or horizontal,
+            .game_details, .artwork_identity, .artwork_library => vertical,
+            .artwork_title => vertical or horizontal,
             .setting => if (self.active_setting == .brightness) horizontal else vertical,
             .wifi => switch (self.wifi.page) {
                 .list, .details => vertical,
@@ -198,6 +216,7 @@ pub const Model = struct {
             if (self.page == .games) self.remember();
             if (self.page == .wifi or self.page == .wifi_fallback) self.wifi.dismiss();
             if (self.page == .bluetooth) self.bluetooth.dismiss();
+            if (self.page == .artwork_title) self.artwork_title.wipe();
             self.launch_failed = null;
             if (destination == .games)
                 self.browse()
@@ -252,6 +271,36 @@ pub const Model = struct {
             if (changed) self.revision += 1;
             return changed;
         }
+        if (self.page == .artwork_title) {
+            if (action == .back) {
+                self.artwork_title.wipe();
+                self.page = .artwork_identity;
+                self.selected = 1;
+                self.revision += 1;
+                return true;
+            }
+            if (action == .up or action == .down or action == .left or action == .right) {
+                const changed = self.artwork_title.move(action);
+                if (changed) self.revision += 1;
+                return changed;
+            }
+            if (action != .select) return false;
+            switch (self.artwork_title.activate()) {
+                .unchanged => return false,
+                .changed => self.revision += 1,
+                .submit => {
+                    if (self.artwork_title.len == 0) return false;
+                    var request = ArtworkRequest{ .command = .set_title, .game = self.game_index, .value_len = self.artwork_title.len };
+                    @memcpy(request.value[0..request.value_len], self.artwork_title.slice());
+                    self.pending_artwork = request;
+                    self.page = .artwork_identity;
+                    self.selected = 0;
+                    self.artwork_title.wipe();
+                    self.revision += 1;
+                },
+            }
+            return true;
+        }
         const before_page = self.page;
         const before_selected = self.selected;
         const before_view = self.library_view;
@@ -273,6 +322,10 @@ pub const Model = struct {
                 const left = action == .left;
                 if (self.page == .foyer) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, self.itemCount() -| 1);
+                } else if (self.page == .games) {
+                    self.remember();
+                    const next: ui.LibraryView = if (left) .recent else .all;
+                    if (next != self.library_view) self.changeCollection(next, false, null);
                 } else if (self.page == .setting and self.active_setting == .brightness) {
                     self.selected = if (left) self.selected -| 1 else @min(self.selected + 1, 10);
                     if (self.selected != before_selected) self.chooseSetting();
@@ -301,6 +354,38 @@ pub const Model = struct {
                         self.launch_failed = null;
                     }
                 },
+                .game_details => if (self.selected == 0) {
+                    self.pending_launch = self.game_index;
+                    self.launch_failed = null;
+                } else {
+                    self.page = .artwork_identity;
+                    self.selected = 0;
+                },
+                .artwork_identity => if (self.selected == 1) {
+                    self.artwork_title.wipe();
+                    const title = self.games[self.game_index].title;
+                    const length: u8 = @intCast(@min(title.len, self.artwork_title.bytes.len));
+                    @memcpy(self.artwork_title.bytes[0..length], title[0..length]);
+                    self.artwork_title.len = length;
+                    self.page = .artwork_title;
+                } else {
+                    self.pending_artwork = .{ .command = switch (self.selected) {
+                        0 => .refresh_game,
+                        2 => .import_local,
+                        3 => .remove_game,
+                        else => .reset_game,
+                    }, .game = self.game_index };
+                },
+                .artwork_title => unreachable,
+                .artwork_library => switch (self.selected) {
+                    0 => self.pending_artwork = .{ .command = .refresh_missing },
+                    1 => if (self.firstMissingArtwork()) |index| {
+                        self.game_index = index;
+                        self.page = .artwork_identity;
+                        self.selected = 0;
+                    },
+                    else => self.pending_artwork = .{ .command = .remove_all },
+                },
                 .settings => {
                     if (self.selected == settings_count) {
                         self.page = .wifi;
@@ -312,6 +397,9 @@ pub const Model = struct {
                         self.selected = 0;
                         self.bluetooth.page = .list;
                     } else if (self.selected == settings_count + 2) {
+                        self.page = .artwork_library;
+                        self.selected = 0;
+                    } else if (self.selected == settings_count + 3) {
                         self.page = .power;
                         self.selected = 0;
                     } else {
@@ -354,6 +442,16 @@ pub const Model = struct {
                     self.browse();
                     self.launch_failed = null;
                 },
+                .game_details => self.browse(),
+                .artwork_identity => {
+                    self.page = .game_details;
+                    self.selected = 1;
+                },
+                .artwork_title => unreachable,
+                .artwork_library => {
+                    self.page = .settings;
+                    self.selected = settings_count + 2;
+                },
                 .settings => {
                     self.browse();
                 },
@@ -367,7 +465,7 @@ pub const Model = struct {
                 .systems, .views => self.browse(),
                 .power => {
                     self.page = .settings;
-                    self.selected = settings_count + 2;
+                    self.selected = settings_count + 3;
                 },
                 .power_confirm => {
                     self.page = .power;
@@ -377,10 +475,11 @@ pub const Model = struct {
             .menu => unreachable,
             .view => if (self.page == .games) {
                 self.remember();
-                self.changeCollection(switch (self.library_view) {
-                    .recent => .all,
-                    .all => .recent,
-                }, false, null);
+                if (self.collection().sourceIndex(self.selected)) |index| {
+                    self.game_index = index;
+                    self.page = .game_details;
+                    self.selected = 0;
+                }
             },
             .filter => if (self.page == .games) {
                 self.remember();
@@ -389,7 +488,7 @@ pub const Model = struct {
             },
         }
         if (self.page == .games and before_selected != self.selected) self.library_preview = self.selected;
-        const changed = before_page != self.page or before_selected != self.selected or before_view != self.library_view or before_system != self.system or before_error != self.launch_failed or self.pending_launch != null or self.pending_setting != null or self.pending_power != null;
+        const changed = before_page != self.page or before_selected != self.selected or before_view != self.library_view or before_system != self.system or before_error != self.launch_failed or self.pending_launch != null or self.pending_setting != null or self.pending_power != null or self.pending_artwork != null;
         if (changed) self.revision += 1;
         return changed;
     }
@@ -411,6 +510,25 @@ pub const Model = struct {
         const pending = self.pending_setting;
         self.pending_setting = null;
         return pending;
+    }
+
+    pub fn takeArtworkRequest(self: *Model) ?ArtworkRequest {
+        const pending = self.pending_artwork;
+        self.pending_artwork = null;
+        return pending;
+    }
+
+    fn firstMissingArtwork(self: *const Model) ?usize {
+        for (self.games, 0..) |game, index| if (game.assets.cover == null) return index;
+        return null;
+    }
+
+    fn missingArtwork(self: *const Model) usize {
+        var count: usize = 0;
+        for (self.games) |game| if (game.assets.cover == null) {
+            count += 1;
+        };
+        return count;
     }
 
     pub fn takeWifiRequest(self: *Model) ?wifi_flow.Request {
@@ -464,7 +582,11 @@ pub const Model = struct {
             .foyer => if (self.last_played != null) 3 else 2,
             .games => self.collection().len(),
             .game => 1,
-            .settings => settings_count + 3,
+            .game_details => 2,
+            .artwork_identity => 5,
+            .artwork_title => 1,
+            .artwork_library => 3,
+            .settings => settings_count + 4,
             .setting => settings_model.labels(self.active_setting).len,
             .wifi => 1,
             .wifi_fallback => 1,
@@ -486,8 +608,12 @@ pub const Model = struct {
         const theme = self.settings.appearance.colors();
         var result = switch (self.page) {
             .foyer => ui.foyerSession(theme, self.selected, if (self.last_played) |index| self.games[index] else null, self.resumable),
-            .games => ui.libraryCollection(theme, self.collection(), self.selected, self.library_preview, self.library_view),
+            .games => ui.libraryCollectionWithComposition(theme, self.collection(), self.selected, self.library_preview, self.library_view, self.library_composition),
             .game => if (self.games.len == 0) ui.library(theme, self.games, 0, self.library_view) else ui.gameDetail(theme, self.games[self.game_index], self.launch_failed),
+            .game_details => ui.gameInformation(theme, self.games[self.game_index], self.selected),
+            .artwork_identity => ui.artworkIdentity(theme, self.games[self.game_index], self.selected, self.wifi.wifi_state.snapshot.connectivity == .internet),
+            .artwork_title => ui.artworkTitle(theme, self.artwork_title.slice(), .{ .selected = self.artwork_title.selected, .uppercase = self.artwork_title.uppercase, .symbols = self.artwork_title.symbols }),
+            .artwork_library => ui.artworkLibrary(theme, self.selected, self.missingArtwork(), self.wifi.wifi_state.snapshot.connectivity == .internet),
             .settings => ui.settings(self.selected, self.settings, self.wifi.wifi_state.summary(), self.bluetooth.summary()),
             .setting => ui.setting(self.active_setting, self.selected, self.settingIndex(), self.settings),
             .wifi => self.wifiTree(theme),
@@ -585,15 +711,17 @@ test "filtered launch uses source identity and restores each system position" {
     try std.testing.expectEqual(@as(?usize, 2), state.librarySource());
 }
 
-test "density control changes the collection in place and retains selection" {
+test "horizontal direction changes density while View opens game details" {
     var state = Model{ .page = .games, .selected = 2, .recent = .{ 0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, .recent_len = 5 };
-    _ = state.apply(.view);
+    _ = state.apply(.left);
     try std.testing.expectEqual(ui.LibraryView.recent, state.library_view);
     try std.testing.expectEqual(Page.games, state.page);
-    _ = state.apply(.view);
+    _ = state.apply(.right);
     try std.testing.expectEqual(ui.LibraryView.all, state.library_view);
     try std.testing.expectEqual(@as(usize, 2), state.selected);
-    try std.testing.expect(!state.apply(.right));
+    _ = state.apply(.view);
+    try std.testing.expectEqual(Page.game_details, state.page);
+    _ = state.apply(.back);
     _ = state.apply(.down);
     try std.testing.expectEqual(@as(usize, 3), state.selected);
     _ = state.apply(.down);
@@ -717,12 +845,44 @@ test "shutdown requires an explicit confirmation and cancel is default" {
 }
 
 test "Power is an explicit Device destination and Back restores its row" {
-    var state = Model{ .page = .settings, .selected = settings_count + 2 };
+    var state = Model{ .page = .settings, .selected = settings_count + 3 };
     _ = state.apply(.select);
     try std.testing.expectEqual(Page.power, state.page);
     _ = state.apply(.back);
     try std.testing.expectEqual(Page.settings, state.page);
-    try std.testing.expectEqual(settings_count + 2, state.selected);
+    try std.testing.expectEqual(settings_count + 3, state.selected);
+}
+
+test "per-game artwork actions preserve immediate launch" {
+    var state = Model{ .page = .games, .selected = 2 };
+    _ = state.apply(.view);
+    try std.testing.expectEqual(Page.game_details, state.page);
+    _ = state.apply(.down);
+    _ = state.apply(.select);
+    try std.testing.expectEqual(Page.artwork_identity, state.page);
+    _ = state.apply(.select);
+    const request = state.takeArtworkRequest().?;
+    try std.testing.expectEqual(ArtworkCommand.refresh_game, request.command);
+    try std.testing.expectEqual(@as(?usize, 2), request.game);
+    _ = state.apply(.back);
+    try std.testing.expectEqual(Page.game_details, state.page);
+    _ = state.apply(.up);
+    _ = state.apply(.select);
+    try std.testing.expectEqual(@as(?usize, 2), state.takeLaunch());
+}
+
+test "title correction uses the controller keyboard and queues a durable override" {
+    var state = Model{ .page = .artwork_identity, .game_index = 2, .selected = 1 };
+    _ = state.apply(.select);
+    try std.testing.expectEqual(Page.artwork_title, state.page);
+    state.artwork_title.len = 6;
+    @memcpy(state.artwork_title.bytes[0..6], "Tetris");
+    state.artwork_title.selected = 39;
+    _ = state.apply(.select);
+    const request = state.takeArtworkRequest().?;
+    try std.testing.expectEqual(ArtworkCommand.set_title, request.command);
+    try std.testing.expectEqualStrings("Tetris", request.valueSlice());
+    try std.testing.expectEqual(Page.artwork_identity, state.page);
 }
 
 test "Back at the foyer is inert with or without a resumable session" {

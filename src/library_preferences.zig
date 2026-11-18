@@ -12,9 +12,8 @@ const Preferences = struct {
 };
 
 fn viewFromName(name: []const u8) ?ui.LibraryView {
-    if (std.mem.eql(u8, name, "recent") or std.mem.eql(u8, name, "list")) return .recent;
-    if (std.mem.eql(u8, name, "browse") or std.mem.eql(u8, name, "shelf")) return .recent;
-    if (std.mem.eql(u8, name, "all") or std.mem.eql(u8, name, "grid")) return .all;
+    if (std.mem.eql(u8, name, "recent")) return .recent;
+    if (std.mem.eql(u8, name, "all")) return .all;
     return null;
 }
 
@@ -91,34 +90,4 @@ test "library preferences restore by path after the library is reordered" {
     try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "library.json", .data = "broken" });
     load(std.testing.io, temporary.dir, &state);
     try std.testing.expectEqual(@as(usize, 0), state.selected);
-}
-
-test "legacy widget names migrate to product density names" {
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "library.json", .data = "{\"view\":\"grid\",\"rom\":\"\"}" });
-    var state = model.Model{};
-    load(std.testing.io, temporary.dir, &state);
-    try std.testing.expectEqual(ui.LibraryView.all, state.library_view);
-}
-
-test "removed flow preferences retain game and system selection" {
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    for ([_][]const u8{ "browse", "shelf" }) |view| {
-        const saved = Preferences{ .view = view, .rom = (model.Model{}).games[2].rom_path, .system = "Game Boy", .last_rom = (model.Model{}).games[2].rom_path };
-        const contents = try std.json.Stringify.valueAlloc(std.testing.allocator, saved, .{});
-        defer std.testing.allocator.free(contents);
-        try temporary.dir.writeFile(std.testing.io, .{ .sub_path = "library.json", .data = contents });
-        var state = model.Model{ .page = .games };
-        load(std.testing.io, temporary.dir, &state);
-        try std.testing.expectEqual(ui.LibraryView.recent, state.library_view);
-        try std.testing.expectEqualStrings("Game Boy", state.collection().label());
-        try std.testing.expectEqual(@as(?usize, 2), state.librarySource());
-        try std.testing.expectEqual(@as(?usize, 2), state.last_played);
-        try save(std.testing.io, temporary.dir, &state);
-        const migrated = try temporary.dir.readFileAlloc(std.testing.io, "library.json", std.testing.allocator, .limited(16384));
-        defer std.testing.allocator.free(migrated);
-        try std.testing.expect(std.mem.indexOf(u8, migrated, "\"recent\"") != null);
-    }
 }

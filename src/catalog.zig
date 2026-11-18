@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 const std = @import("std");
-const asset_manifest = @import("asset_manifest.zig");
-
-pub const Cover = @import("cover_kind.zig").Kind;
+const artwork_store = @import("artwork_store.zig");
 
 pub const Game = struct {
     title: []const u8,
@@ -12,8 +10,7 @@ pub const Game = struct {
     summary: []const u8,
     core_path: []const u8,
     rom_path: []const u8,
-    cover: Cover,
-    assets: asset_manifest.Assets = .{},
+    assets: artwork_store.Assets = .{},
 };
 
 pub const games = [_]Game{
@@ -23,7 +20,6 @@ pub const games = [_]Game{
         .summary = "ARCADE PLATFORMER",
         .core_path = "/usr/lib/libretro/fceumm_libretro.so",
         .rom_path = "/data/Roms/FC/falling.nes",
-        .cover = .falling,
     },
     .{
         .title = "MINEKART MADNESS",
@@ -31,7 +27,6 @@ pub const games = [_]Game{
         .summary = "HIGH SPEED RAILS",
         .core_path = "/usr/lib/libretro/fceumm_libretro.so",
         .rom_path = "/data/Roms/FC/minekart-madness.nes",
-        .cover = .minekart,
     },
     .{
         .title = "ADJUSTRIS",
@@ -39,7 +34,6 @@ pub const games = [_]Game{
         .summary = "TACTICAL BLOCK PUZZLE",
         .core_path = "/usr/lib/libretro/mgba_libretro.so",
         .rom_path = "/data/Roms/GB/adjustris.gb",
-        .cover = .adjustris,
     },
     .{
         .title = "RKANOID",
@@ -47,7 +41,6 @@ pub const games = [_]Game{
         .summary = "TEN LEVEL BREAKOUT",
         .core_path = "/usr/lib/libretro/mgba_libretro.so",
         .rom_path = "/data/Roms/GBA/rkanoid.gba",
-        .cover = .rkanoid,
     },
     .{
         .title = "WILLOWS DREAM",
@@ -55,7 +48,6 @@ pub const games = [_]Game{
         .summary = "DREAMLIKE ADVENTURE",
         .core_path = "/usr/lib/libretro/genesis_plus_gx_libretro.so",
         .rom_path = "/data/Roms/MD/willows-dream.md",
-        .cover = .willow,
     },
 };
 
@@ -113,9 +105,12 @@ fn lessThan(_: void, a: Game, b: Game) bool {
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
 
-fn applyAssets(found: []Game, exact: *const std.StringHashMap(asset_manifest.Assets)) void {
+fn applyAssets(found: []Game, exact: *const std.StringHashMap(artwork_store.Assets)) void {
     for (found) |*game| {
-        if (exact.get(game.rom_path)) |mapping| game.assets = mapping;
+        if (exact.get(game.rom_path)) |mapping| {
+            game.assets = mapping;
+            if (mapping.title) |title| game.title = title;
+        }
     }
 }
 
@@ -145,7 +140,7 @@ fn displayTitle(allocator: std.mem.Allocator, file_name: []const u8) ![]const u8
 
 /// Strings and the returned slice belong to allocator (normally a session arena).
 /// Enumerate actual root entries once: FAT's case folding must not duplicate ROMs.
-pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]const Game {
+fn discoverWithArtwork(io: std.Io, allocator: std.mem.Allocator, root: []const u8, include_artwork: bool) ![]const Game {
     var found: std.ArrayList(Game) = .empty;
     var data = try std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true });
     defer data.close(io);
@@ -179,13 +174,11 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
                     .summary = system.label,
                     .core_path = try std.fmt.allocPrint(allocator, "/usr/lib/libretro/{s}_libretro.so", .{system.core}),
                     .rom_path = path,
-                    .cover = .library,
                 };
                 for (games) |demo| {
                     if (std.mem.eql(u8, std.Io.Dir.path.basename(demo.rom_path), file.basename)) {
                         game.title = demo.title;
                         game.summary = demo.summary;
-                        game.cover = demo.cover;
                         break;
                     }
                 }
@@ -220,14 +213,27 @@ pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]c
         count += 1;
     }
     found.shrinkRetainingCapacity(count);
-    var assets = asset_manifest.load(io, allocator, root) catch |err| blk: {
-        std.log.warn("Ignoring invalid artwork manifest: {s}", .{@errorName(err)});
-        break :blk std.StringHashMap(asset_manifest.Assets).init(allocator);
-    };
-    defer assets.deinit();
-    applyAssets(found.items, &assets);
+    if (include_artwork) {
+        var assets = artwork_store.load(io, allocator, root) catch |err| blk: {
+            std.log.warn("Ignoring invalid artwork manifest: {s}", .{@errorName(err)});
+            break :blk std.StringHashMap(artwork_store.Assets).init(allocator);
+        };
+        defer assets.deinit();
+        applyAssets(found.items, &assets);
+    }
     std.mem.sort(Game, found.items, {}, lessThan);
     return found.toOwnedSlice(allocator);
+}
+
+pub fn discover(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]const Game {
+    return discoverWithArtwork(io, allocator, root, true);
+}
+
+/// Background metadata work must not decode every display texture merely to
+/// enumerate ROMs. The returned identities and launch paths are otherwise the
+/// same as `discover`.
+pub fn discoverBare(io: std.Io, allocator: std.mem.Allocator, root: []const u8) ![]const Game {
+    return discoverWithArtwork(io, allocator, root, false);
 }
 
 test "system aliases include existing and MinUI folder names" {
@@ -282,12 +288,12 @@ test "discovery applies installed artwork metadata without changing launch paths
     const allocator = arena.allocator();
     const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     try tmp.dir.createDirPath(io, "Roms/GB");
-    try tmp.dir.createDirPath(io, "Assets/Brick");
+    try tmp.dir.createDirPath(io, "Library");
     try tmp.dir.writeFile(io, .{ .sub_path = "Roms/GB/Tetris.gb", .data = "" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "Assets/Brick/library.json", .data =
-        \\{"schema_version":1,"asset_index_version":"test","games":[
-        \\{"rom":"Roms/GB/Tetris.gb","platform":"gb","match":"name","title":"Tetris","model":"gb","surfaces":{"artwork.front":"objects/aa/label.png"}}
-        \\],"attribution":{}}
+    try tmp.dir.writeFile(io, .{ .sub_path = "Library/library-v2.json", .data =
+        \\{"schema_version":2,"revision":1,"games":[
+        \\{"rom":"Roms/GB/Tetris.gb","title":"Tetris","region":"World"}
+        \\]}
     });
     const library = try discover(io, allocator, root);
     try std.testing.expectEqual(@as(usize, 1), library.len);

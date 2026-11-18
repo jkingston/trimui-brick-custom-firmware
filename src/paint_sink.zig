@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const ui = @import("ui_scene.zig");
-const assets = @import("asset_manifest.zig");
+const assets = @import("artwork_store.zig");
 // Immediate consumption: borrowed text/artwork data must not outlive the call.
 pub const Sink = struct {
     context: *anyopaque,

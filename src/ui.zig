@@ -29,10 +29,13 @@ pub const Activity = scene.Activity;
 pub const QrCode = scene.QrCode;
 pub const Keyboard = scene.Keyboard;
 pub const KeyboardKey = scene.KeyboardKey;
-pub const Cover = scene.Cover;
 /// One library with progressively denser ways to move through it. Names encode
 /// the player's intent rather than the widget used to render the collection.
 pub const LibraryView = enum { recent, all };
+/// Deliberately small set of complete library compositions used by the real
+/// renderer and simulator. New proposals must be expressed with the same game
+/// object and interaction components instead of becoming one-off mockups.
+pub const LibraryComposition = enum { editorial, shelf, focus };
 pub const Artwork = scene.Artwork;
 pub const OverlayRow = scene.OverlayRow;
 pub const Element = scene.Element;
@@ -248,6 +251,10 @@ pub fn library(theme: Theme, games: []const catalog.Game, selected: usize, view:
 }
 
 pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected: usize, preview_selected: usize, view: LibraryView) Tree {
+    return libraryCollectionWithComposition(theme, collection, selected, preview_selected, view, .editorial);
+}
+
+pub fn libraryCollectionWithComposition(theme: Theme, collection: catalog.Collection, selected: usize, preview_selected: usize, view: LibraryView, composition: LibraryComposition) Tree {
     var result = Tree{ .theme = theme, .background = theme.background };
     editorialHeader(&result, switch (view) {
         .recent => "Recent",
@@ -264,7 +271,31 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
         return result;
     }
     const game = collection.at(@min(preview_selected, count - 1));
-    switch (view) {
+    if (view == .recent and composition != .editorial) {
+        const visible = @min(count, 3);
+        const first = @min(selected -| 1, count - visible);
+        switch (composition) {
+            .editorial => unreachable,
+            .shelf => {
+                for (first..first + visible) |index| {
+                    const entry = collection.at(index);
+                    const active = index == selected;
+                    const x: u16 = 48 + @as(u16, @intCast(index - first)) * 318;
+                    artwork(&result, entry, .{ .x = x, .y = if (active) 124 else 154, .width = 286, .height = if (active) 420 else 360 }, active, interaction.Id.scoped(.library, index), if (active) 0 else 28);
+                    textLabel(&result, .{ .x = x, .y = 562, .width = 286, .height = 38 }, entry.title, if (active) theme.text else theme.muted, uiFont(22, 30, if (active) .semibold else .regular, .center));
+                }
+            },
+            .focus => {
+                const active = collection.at(selected);
+                if (selected > 0)
+                    artwork(&result, collection.at(selected - 1), .{ .x = 0, .y = 176, .width = 172, .height = 328 }, false, null, 92);
+                artwork(&result, active, .{ .x = 260, .y = 106, .width = 504, .height = 474 }, true, interaction.Id.scoped(.library, selected), 0);
+                if (selected + 1 < count)
+                    artwork(&result, collection.at(selected + 1), .{ .x = 852, .y = 176, .width = 172, .height = 328 }, false, null, 92);
+                textLabel(&result, .{ .x = 226, .y = 594, .width = 572, .height = 38 }, active.title, theme.text, uiFont(24, 32, .semibold, .center));
+            },
+        }
+    } else switch (view) {
         .recent => {
             const visible = @min(count, 5);
             const first = @min(selected -| 2, count - visible);
@@ -300,7 +331,92 @@ pub fn libraryCollection(theme: Theme, collection: catalog.Collection, selected:
             components.continuation(&result, 116, 612, first != 0, first + visible < count);
         },
     }
-    footer(&result, &.{ .{ .control = .menu, .label = "Device" }, .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = if (view == .recent) "All games" else "Recent" }, .{ .control = .confirm, .label = "Play" } });
+    footer(&result, &.{ .{ .control = .filter, .label = "System" }, .{ .control = .view, .label = "Details" }, .{ .control = .confirm, .label = "Play" } });
+    return result;
+}
+
+pub fn gameInformation(theme: Theme, game: catalog.Game, selected: usize) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    editorialHeader(&result, "GAME", game.system);
+    artwork(&result, game, .{ .x = 48, .y = 128, .width = 370, .height = 436 }, false, null, 0);
+    result.add(.{ .text_block = .{
+        .bounds = .{ .x = 486, .y = 128, .width = 490, .height = 210 },
+        .title = game.title,
+        .detail = game.summary,
+        .color = theme.text,
+        .detail_color = theme.muted,
+        .title_font = displayFont(48, 56, .semibold, .start),
+        .detail_font = uiFont(23, 32, .regular, .start),
+        .lines = 3,
+        .detail_lines = 2,
+        .gap = 16,
+    } });
+    const labels = [_][]const u8{ "Play", "Artwork and identity" };
+    for (labels, 0..) |label, index| {
+        const y: u16 = 390 + @as(u16, @intCast(index)) * 82;
+        components.editorialChoice(&result, .game_details, index, index == selected, .{
+            .label = label,
+            .bounds = .{ .x = 486, .y = y, .width = 442, .height = 62 },
+            .focus_bounds = .{ .x = 470, .y = y -| 4, .width = 474, .height = 70 },
+            .scale = .row,
+        });
+    }
+    footer(&result, &.{ .{ .control = .back, .label = "Library" }, .{ .control = .confirm, .label = "Select" } });
+    return result;
+}
+
+pub fn artworkIdentity(theme: Theme, game: catalog.Game, selected: usize, internet: bool) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    editorialHeader(&result, "ARTWORK AND IDENTITY", game.system);
+    artwork(&result, game, .{ .x = 48, .y = 132, .width = 326, .height = 410 }, false, null, 0);
+    textLabel(&result, .{ .x = 48, .y = 560, .width = 326, .height = 34 }, if (game.assets.cover != null) "Downloaded artwork" else "Artwork not found", if (game.assets.cover != null) theme.text else theme.muted, uiFont(20, 28, .regular, .center));
+    const labels = [_][]const u8{ "Find best match", "Edit title", "Use file beside game", "Remove artwork", "Reset identity" };
+    const details = [_][]const u8{
+        if (internet) "Try the exact filename, then title" else "Available when connected",
+        "Used for display and online matching",
+        "Same filename with .png",
+        "Keep the game and title",
+        "Return to the scanned filename",
+    };
+    for (labels, details, 0..) |label, detail, index| {
+        const y: u16 = 118 + @as(u16, @intCast(index)) * 92;
+        components.editorialChoice(&result, .artwork_identity, index, index == selected, .{
+            .label = label,
+            .bounds = .{ .x = 456, .y = y, .width = 500, .height = 46 },
+            .focus_bounds = .{ .x = 440, .y = y -| 4, .width = 536, .height = 76 },
+            .scale = .control,
+        });
+        textLabel(&result, .{ .x = 456, .y = y + 45, .width = 500, .height = 30 }, detail, if (index == selected) theme.accent else theme.muted, uiFont(19, 26, .regular, .start));
+    }
+    footer(&result, &.{ .{ .control = .back, .label = "Game" }, .{ .control = .confirm, .label = "Select" } });
+    return result;
+}
+
+pub fn artworkTitle(theme: Theme, value: []const u8, keyboard_input: components.KeyboardInput) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    editorialHeader(&result, "EDIT TITLE", "ARTWORK AND IDENTITY");
+    textLabel(&result, .{ .x = 48, .y = 132, .width = 928, .height = 70 }, if (value.len == 0) "Enter a title" else value, if (value.len == 0) theme.muted else theme.text, displayFont(42, 54, .semibold, .start));
+    components.keyboard(&result, .{ .x = 48, .y = 260, .width = 928, .height = 328 }, keyboard_input);
+    footer(&result, &.{ .{ .control = .back, .label = "Cancel" }, .{ .control = .confirm, .label = if (keyboard_input.selected == 39) "Save" else "Type" } });
+    return result;
+}
+
+pub fn artworkLibrary(theme: Theme, selected: usize, missing: usize, internet: bool) Tree {
+    var result = Tree{ .theme = theme, .background = theme.background };
+    editorialHeader(&result, "LIBRARY ARTWORK", if (internet) "ONLINE" else "OFFLINE");
+    const labels = [_][]const u8{ "Get missing artwork", "Review unmatched games", "Remove downloads" };
+    const details = [_][]const u8{ if (missing == 0) "Library is complete" else "Fetch covers in the background", "Retry or add a local image", "Keep ROMs and save data" };
+    for (labels, details, 0..) |label, detail, index| {
+        const y: u16 = 154 + @as(u16, @intCast(index)) * 128;
+        components.editorialChoice(&result, .artwork_settings, index, index == selected, .{
+            .label = label,
+            .bounds = .{ .x = 48, .y = y, .width = 620, .height = 56 },
+            .focus_bounds = .{ .x = 48, .y = y -| 6, .width = 880, .height = 96 },
+            .scale = .row,
+        });
+        textLabel(&result, .{ .x = 48, .y = y + 56, .width = 760, .height = 34 }, detail, if (index == selected) theme.accent else theme.muted, uiFont(20, 28, .regular, .start));
+    }
+    footer(&result, &.{ .{ .control = .back, .label = "Device" }, .{ .control = .confirm, .label = "Select" } });
     return result;
 }
 

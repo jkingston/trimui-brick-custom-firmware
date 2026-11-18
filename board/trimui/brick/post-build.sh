@@ -5,11 +5,6 @@ set -eu
 # before the first GPU frame. Do not also start the historical S40 service.
 rm -f "$TARGET_DIR/etc/init.d/S40gpu"
 
-# The former physical-media presentation installed generated assets here.
-# Remove them from reused Buildroot outputs as well as fresh configurations so
-# dropping the package cannot leave an obsolete product flow in an image.
-rm -rf "$TARGET_DIR/usr/share/brick/cartridges"
-
 # Buildroot's mdev coldplug pass calls modprobe directly for every modalias.
 # Blacklisting aliases prevents that pass while plain `modprobe pvrsrvkm`
 # remains available to the shell's explicit startup sequence.

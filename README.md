@@ -58,7 +58,7 @@ opening a window.
 Home opens Games and Settings, or resumes the last game when an automatic state
 exists. A confirms; B goes back. In Games, the upper-left button opens View and
 the upper-right opens System (V/F in the simulator). Menu returns Home; from Home
-it opens Power. List, grid and cartridge flow preserve the selected game.
+it opens Power. Library density and filters preserve the selected game.
 
 Settings open dedicated adjustment pages. Light/dark appearance, system filter,
 view, selection and last played game are saved on the SD card. Typography,
@@ -127,26 +127,6 @@ The image builds FCEUmm, mGBA, Genesis Plus GX, Snes9x, PCSX ReARMed,
 FBNeo (Neo Geo subset) and Beetle NeoPop. PS1 can use its HLE BIOS fallback,
 but a retail BIOS is recommended for compatibility. Neo Geo requires a matching
 BIOS set. Core availability does not guarantee compatibility with every game.
-
-## Cartridge artwork
-
-The firmware image includes a neutral, pre-rendered 3D cartridge or disc for
-every supported platform. The shell uses these built-in assets immediately for
-any discovered ROM, so the cartridge shelf does not require a separate setup
-step. Game-specific artwork can override the built-in sprite. Clone
-the [asset repository](https://github.com/jkingston/trimui-brick-cartridge-assets),
-then synchronize through the Brick's USB network interface:
-
-```sh
-uv run python tools/sync_ssh_assets.py --dry-run
-uv run python tools/sync_ssh_assets.py
-```
-
-The first command reports unmatched games without writing. The second downloads
-available curated labels, generates clearly neutral labels for unmatched games,
-renders the required models, then atomically installs them under `/data/Assets/Brick`.
-ROM contents never leave the device; cartridge files are hashed on the Brick.
-The workflow does not require wireless networking.
 
 The simulator uses fixtures by default. To browse actual content, run
 `output/host/bin/brick-ui-simulator --data-root /path/to/content` after

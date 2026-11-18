@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
-const assets = @import("asset_manifest.zig");
+const assets = @import("artwork_store.zig");
 const design = @import("design.zig");
 const interaction = @import("interaction.zig");
 const font = design.typeface;
@@ -166,8 +166,6 @@ pub const Keyboard = struct {
     }
 };
 pub const KeyboardKey = struct { keyboard: Keyboard, index: u8, bounds: Rect };
-pub const CoverKind = @import("cover_kind.zig").Kind;
-pub const Cover = struct { bounds: Rect, kind: CoverKind };
 pub const Artwork = struct {
     id: interaction.Id = .none,
     state: interaction.State = .idle,
@@ -239,7 +237,6 @@ pub const Element = union(enum) {
     qr_code: QrCode,
     keyboard: Keyboard,
     keyboard_key: KeyboardKey,
-    cover: Cover,
     artwork: Artwork,
     overlay_row: OverlayRow,
 };

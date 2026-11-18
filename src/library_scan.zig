@@ -61,7 +61,7 @@ fn hashes(io: std.Io, allocator: std.mem.Allocator, platform: []const u8, path: 
 }
 
 pub fn inventory(io: std.Io, allocator: std.mem.Allocator, root: []const u8) !Inventory {
-    const games = try catalog.discover(io, allocator, root);
+    const games = try catalog.discoverBare(io, allocator, root);
     const entries = try allocator.alloc(Entry, games.len);
     for (games, entries) |game, *entry| {
         entry.* = .{

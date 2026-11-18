@@ -1,0 +1,113 @@
+#!/bin/sh
+set -eu
+
+root=${BRICK_DATA_ROOT:-/data}
+library="$root/Library"
+rendered="$library/artwork/rendered"
+objects="$library/artwork/objects"
+requests="$library/requests"
+overrides="$library/overrides"
+plan="$library/artwork-plan.tsv"
+
+mkdir -p "$rendered" "$objects" "$requests" "$overrides"
+
+write_manifest() {
+	/usr/bin/brick-shell --artwork-manifest "$root" > "$library/library-v2.json.new"
+	mv "$library/library-v2.json.new" "$library/library-v2.json"
+}
+
+apply_requests() {
+	for request in "$requests"/*; do
+		[ -f "$request" ] || continue
+		name=${request##*/}
+		case "$name" in
+		refresh_missing)
+			rm -f "$library/downloads-disabled"
+			find "$rendered" -type f -name '*.missing' -delete
+			;;
+		remove_all)
+			find "$rendered" -type f \( -name '*.brtx' -o -name '*.source' \) -delete
+			: > "$library/downloads-disabled"
+			;;
+		*.refresh_game)
+			id=${name%%.*}
+			rm -f "$library/downloads-disabled"
+			rm -f "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing"
+			;;
+		*.set_title)
+			id=${name%%.*}
+			title=$(sed -n '2p' "$request")
+			if [ -z "$title" ]; then rm -f "$request"; continue; fi
+			printf '%s\n' "$title" > "$overrides/$id.title.new"
+			mv "$overrides/$id.title.new" "$overrides/$id.title"
+			rm -f "$library/downloads-disabled" "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing"
+			;;
+		*.reset_game)
+			id=${name%%.*}
+			rm -f "$library/downloads-disabled" "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing" "$overrides/$id.title"
+			;;
+		*.remove_game)
+			id=${name%%.*}
+			rm -f "$rendered/$id.brtx" "$rendered/$id.source"
+			: > "$rendered/$id.blocked"
+			;;
+		*.import_local)
+			id=${name%%.*}
+			rm -f "$library/downloads-disabled"
+			rm -f "$rendered/$id.brtx" "$rendered/$id.source" "$rendered/$id.blocked" "$rendered/$id.missing"
+			: > "$rendered/$id.local"
+			;;
+		esac
+		rm -f "$request"
+	done
+}
+
+fetch_missing() {
+	[ ! -e "$library/downloads-disabled" ] || return 0
+	online=${1:-0}
+	/usr/bin/brick-shell --artwork-plan "$root" > "$plan.new"
+	mv "$plan.new" "$plan"
+	tab=$(printf '\t')
+	while IFS="$tab" read -r id rom sidecar primary fallback; do
+		[ -n "$id" ] || continue
+		[ ! -e "$rendered/$id.blocked" ] || continue
+		[ ! -s "$rendered/$id.brtx" ] || continue
+		[ ! -e "$rendered/$id.missing" ] || [ -f "$sidecar" ] || continue
+		temporary="$objects/$id.png.part"
+		if [ -f "$sidecar" ]; then
+			cp "$sidecar" "$temporary"
+			source=local
+		elif [ -e "$rendered/$id.local" ]; then
+			continue
+		else
+			[ "$online" -eq 1 ] || continue
+			curl -fL --connect-timeout 8 --max-time 30 --retry 1 -o "$temporary" "$primary" 2>/dev/null ||
+				curl -fL --connect-timeout 8 --max-time 30 --retry 1 -o "$temporary" "$fallback" 2>/dev/null || {
+					rm -f "$temporary"
+					: > "$rendered/$id.missing"
+					continue
+				}
+			source=libretro
+		fi
+		/usr/libexec/brick-artwork-convert "$temporary" "$rendered/$id.brtx.new" || {
+			rm -f "$temporary" "$rendered/$id.brtx.new"
+			continue
+		}
+		mv "$rendered/$id.brtx.new" "$rendered/$id.brtx"
+		printf '%s\n' "$source" > "$rendered/$id.source"
+		rm -f "$temporary" "$rendered/$id.local"
+		rm -f "$rendered/$id.missing"
+		write_manifest
+	done < "$plan"
+}
+
+while :; do
+	apply_requests
+	# A failed request is the connectivity gate. There is no foreground error:
+	# the next pass resumes when Wi-Fi has internet again.
+	online=0
+	if curl -fsI --connect-timeout 5 --max-time 10 https://thumbnails.libretro.com/ >/dev/null 2>&1; then online=1; fi
+	fetch_missing "$online"
+	write_manifest
+	sleep 30
+done

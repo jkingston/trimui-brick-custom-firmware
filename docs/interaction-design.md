@@ -90,8 +90,8 @@ scene primitives; new controls must enter through `ui_components.zig`.
 
 ## Visual language
 
-- Immersive and minimal are the same constraint: the game, physical-media
-  object, or current device state owns the scene while controls recede. Empty
+- Immersive and minimal are the same constraint: the game identity, artwork, or
+  current device state owns the scene while controls recede. Empty
   chrome is not minimalism, and extra panels are not immersion. Prefer one
   subject, one spatial relationship, and one immediate action.
 - Hierarchy comes from scale, spacing, weight, and composition—not decorative
@@ -191,13 +191,11 @@ identity when it is not, title, system, stable interaction ID, focus state, and
 an independent `active` state. Density changes geometry and information amount;
 it must not swap to a different selection metaphor.
 
-Missing artwork is not an empty grey card. Use system name, title typography,
-or an authentic physical-media form so a collection remains authored when
-metadata is incomplete. Bundled titles use authored covers. Browse preserves
-cover proportions and depth; it does not stretch art into a generic card.
-`GameObject` treats a loose label or disc face as material for its physical
-object, not as a complete cover: editorial cover/card art comes first, the
-authentic cartridge or disc comes next, and the loose texture is a last resort.
+Missing artwork is not an empty grey card. Use system name and title typography
+so a collection remains authored when metadata is incomplete. Downloaded and
+local covers preserve their proportions; they are never stretched into generic
+cards. Do not fabricate cover art, screenshots, packaging, media, or other
+physical objects to conceal missing metadata.
 
 ### Values and visual evidence
 

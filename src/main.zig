@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 const std = @import("std");
+const artwork_sync = @import("artwork_sync.zig");
 const bluetooth = @import("bluetooth.zig");
 const catalog = @import("catalog.zig");
 const linux_backend = @import("linux_backend.zig");
@@ -60,7 +61,7 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
             state.game_index = state.selected;
         }
     }
-    if (std.mem.eql(u8, screen, "games") or std.mem.eql(u8, screen, "games-empty") or std.mem.eql(u8, screen, "games-all")) {
+    if (std.mem.eql(u8, screen, "games") or std.mem.eql(u8, screen, "games-empty") or std.mem.eql(u8, screen, "games-all") or std.mem.startsWith(u8, screen, "games-layout-")) {
         state.page = .games;
         if (std.mem.eql(u8, screen, "games-empty")) state.games = &.{};
         if (std.mem.eql(u8, screen, "games-all")) state.library_view = .all;
@@ -68,6 +69,16 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         state.page = .game;
         if (games == null) state.game_index = 1;
         if (std.mem.eql(u8, screen, "game-failed")) state.launch_failed = .missing_core;
+    } else if (std.mem.eql(u8, screen, "game-details")) {
+        state.page = .game_details;
+    } else if (std.mem.eql(u8, screen, "artwork-identity")) {
+        state.page = .artwork_identity;
+    } else if (std.mem.eql(u8, screen, "artwork-title")) {
+        state.page = .artwork_title;
+        @memcpy(state.artwork_title.bytes[0..8], "Tetris 2");
+        state.artwork_title.len = 8;
+    } else if (std.mem.eql(u8, screen, "artwork-library")) {
+        state.page = .artwork_library;
     } else if (std.mem.eql(u8, screen, "settings")) {
         state.page = .settings;
     }
@@ -169,7 +180,7 @@ fn snapshotTo(io: std.Io, allocator: std.mem.Allocator, path: []const u8, screen
         bluetooth_state.snapshot.prompt_value_len = 6;
         bluetooth_state.page = .code_display;
     }
-    var tree = if (std.mem.startsWith(u8, screen, "bluetooth")) ui.bluetooth(state.settings.appearance.colors(), &bluetooth_state) else if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
+    var tree = if (std.mem.eql(u8, screen, "games-layout-editorial")) ui.libraryCollectionWithComposition(state.settings.appearance.colors(), state.collection(), state.selected, state.library_preview, .recent, .editorial) else if (std.mem.eql(u8, screen, "games-layout-shelf")) ui.libraryCollectionWithComposition(state.settings.appearance.colors(), state.collection(), state.selected, state.library_preview, .recent, .shelf) else if (std.mem.eql(u8, screen, "games-layout-focus")) ui.libraryCollectionWithComposition(state.settings.appearance.colors(), state.collection(), state.selected, state.library_preview, .recent, .focus) else if (std.mem.startsWith(u8, screen, "bluetooth")) ui.bluetooth(state.settings.appearance.colors(), &bluetooth_state) else if (std.mem.eql(u8, screen, "wifi") or std.mem.startsWith(u8, screen, "wifi-picker") or std.mem.startsWith(u8, screen, "wifi-")) blk: {
         const wifi = @import("wifi.zig");
         var wifi_state = wifi.Model{};
         var wifi_snapshot = try wifi.parse(
@@ -300,6 +311,18 @@ pub fn main(init: std.process.Init) !void {
         try snapshot(init.io, arena.allocator(), path, screen, library, selected, try parseAppearance(arguments.next()));
         return;
     }
+    if (std.mem.eql(u8, command, "--artwork-plan")) {
+        var arena = std.heap.ArenaAllocator.init(init.gpa);
+        defer arena.deinit();
+        try artwork_sync.writePlan(init.io, arena.allocator(), arguments.next() orelse "/data");
+        return;
+    }
+    if (std.mem.eql(u8, command, "--artwork-manifest")) {
+        var arena = std.heap.ArenaAllocator.init(init.gpa);
+        defer arena.deinit();
+        try artwork_sync.writeManifest(init.io, arena.allocator(), arguments.next() orelse "/data");
+        return;
+    }
     if (std.mem.eql(u8, command, "--idle-proof")) {
         var plan = scheduler.Scheduler{};
         plan.rendered(0);
@@ -356,7 +379,8 @@ test {
     _ = @import("retroarch.zig");
     _ = scheduler;
     _ = @import("settings.zig");
-    _ = @import("asset_manifest.zig");
+    _ = @import("artwork_store.zig");
+    _ = artwork_sync;
     _ = @import("input_repeat.zig");
     _ = @import("framebuffer_pages.zig");
     _ = @import("game_object.zig");

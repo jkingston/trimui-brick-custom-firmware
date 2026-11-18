@@ -183,6 +183,7 @@ pub fn main(init: std.process.Init) !void {
     var physical_size = true;
     var overlay_visible = false;
     var walkthrough = false;
+    var library_composition: ui.LibraryComposition = .editorial;
     var arguments = std.process.Args.Iterator.init(init.minimal.args);
     _ = arguments.next();
     while (arguments.next()) |argument| {
@@ -199,6 +200,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, argument, "--walkthrough")) {
             overlay_visible = true;
             walkthrough = true;
+        } else if (std.mem.eql(u8, argument, "--library-layout")) {
+            library_composition = std.meta.stringToEnum(ui.LibraryComposition, arguments.next() orelse return error.MissingLibraryLayout) orelse return error.InvalidLibraryLayout;
         } else return error.UnknownArgument;
     }
 
@@ -232,9 +235,16 @@ pub fn main(init: std.process.Init) !void {
     var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
     var state = model.Model{};
+    state.library_composition = library_composition;
     if (data_root) |root| {
         const absolute = try std.Io.Dir.cwd().realPathFileAlloc(init.io, root, arena.allocator());
         state.games = try catalog.discover(init.io, arena.allocator(), absolute);
+    }
+    if (library_composition != .editorial) {
+        state.page = .games;
+        state.library_view = .recent;
+        for (0..@min(state.games.len, state.recent.len)) |index| state.recent[index] = index;
+        state.recent_len = @min(state.games.len, state.recent.len);
     }
     var game_overlay = overlay.Model{};
     game_overlay.appearance = state.settings.appearance;

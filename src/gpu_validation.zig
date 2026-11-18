@@ -19,7 +19,7 @@ pub fn artwork(io: std.Io, display: *gpu.Display, expected: []u32) !void {
             else => 255,
         },
     });
-    const texture = @import("asset_manifest.zig").Texture{ .width = 64, .height = 64, .pixels = &pixels, .content_x = 2, .content_y = 3, .content_width = 60, .content_height = 58 };
+    const texture = @import("artwork_store.zig").Texture{ .width = 64, .height = 64, .pixels = &pixels, .content_x = 2, .content_y = 3, .content_width = 60, .content_height = 58 };
     for ([_]i16{ -2400, 0, 2400 }) |tilt| for ([_]u8{ 0, 97, 255 }) |dim| for ([_]u16{ 0, 17 }) |clip| {
         var tree = ui.Tree{ .theme = @import("theme.zig").light, .background = @import("theme.zig").light.background };
         tree.add(.{ .artwork = .{ .bounds = .{ .x = 48, .y = 130, .width = 331, .height = 287 }, .texture = texture, .dim = dim, .tilt = tilt, .clip_left = clip } });

@@ -20,7 +20,7 @@ const Preparation = struct {
     fn clip(_: *anyopaque, _: []const ui.Rect) void {}
     fn fill(_: *anyopaque, _: ui.Rect, _: ui.Color, _: u8) void {}
     fn mask(_: *anyopaque, _: u64, _: u16, _: u16, _: []const u8, _: u16, _: u16, _: u32) void {}
-    fn texture(_: *anyopaque, _: @import("asset_manifest.zig").Texture, _: ui.Rect, _: u8, _: i16, _: u16) void {}
+    fn texture(_: *anyopaque, _: @import("artwork_store.zig").Texture, _: ui.Rect, _: u8, _: i16, _: u16) void {}
 };
 
 test "text preparation warms the next paint without changing its tree" {
@@ -141,7 +141,6 @@ pub const Surface = struct {
             .qr_code => |qr| self.drawQr(qr),
             .keyboard => |keyboard| self.drawKeyboard(keyboard, theme),
             .keyboard_key => |key| self.drawKeyboardKey(key.keyboard, theme, key.index, true, false, 0, 0),
-            .cover => |cover| self.drawCover(cover),
             .artwork => |artwork| self.drawArtwork(artwork),
             .overlay_row => |item| self.drawOverlayRow(item),
         }
@@ -152,9 +151,12 @@ pub const Surface = struct {
             .focus_frame => |frame| switch (frame.presentation) {
                 .plate => self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
                 .quiet => switch (frame.state) {
-                    .idle, .disabled => {},
+                    .idle, .disabled, .focused, .busy, .succeeded, .failed => {},
                     .pressed, .activating => self.interactionPlate(frame.bounds, frame.displayedBounds(), frame.state, frame.style.base, frame.style.background, frame.style.border, frame.style.shadow),
-                    .focused, .busy, .succeeded, .failed, .boundary => self.interactionField(frame.displayedBounds(), frame.state, frame.style.background, frame.style.border),
+                    // Boundary feedback is the only quiet-focus state that
+                    // paints outside the content itself. Ordinary focus is
+                    // expressed by the component's typography or artwork.
+                    .boundary => self.interactionField(frame.displayedBounds(), frame.state, frame.style.background, frame.style.border),
                 },
             },
             .menu_row => |row| self.interactionPlate(row.bounds, row.displayedBounds(), row.state, row.style.base, row.style.background, row.style.border, row.style.shadow),
@@ -370,11 +372,11 @@ pub const Surface = struct {
         self.fill(.{ .x = bounds.x + bounds.width - edge, .y = bounds.y, .width = edge, .height = bounds.height }, color);
     }
 
-    fn drawTexture(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect) void {
+    fn drawTexture(self: Surface, texture: @import("artwork_store.zig").Texture, bounds: ui.Rect) void {
         self.drawTextureDimmed(texture, bounds, 0, 0, 0);
     }
 
-    fn drawTextureDimmed(self: Surface, texture: @import("asset_manifest.zig").Texture, bounds: ui.Rect, dim: u8, tilt: i16, clip_left: u16) void {
+    fn drawTextureDimmed(self: Surface, texture: @import("artwork_store.zig").Texture, bounds: ui.Rect, dim: u8, tilt: i16, clip_left: u16) void {
         if (bounds.width == 0 or bounds.height == 0) return;
         var fitted = bounds;
         const fitted_width = @as(u32, bounds.height) * texture.content_width / texture.content_height;
@@ -422,93 +424,6 @@ pub const Surface = struct {
     fn drawArtwork(self: Surface, artwork: ui.Artwork) void {
         if (artwork.texture) |texture|
             self.drawTextureDimmed(texture, artwork.displayBounds(), artwork.dim, artwork.tilt, artwork.clip_left);
-    }
-
-    fn drawCover(self: Surface, cover: ui.Cover) void {
-        const b = cover.bounds;
-        self.fill(.{ .x = b.x + 10, .y = b.y + 12, .width = b.width, .height = b.height }, artwork_colors.chrome_dark);
-        self.fill(b, artwork_colors.white);
-        const inset: u16 = @max(@as(u16, 6), b.width / 26);
-        const inner = ui.Rect{
-            .x = b.x + inset,
-            .y = b.y + inset,
-            .width = b.width - inset * 2,
-            .height = b.height - inset * 2,
-        };
-        switch (cover.kind) {
-            .library => {
-                self.fill(inner, artwork_colors.navy);
-                const gap: u16 = @max(@as(u16, 5), inner.width / 30);
-                const tile: u16 = (inner.width - gap * 3) / 2;
-                self.fill(.{ .x = inner.x + gap, .y = inner.y + gap, .width = tile, .height = tile }, artwork_colors.sky);
-                self.fill(.{ .x = inner.x + gap * 2 + tile, .y = inner.y + gap, .width = tile, .height = tile }, artwork_colors.coral);
-                self.fill(.{ .x = inner.x + gap, .y = inner.y + gap * 2 + tile, .width = tile, .height = tile }, artwork_colors.gold);
-                self.fill(.{ .x = inner.x + gap * 2 + tile, .y = inner.y + gap * 2 + tile, .width = tile, .height = tile }, artwork_colors.green);
-                const word_font = artworkFont(b.width / 90);
-                self.drawText(inner.x + inner.width / 5, inner.y + inner.height / 2 - 12, "PLAY", artwork_colors.white, word_font);
-            },
-            .falling => {
-                self.fill(inner, artwork_colors.sky);
-                self.fill(.{ .x = inner.x, .y = inner.y + inner.height * 3 / 4, .width = inner.width, .height = inner.height / 4 }, artwork_colors.navy);
-                const sun = @max(@as(u16, 18), inner.width / 8);
-                self.fill(.{ .x = inner.x + inner.width * 3 / 4, .y = inner.y + inner.height / 7, .width = sun, .height = sun }, artwork_colors.gold);
-                const hero = @max(@as(u16, 36), inner.width / 4);
-                const hx = inner.x + inner.width / 3;
-                const hy = inner.y + inner.height / 2;
-                self.fill(.{ .x = hx, .y = hy, .width = hero, .height = hero }, artwork_colors.coral);
-                const eye = @max(@as(u16, 3), hero / 10);
-                self.fill(.{ .x = hx + hero / 4, .y = hy + hero / 4, .width = eye, .height = eye }, artwork_colors.white);
-                self.fill(.{ .x = hx + hero * 2 / 3, .y = hy + hero / 4, .width = eye, .height = eye }, artwork_colors.white);
-                const word_font = artworkFont(b.width / 90);
-                self.drawText(inner.x + inner.width / 7, inner.y + inner.height / 8, "FALLING", artwork_colors.navy, word_font);
-            },
-            .minekart => {
-                self.fill(inner, artwork_colors.navy);
-                const rail = @max(@as(u16, 4), inner.width / 50);
-                self.fill(.{ .x = inner.x + inner.width / 4, .y = inner.y + inner.height / 2, .width = rail, .height = inner.height / 2 }, artwork_colors.gold);
-                self.fill(.{ .x = inner.x + inner.width * 3 / 4, .y = inner.y + inner.height / 2, .width = rail, .height = inner.height / 2 }, artwork_colors.gold);
-                var step: u16 = 0;
-                while (step < 5) : (step += 1) {
-                    const y = inner.y + inner.height / 2 + step * inner.height / 10;
-                    self.fill(.{ .x = inner.x + inner.width / 5, .y = y, .width = inner.width * 3 / 5, .height = rail }, artwork_colors.chrome_dark);
-                }
-                const cart_w = inner.width / 3;
-                self.fill(.{ .x = inner.x + inner.width / 2 - cart_w / 2, .y = inner.y + inner.height / 2, .width = cart_w, .height = inner.height / 6 }, artwork_colors.coral);
-                const word_font = artworkFont(b.width / 105);
-                self.drawText(inner.x + inner.width / 7, inner.y + inner.height / 8, "MINEKART", artwork_colors.gold, word_font);
-            },
-            .adjustris => {
-                self.fill(inner, artwork_colors.ink);
-                const block = inner.width / 7;
-                self.fill(.{ .x = inner.x + block, .y = inner.y + block, .width = block * 2, .height = block }, artwork_colors.green);
-                self.fill(.{ .x = inner.x + block * 3, .y = inner.y + block * 2, .width = block, .height = block * 3 }, artwork_colors.gold);
-                self.fill(.{ .x = inner.x + block * 4, .y = inner.y + block * 4, .width = block * 2, .height = block }, artwork_colors.coral);
-                const word_font = artworkFont(b.width / 105);
-                self.drawText(inner.x + inner.width / 10, inner.y + inner.height * 3 / 4, "ADJUSTRIS", artwork_colors.white, word_font);
-            },
-            .rkanoid => {
-                self.fill(inner, artwork_colors.navy);
-                const row_h = @max(@as(u16, 6), inner.height / 18);
-                const colors = [_]ui.Color{ artwork_colors.coral, artwork_colors.gold, artwork_colors.green, artwork_colors.sky };
-                for (colors, 0..) |color, row| {
-                    self.fill(.{ .x = inner.x + inner.width / 8, .y = inner.y + inner.height / 6 + @as(u16, @intCast(row)) * (row_h + 4), .width = inner.width * 3 / 4, .height = row_h }, color);
-                }
-                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height * 4 / 5, .width = inner.width / 3, .height = row_h }, artwork_colors.white);
-                const word_font = artworkFont(b.width / 105);
-                self.drawText(inner.x + inner.width / 4, inner.y + inner.height / 16, "RKANOID", artwork_colors.white, word_font);
-            },
-            .willow => {
-                self.fill(inner, artwork_colors.navy);
-                const moon = inner.width / 5;
-                self.fill(.{ .x = inner.x + inner.width * 3 / 5, .y = inner.y + inner.height / 8, .width = moon, .height = moon }, artwork_colors.gold);
-                self.fill(.{ .x = inner.x, .y = inner.y + inner.height * 2 / 3, .width = inner.width, .height = inner.height / 3 }, artwork_colors.green);
-                const trunk = @max(@as(u16, 6), inner.width / 24);
-                self.fill(.{ .x = inner.x + inner.width / 3, .y = inner.y + inner.height / 3, .width = trunk, .height = inner.height / 2 }, artwork_colors.chrome_dark);
-                self.fill(.{ .x = inner.x + inner.width / 5, .y = inner.y + inner.height / 4, .width = inner.width / 3, .height = inner.height / 4 }, artwork_colors.green);
-                const word_font = artworkFont(b.width / 115);
-                self.drawText(inner.x + inner.width / 10, inner.y + inner.height / 14, "WILLOWS DREAM", artwork_colors.white, word_font);
-            },
-        }
     }
 
     fn drawBattery(self: Surface, battery: ui.Battery) void {
@@ -874,7 +789,7 @@ test "keyboard press visibly depresses the focused key" {
     try std.testing.expectEqual(Surface.pack(themes.light.surface), pressed_pixels[sample]);
 }
 
-test "quiet editorial focus is visible without a resting outline" {
+test "quiet focus delegates its resting appearance to content" {
     const themes = @import("theme.zig");
     const pixels = try std.testing.allocator.alloc(u32, width * height);
     defer std.testing.allocator.free(pixels);
@@ -887,7 +802,7 @@ test "quiet editorial focus is visible without a resting outline" {
     (Surface{ .pixels = pixels }).render(&tree);
     const background = Surface.pack(themes.light.background);
     const center = (120 + 36) * width + 80 + 180;
-    try std.testing.expect(pixels[center] != background);
+    try std.testing.expectEqual(background, pixels[center]);
     try std.testing.expectEqual(background, pixels[119 * width + 80]);
 }
 
@@ -960,12 +875,23 @@ test "theme changes interface surfaces but preserves artwork pixels" {
     try std.testing.expect(a[150 * width + 50] != b[150 * width + 50]);
     light = .{ .theme = themes.light, .background = themes.light.background };
     dark = .{ .theme = themes.dark, .background = themes.dark.background };
-    const cover = ui.Element{ .cover = .{ .bounds = .{ .x = 100, .y = 100, .width = 200, .height = 300 }, .kind = .falling } };
-    light.add(cover);
-    dark.add(cover);
+    const texture_pixels = [_]u32{ 0xff17293f, 0xffffd166, 0xff58c7c2, 0xffef6f6c };
+    const artwork = ui.Element{ .artwork = .{ .bounds = .{ .x = 100, .y = 100, .width = 200, .height = 300 }, .texture = .{
+        .width = 2,
+        .height = 2,
+        .pixels = &texture_pixels,
+        .content_x = 0,
+        .content_y = 0,
+        .content_width = 2,
+        .content_height = 2,
+    } } };
+    light.add(artwork);
+    dark.add(artwork);
     (Surface{ .pixels = a }).render(&light);
     (Surface{ .pixels = b }).render(&dark);
-    for (100..400) |y| try std.testing.expectEqualSlices(u32, a[y * width + 100 .. y * width + 300], b[y * width + 100 .. y * width + 300]);
+    // The square texture is letterboxed inside the portrait stage; compare the
+    // image itself rather than the surrounding theme-owned background.
+    for (150..350) |y| try std.testing.expectEqualSlices(u32, a[y * width + 100 .. y * width + 300], b[y * width + 100 .. y * width + 300]);
 }
 
 test "resolved styles render identically to literal colours and ignore later theme changes" {
